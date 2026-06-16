@@ -1,4 +1,4 @@
-# FedAgent: A Federated RL Library for LLM Agents
+# FedAgent: A Library for Decentralized LLM Agent RL
 
 > Train LLM agents collaboratively across decentralized clients — **without sharing local data**.
 
@@ -161,22 +161,38 @@ both envs, data, and the upstream env packages — is in
 
 ## Data
 
-WebShop and ALFWorld environment data are **not** bundled (the full WebShop
-catalog alone is ~5.2 GB). They are publicly available and downloaded on demand:
+The default configs run **out of the box**: the three small WebShop catalog files
+(`items_shuffle_1000.json`, `items_ins_v2_1000.json`, `items_human_ins.json`,
+backing `webshop.use_small: true`) are **already shipped** in the repo, where the
+WebShop env loads them from
+`third_party/verl-agent/agent_system/environments/env_package/webshop/webshop/data/`
+(**not** the top-level `data/`, which ships only a README).
+
+Two things are fetched **separately**:
 
 ```bash
-bash download_data.sh           # fetch full WebShop + ALFWorld data
+bash download_data.sh           # ALFWorld game files (auto) + WebShop full-catalog instructions
 ```
 
-To make the repository runnable out-of-the-box, **three small WebShop variant
-files are shipped** (`items_shuffle_1000.json`, `items_ins_v2_1000.json`,
-`items_human_ins.json`). These back the `webshop.use_small: true` code path used
-by the smoke and default configs. They are **not** under the top-level `data/`
-directory (which ships only a README) — they live where the WebShop environment
-loads them from:
-`third_party/verl-agent/agent_system/environments/env_package/webshop/webshop/data/`.
-The full catalog is only required for full-scale runs. See
-[`docs/configuration.md`](docs/configuration.md) for the `use_small` switch.
+- **ALFWorld game files** — auto-downloaded by the script (`alfworld-download`) to
+  `~/.cache/alfworld`, where the env reads them.
+- **WebShop full catalog** (`items_shuffle.json` ~5.2 GB + `items_ins_v2.json`) —
+  needed only for full-scale `webshop.use_small: false` runs, and fetched
+  **manually**: the script prints instructions to download them from
+  [princeton-nlp/WebShop](https://github.com/princeton-nlp/WebShop) into the same
+  WebShop `data/` directory. The shipped small files already reproduce the paper's
+  WebShop results. See [`docs/configuration.md`](docs/configuration.md) for the
+  `use_small` switch.
+
+## Models
+
+Backbones are **HuggingFace model ids** (default `Qwen/Qwen2.5-1.5B-Instruct`) and
+**auto-download** on first run to `~/.cache/huggingface` (set `HF_HOME` to relocate;
+~3 GB for 1.5B up to ~15 GB for 7B). Two caveats: the main table's
+**`Llama-3.2-3B-Instruct` is gated** — accept its HuggingFace license and
+`huggingface-cli login` (or set `HF_TOKEN`) first; and on **offline / air-gapped
+clusters** pre-fetch on a login node and set `HF_HUB_OFFLINE=1`. See
+[`docs/installation.md`](docs/installation.md#models) for details.
 
 ---
 

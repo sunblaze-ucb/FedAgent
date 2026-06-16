@@ -3,18 +3,21 @@
 # download_data.sh — fetch the WebShop and ALFWorld environment data.
 #
 # These datasets are public but large (the full WebShop catalog alone is
-# ~5.2 GB), so they are NOT bundled with the repository. This script downloads
-# them into the data root. Three small WebShop variant files
-# (items_shuffle_1000.json, items_ins_v2_1000.json, items_human_ins.json) are
-# already shipped and back the `webshop.use_small: true` code path — the full
-# download is only needed for full-scale runs.
+# ~5.2 GB), so they are NOT bundled with the repository.
+#   - ALFWorld game files are fetched via `alfworld-download` into
+#     $ALFWORLD_DATA (default ~/.cache/alfworld) — the same location the env
+#     package and configs read them from (config_tw.yaml -> alfworld/info.py).
+#     Export ALFWORLD_DATA to override; use the *same* value when you train.
+#   - Three small WebShop variant files (items_shuffle_1000.json,
+#     items_ins_v2_1000.json, items_human_ins.json) are already shipped and
+#     back the `webshop.use_small: true` code path; the full WebShop catalog is
+#     a manual fetch (see below), only needed for full-scale (non-use_small) runs.
 #
 # Usage:
 #   bash download_data.sh [--webshop] [--alfworld]   # default: both
 #
 set -euo pipefail
 
-DATA_ROOT="${DATA_ROOT:-./data}"
 DO_WEBSHOP=1
 DO_ALFWORLD=1
 
@@ -29,16 +32,13 @@ if [[ $# -gt 0 ]]; then
   done
 fi
 
-mkdir -p "${DATA_ROOT}"
-echo "[download_data] data root = ${DATA_ROOT}"
-
 # --------------------------------------------------------------------------- #
 # WebShop
 # --------------------------------------------------------------------------- #
 if [[ "${DO_WEBSHOP}" -eq 1 ]]; then
   echo "[download_data] WebShop: all shipped configs use webshop.use_small=true,"
   echo "  backed by the three small data files already vendored under"
-  echo "  third_party/verl-agent/.../webshop/data/ (items_shuffle_1000.json,"
+  echo "  third_party/verl-agent/.../webshop/webshop/data/ (items_shuffle_1000.json,"
   echo "  items_ins_v2_1000.json, items_human_ins.json) — no download is required"
   echo "  to reproduce the paper's WebShop results."
   echo "  For full-catalog (non-use_small) runs, fetch items_shuffle.json (~5.2GB)"
@@ -50,8 +50,12 @@ fi
 # ALFWorld
 # --------------------------------------------------------------------------- #
 if [[ "${DO_ALFWORLD}" -eq 1 ]]; then
-  echo "[download_data] ALFWorld: downloading via the alfworld-download CLI ..."
-  export ALFWORLD_DATA="${ALFWORLD_DATA:-${DATA_ROOT}/alfworld}"
+  # Default to the alfworld package's own cache dir, which is what the env
+  # (config_tw.yaml -> info.py) and the tools read by default — so a plain
+  # `bash download_data.sh` lands the data exactly where training looks for it.
+  export ALFWORLD_DATA="${ALFWORLD_DATA:-$HOME/.cache/alfworld}"
+  echo "[download_data] ALFWorld: downloading via the alfworld-download CLI"
+  echo "  into ALFWORLD_DATA=${ALFWORLD_DATA} ..."
   mkdir -p "${ALFWORLD_DATA}"
   if command -v alfworld-download >/dev/null 2>&1; then
     alfworld-download

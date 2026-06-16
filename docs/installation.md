@@ -30,12 +30,17 @@ conda activate fedagent-webshop
 ```
 
 - **JDK required** for `pyserini`/`pyjnius`. e.g. `conda install -c conda-forge openjdk=21`, or use a system JDK and set `JAVA_HOME`.
-- **Data:** three small WebShop variants are shipped (`items_shuffle_1000.json`,
-  `items_ins_v2_1000.json`, `items_human_ins.json`) and back the `webshop.use_small: true`
-  code path. They are not in the top-level `data/` directory (which ships only a
-  README); they live where the WebShop environment loads them from:
+- **Data:** the three small WebShop catalog files are **already shipped**
+  (`items_shuffle_1000.json`, `items_ins_v2_1000.json`, `items_human_ins.json`),
+  backing the `webshop.use_small: true` code path — so the default configs run with
+  **no WebShop download**. They are not in the top-level `data/` directory (which
+  ships only a README); they live where the WebShop environment loads them from:
   `third_party/verl-agent/agent_system/environments/env_package/webshop/webshop/data/`.
-  For the full ~5.2 GB catalog run `bash download_data.sh`.
+  The full ~5.2 GB catalog (`items_shuffle.json` + `items_ins_v2.json`, used only by
+  `webshop.use_small: false`) is **not** auto-downloaded — fetch it manually from
+  [princeton-nlp/WebShop](https://github.com/princeton-nlp/WebShop) into that same
+  directory. (`bash download_data.sh` prints these exact instructions; it does not
+  download the WebShop catalog itself.)
 - The `spacy` / `typer` version-conflict warning during install is **benign**
   (noted upstream by verl-agent) — ignore it.
 - **`flash-attn`** builds from source and `import`s `torch` at build time. If
@@ -52,6 +57,23 @@ conda activate fedagent-alfworld
 # One-time: download PDDL + game files + the MaskRCNN detector to ~/.cache/alfworld/
 alfworld-download -f
 ```
+
+## Models
+
+Backbones are specified as **HuggingFace model ids** (e.g.
+`actor_rollout_ref.model.path: Qwen/Qwen2.5-1.5B-Instruct`), so they
+**auto-download** from the Hub on first run — no manual step for the default setup.
+
+- **Cache / disk.** Models land in `~/.cache/huggingface` (override with `HF_HOME`).
+  Budget roughly ~3 GB for Qwen2.5-1.5B up to ~15 GB for Qwen2.5-7B.
+- **Gated backbone.** The main table's `Llama-3.2-3B-Instruct` is **gated** on
+  HuggingFace: accept its license on the model page, then authenticate
+  (`huggingface-cli login`, or export `HF_TOKEN`) before using that backbone. The
+  Qwen backbones are ungated.
+- **Offline / air-gapped clusters** (compute nodes without internet). Pre-fetch on a
+  login node (`huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct`), then set
+  `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` on the compute nodes — or point
+  `actor_rollout_ref.model.path` / `tokenizer_path` at a local snapshot directory.
 
 ## Path configuration (both envs)
 
