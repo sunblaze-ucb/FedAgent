@@ -2,7 +2,7 @@
   <img src="assets/logo_w_text_horizontal.png" alt="FedAgent logo" width="620"/>
 </p>
 
-<h1 align="center">FedAgent: A Library for Decentralized LLM Agent Learning</h1>
+<h1 align="center">FedAgent: A Library for Decentralized Agent Learning</h1>
 
 <p align="center">
   <em>Train LLM agents collaboratively across decentralized clients, without sharing local data.</em>
