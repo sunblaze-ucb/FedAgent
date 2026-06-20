@@ -1,0 +1,7 @@
+envs:
+  - name: TinyGuess
+    n_envs: 64
+    max_turns: 6
+    config:
+      lo: 1
+      hi: 50
