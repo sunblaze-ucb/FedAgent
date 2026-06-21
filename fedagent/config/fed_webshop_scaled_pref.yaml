@@ -1,0 +1,41 @@
+# FAITHFUL task-heterogeneity (Preference, paper symbol omega): category-skewed goal
+# distribution per client (Dirichlet), FULL catalog (env unperturbed) = the canonical
+# FedAvg-robust task arm (vs the task_disjoint stand-in). Qwen2.5-1.5B @ 15 turns, 2x4.
+#
+# NOTE (design): uses the paper's 100 goals/client, whereas catalog_split/task_disjoint
+# use the 2-client half-pool (~3205/client). Size-matching across variants is a Phase-8
+# refinement; the CLEAN env-effect signal is A-B (catalog_split vs task_disjoint, same
+# goal slice). This condition gives the canonical task-het reference.
+
+env_kind: webshop
+env_spec: config/envs/webshop_15.yaml
+output_dir: /tmp/xbb9020_fedagent_scaled_pref
+model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+
+total_clients: 2
+clients_per_round: 2
+total_rounds: 4
+epochs_per_round: 1
+base_seed: 42
+
+n_gpus_per_node: 2
+total_training_steps: 4
+save_freq: 4
+wait_between_clients: 8
+
+partition_strategy: preference        # task-het: Dirichlet over goal category, FULL catalog
+omega: 0.9                            # high task heterogeneity (paper sweeps {0.1, 0.9})
+min_goals_per_client: 100
+webshop_pool_size: 16
+webshop_base_port: 8088              # distinct from catalog(8080)/task(8082)/homog(8084)
+
+client_overrides:
+  - data.train_batch_size=8
+  - data.max_prompt_length=2048
+  - data.max_response_length=6144
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=2
+  - actor_rollout_ref.rollout.prompt_length=2048
+  - actor_rollout_ref.rollout.response_length=6144
+  - actor_rollout_ref.rollout.max_model_len=8192
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.6

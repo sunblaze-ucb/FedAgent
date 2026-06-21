@@ -75,6 +75,20 @@ if PARTITION_STRATEGY in ("catalog_split", "task_disjoint"):
     print(f"[webshop-service] {PARTITION_STRATEGY} client {CLIENT_ID}/{CLIENT_NUM}: "
           f"|catalog|={len(CATALOG_ASINS) if CATALOG_ASINS is not None else 'FULL'} "
           f"|goal_idxs|={len(CLIENT_GOAL_IDXS)}", flush=True)
+elif PARTITION_STRATEGY == "preference":
+    # TASK-level heterogeneity: category-skewed goal distribution (Dirichlet omega),
+    # FULL catalog (env unperturbed) -- the FedAvg-robust arm.
+    from fedagent.hetero.webshop_task import preference_for_client
+
+    CLIENT_GOAL_IDXS = preference_for_client(
+        CLIENT_ID, CLIENT_NUM,
+        omega=float(os.environ.get("OMEGA", "0.5")),
+        min_goals_per_client=int(os.environ.get("MIN_GOALS_PER_CLIENT", "100")),
+    )
+    CATALOG_ASINS = None  # task-level -> full catalog
+    print(f"[webshop-service] preference client {CLIENT_ID}/{CLIENT_NUM}: "
+          f"|goal_idxs|={len(CLIENT_GOAL_IDXS)} omega={os.environ.get('OMEGA', '0.5')} (FULL catalog)",
+          flush=True)
 
 _pool: asyncio.Queue = None
 _sessions: dict = {}

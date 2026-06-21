@@ -75,6 +75,7 @@ DEFAULTS = {
     "partition_strategy": "",               # "" | "catalog_split" (env-level heterogeneity)
     "env_div": 0.7,                         # catalog-split heterogeneity strength
     "keep_ratio": 0.7,                      # catalog-split distractor density
+    "omega": 0.5,                           # preference (task-het) Dirichlet spread
     "min_goals_per_client": 100,
     "service_health_timeout": 900,          # seconds to wait for a service /health
     "fedprox_mu": 0.0,                       # >0 => FedProx proximal term (else FedAvg)
@@ -186,6 +187,7 @@ def start_webshop_services(cfg, env_base: dict) -> List[dict]:
             "CLIENT_NUM": str(cfg.total_clients),
             "ENV_DIV": str(cfg.env_div),
             "KEEP_RATIO": str(cfg.keep_ratio),
+            "OMEGA": str(cfg.get("omega", 0.5)),
             "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
         })
         log_path = Path(cfg.output_dir) / f"webshop_service_client{c}.log"
