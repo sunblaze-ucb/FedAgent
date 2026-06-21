@@ -33,10 +33,12 @@ result, status, artifacts.
 | 7b | **Federated WebShop Catalog-Split 2×2** | Qwen0.5B, env-het | catalogs 762/750, loop CLOSED | ✅ |
 | 4v | Catalog-Split determinism (CPU) | numpy 1.26 & 2.2 | c0=762, c1=750, Jaccard 0.62, identical | ✅ |
 | P | **Signal probe** — 1.5B / 15-turn WebShop | 1 client, 4 steps | reward 0.026→0.147 (max 0.857) | ✅ |
-| A | **Scaled env-het** (catalog_split) | 1.5B/15-turn, 2×4 | (curve, pending parse) | ▶ running (GPUs 0,1) |
-| B | **Scaled task-het** (task_disjoint) | 1.5B/15-turn, 2×4 | reward ~0.10–0.22 | ▶ running (GPUs 2,3) |
-| C | Homogeneous (IID) baseline | 1.5B/15-turn, 2×4 | — | ⏳ queued (launch when GPUs free) |
-| Fx | FedProx hook test | 1.5B, μ=0.1, 1×2 | — | ⏳ queued |
+| A | Scaled env-het (catalog_split) | 1.5B/15-turn, 2×4 | R1/2/3 mean 0.137/0.138/0.093 (flat); within-round peaks ~0.26 | ⚠ OOM at R4 (ran concurrent w/ B) |
+| B | Scaled task-het (task_disjoint) | 1.5B/15-turn, 2×4 | R1/2 mean 0.156/0.124 | ⚠ OOM at R3 (ran concurrent w/ A) |
+| C | Homogeneous (IID) baseline | 1.5B/15-turn, 2×4 | — | ⏳ queued (run single, not concurrent) |
+| Fx | FedProx hook test | 1.5B, μ=0.1, 1×2 | — | ▶ verifying |
+
+Legend update: ⚠ = crashed/partial.
 
 Legend: ✅ done · ▶ running · ⏳ queued.
 
@@ -112,6 +114,39 @@ injection (`fedagent/fedprox.py` patches `FSDPEngine.optimizer_step` via the Ray
 
 > Small-scale (4 steps/round) → noisy; the A−B / B−C deltas are the signal, not absolute values.
 > Magnitude study (3 seeds, E×T=210, multi-model, unperturbed val) is Phase 8-full.
+
+## Findings & lessons (so far)
+
+- **Signal is real**: with Qwen2.5-1.5B @ 15 turns, `critic/rewards/mean` is nonzero and
+  rises *within* a round (probe 0.026→0.147; scaled within-round peaks ~0.26–0.28). With
+  Qwen0.5B @ 6 turns it was ~0 — capable model + turn budget matter.
+- **No compounding at tiny budget**: across federated rounds at 4 steps/round the round-mean
+  reward is FLAT/noisy (A 0.137/0.138/0.093; B 0.156/0.124), so the env-vs-task asymmetry is
+  NOT visible at 16 steps. Each round re-enters from the aggregate with a FRESH optimizer
+  (faithful to FedAgent), so durable progress needs many more steps × rounds. **The asymmetry
+  MAGNITUDE requires ~paper budget (E×T≈210)** — a dedicated large run, not a debugging-window run.
+- **OOM lesson (memory sizing)**: the SLURM job has a **900GB** memory cgroup; each WebShop
+  service env is **≈14GB** (in-memory catalog/index). So pool=16 ×2 services ≈ **32 envs ≈448GB
+  per run** (safe), but **two concurrent runs ≈64 envs ≈896GB → OOM** (killed a worker → both
+  runs died via NCCL heartbeat). ⇒ **Run ONE WebShop run at a time** (use `--n-gpus 4` for 4-GPU
+  single runs), or drop pool to ~8 for two concurrent runs.
+- **Clean ablation still holds**: A−B (catalog_split vs task_disjoint, identical goal slices)
+  isolates the env effect; needs adequate budget to read.
+
+## Infra verified (2026-06-20, later)
+
+- **FedProx hook WORKS (non-fork)**: `[fedprox] enabled: proximal mu=0.1 (FSDPEngine.optimizer_step
+  patched)` printed in every actor worker via the Ray `worker_process_setup_hook`
+  (`+ray_kwargs.ray_init.runtime_env.worker_process_setup_hook=fedagent.fedprox.worker_setup`,
+  gated on `FEDPROX_MU`). Confirmed the agent-loop workers are SEPARATE processes from the
+  actor-engine worker, so the runtime_env hook (not an import) is required.
+- **Robust GPU recipe**: run ONE WebShop run at a time with `--n-gpus 4` (single Ray cluster,
+  all 4 GPUs, 32 envs ≈448GB). This avoids BOTH the concurrent-run OOM (64 envs > 900GB) AND
+  the `Duplicate GPU detected` race (two `CUDA_VISIBLE_DEVICES`-split Ray clusters racing at
+  init). Verified: `--n-gpus 4` reaches step:1 with no Duplicate-GPU error.
+- **ALFWorld feasible**: conda env `verl-agent-alfworld` imports alfworld+textworld; game data
+  at `~/.cache/alfworld/{json_2.1.1,logic,detectors}` (+ `/projects/b1222/userdata/canyu/.cache/alfworld`).
+  Ready to port as a remote service (Phase 3).
 
 ## Planned experiments (roadmap)
 

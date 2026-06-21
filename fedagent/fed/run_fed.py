@@ -458,6 +458,8 @@ def load_cfg(args) -> "OmegaConf":
     if args.clients is not None:
         cfg.total_clients = args.clients
         cfg.clients_per_round = min(cfg.clients_per_round, args.clients)
+    if getattr(args, "n_gpus", None) is not None:
+        cfg.n_gpus_per_node = args.n_gpus
     if getattr(args, "base_seed", None) is not None:
         cfg.base_seed = args.base_seed
     if getattr(args, "port_base", None) is not None:
@@ -479,6 +481,7 @@ def main():
     ap.add_argument("--output-dir", default=None)
     ap.add_argument("--rounds", type=int, default=None)
     ap.add_argument("--clients", type=int, default=None)
+    ap.add_argument("--n-gpus", type=int, default=None, help="override n_gpus_per_node (e.g. 4 for a single 4-GPU run)")
     ap.add_argument("--base-seed", type=int, default=None, help="override base_seed (for seed sweeps)")
     ap.add_argument("--port-base", type=int, default=None, help="override webshop_base_port (concurrent runs)")
     ap.add_argument("--fedprox-mu", type=float, default=None, help=">0 enables the FedProx proximal term")

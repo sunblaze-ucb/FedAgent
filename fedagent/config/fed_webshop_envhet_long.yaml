@@ -1,0 +1,39 @@
+# COMPOUNDING COMPARISON partner: env-heterogeneity (catalog_split) over 8 rounds,
+# same budget as fed_webshop_homog_long.yaml. homog_long vs envhet_long over 8 rounds
+# tests whether env heterogeneity degrades / fails to compound under FedAvg relative to
+# the IID baseline (the env arm of the asymmetry). pool=8 (16 envs) so it runs
+# concurrently with homog_long under the 900GB cap (32 envs total ~448GB).
+
+env_kind: webshop
+env_spec: config/envs/webshop_15.yaml
+output_dir: /tmp/xbb9020_fedagent_envhet_long
+model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+
+total_clients: 2
+clients_per_round: 2
+total_rounds: 8
+epochs_per_round: 1
+base_seed: 42
+
+n_gpus_per_node: 2
+total_training_steps: 4
+save_freq: 4
+wait_between_clients: 8
+
+partition_strategy: catalog_split   # env heterogeneity (disjoint catalogs)
+env_div: 0.7
+keep_ratio: 0.7
+min_goals_per_client: 100
+webshop_pool_size: 8
+webshop_base_port: 8092             # distinct from homog_long (8090)
+
+client_overrides:
+  - data.train_batch_size=4
+  - data.max_prompt_length=2048
+  - data.max_response_length=6144
+  - actor_rollout_ref.actor.ppo_mini_batch_size=4
+  - actor_rollout_ref.rollout.n=2
+  - actor_rollout_ref.rollout.prompt_length=2048
+  - actor_rollout_ref.rollout.response_length=6144
+  - actor_rollout_ref.rollout.max_model_len=8192
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.6
