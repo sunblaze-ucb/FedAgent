@@ -144,7 +144,12 @@ def main():
             "trainer.project_name=fedagent_hardness_label",
             "trainer.experiment_name=label",
         ]
-        cmd += [str(o) for o in (cfg.client_overrides or [])]
+        # the script forces rollout.n=1 (ONE greedy reference trajectory per goal); drop any
+        # rollout.n from client_overrides so a training group size (e.g. 8) can't clobber it
+        # back -- with temperature=0/do_sample=false the extra trajectories are identical
+        # duplicates, pure wasted compute.
+        cmd += [str(o) for o in (cfg.client_overrides or [])
+                if not str(o).startswith("actor_rollout_ref.rollout.n=")]
         run_env = dict(env_base)
         run_env["WEBSHOP_SERVICE_URL"] = f"http://localhost:{args.port}"
         rc = stream(cmd, run_env, out_dir / "label.log", tag="label")

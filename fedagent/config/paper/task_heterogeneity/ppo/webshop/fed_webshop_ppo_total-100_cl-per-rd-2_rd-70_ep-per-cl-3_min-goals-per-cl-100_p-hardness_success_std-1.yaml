@@ -33,7 +33,7 @@ search_return_n: 50                               # engine default (matches the 
 # --- heterogeneity ---
 partition_strategy: hardness
 success_std: 1
-trajectories_file: data/hardness/qwen2.5-1.5b_webshop_trajectories.json   # REQUIRED: generate via tools/verl08_migration/gen_hardness_trajectories.py
+trajectories_file: data/hardness/qwen2.5-1.5b_webshop_trajectories.json   # reference-policy labels (see data/hardness/README.md); regenerate via tools/verl08_migration/gen_hardness_trajectories.py
 
 client_overrides:
   - data.train_batch_size=64

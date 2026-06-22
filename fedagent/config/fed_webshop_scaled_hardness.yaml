@@ -2,12 +2,14 @@
 # client, FULL catalog (env unperturbed). Verbatim hardness_partition
 # (fedagent/hetero/webshop_hardness.py). Qwen2.5-1.5B @ 15 turns, 2x4.
 #
-# BLOCKED until a trajectories file exists: hardness REQUIRES `trajectories_file`
-# (task_id -> success labels) to grade goal difficulty. Generate one with:
+# hardness REQUIRES `trajectories_file` (task_id -> success labels) to grade goal difficulty.
+# Reference-policy labels (Qwen2.5-1.5B) SHIP in data/hardness/ -- this smoke points at them
+# below, so it runs out of the box. They cover a subset of train goals (see
+# data/hardness/README.md); to regenerate the FULL pool:
 #   python -m tools.verl08_migration.gen_hardness_trajectories \
 #       --config fedagent/config/fed_webshop_scaled_hardness.yaml --model <ref hf> \
-#       --num-goals 6410 --output fedagent/data/hardness/webshop_trajectories_qwen1.5b.json
-# then set trajectories_file below. Without it the service raises FileNotFoundError (by design).
+#       --num-goals 6410 --output fedagent/data/hardness/qwen2.5-1.5b_webshop_trajectories.json
+# Without any labels the service raises FileNotFoundError (by design).
 
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
@@ -27,7 +29,7 @@ wait_between_clients: 8
 
 partition_strategy: hardness          # task-het: Beta easy/hard split, FULL catalog
 success_std: 1.0                      # Beta dispersion (xi')
-trajectories_file: ""                 # REQUIRED: set to a task_id->success JSON before running
+trajectories_file: data/hardness/qwen2.5-1.5b_webshop_trajectories.json   # shipped reference-policy labels
 min_goals_per_client: 100
 webshop_pool_size: 16
 webshop_base_port: 8102

@@ -880,7 +880,7 @@ def load_cfg(args) -> "OmegaConf":
         cfg.local_client_id = args.local_client_id
     # resolve package-relative paths (so configs can use e.g. config/envs/webshop.yaml)
     for key in ("env_spec", "val_env_spec", "custom_cls_path", "agent_config_path",
-                "webshop_run_service", "alfworld_run_service"):
+                "webshop_run_service", "alfworld_run_service", "trajectories_file"):
         v = cfg.get(key)
         if v and not os.path.isabs(str(v)):
             cfg[key] = str(PKG_DIR / str(v))
