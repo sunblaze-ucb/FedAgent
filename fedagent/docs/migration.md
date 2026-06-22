@@ -22,7 +22,7 @@ verification status. The running experiment log is [`../EXPERIMENTS.md`](../EXPE
 ## Environment fidelity: the engines are reused, not reimplemented
 
 The WebShop and ALFWorld remote services **`sys.path`-inject and import the original engines**
-from `third_party/verl-agent/` (via `importlib`) — the **same code the original FedAgent ran**.
+from the vendored `fedagent/envs/<name>/engine/` (via `importlib`) — the **same code the original FedAgent ran**.
 The MDP is therefore unchanged:
 
 - **WebShop** — `WebAgentTextEnv` / `SimServer` / `engine.py` / `goal.py` and the

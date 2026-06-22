@@ -37,7 +37,7 @@ at import time) precisely so the trainer env can import the *client*
 ([`../webshop_env.py`](../webshop_env.py)) without dragging in WebShop's conflicting stack.
 
 At startup `server.py` `sys.path`-injects the vendored WebShop engine from
-`third_party/verl-agent/.../webshop/` and loads the original action parser
+`../engine/webshop/` and loads the original action parser
 (`webshop_projection`) **in isolation** — bypassing the `agent_system` package
 `__init__` (which would pull verl-0.3.1 / torch). The lifespan handler then
 pre-warms a **pool** of `WebAgentTextEnv` instances (`gym.make` is ~26 s each, JVM

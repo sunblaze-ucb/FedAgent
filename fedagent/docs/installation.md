@@ -92,10 +92,9 @@ pip install -r webshop_requirements.txt      # repo root; pins the WebShop stack
 - **A JDK must be on `PATH`.** `pyserini` / `pyjnius` drive a Java/Lucene BM25 index
   over the product catalog. Install one, e.g. `conda install -c conda-forge
   openjdk=21`, or use a system JDK and export `JAVA_HOME`.
-- `webshop_requirements.txt` includes `-e ./third_party/verl-agent`, so it
-  installs the vendored verl-agent package editable from the in-tree path (see
-  §4) — the WebShop engine and goal data live there, nothing is fetched from PyPI
-  for it.
+- The WebShop engine and goal data are **vendored in-tree** at
+  `fedagent/envs/webshop/engine/` (see §4); nothing is fetched from PyPI for it and
+  `webshop_requirements.txt` no longer needs an editable verl-agent install.
 - `server.py` additionally injects the WebShop engine onto `sys.path` at startup
   and pre-warms a pool of `WebAgentTextEnv` instances (each `gym.make` is ~26 s,
   JVM + index startup), so the trainer never imports WebShop.
@@ -123,20 +122,27 @@ alfworld-download -f
   be exported** because the bundled `config_tw.yaml` references game/logic/detector
   paths as `$ALFWORLD_DATA/...` (expanded at runtime). Set it to the same directory
   you downloaded into.
-- `alfworld_requirements.txt` likewise includes `-e ./third_party/verl-agent`
-  (vendored engine; see §4). The service builds the `AlfredTWEnv` interface once
-  and pools single-instance textworld envs; the trainer never imports ALFWorld.
+- The ALFWorld engine is **vendored in-tree** at `fedagent/envs/alfworld/engine/`
+  (see §4); `alfworld_requirements.txt` no longer needs an editable verl-agent
+  install. The service builds the `AlfredTWEnv` interface once and pools
+  single-instance textworld envs; the trainer never imports ALFWorld.
 
-## 4. Vendored engines — `third_party/verl-agent/`
+## 4. Vendored engines — `fedagent/envs/<name>/engine/`
 
 The real WebShop and ALFWorld engines (and the original action parsers / partition
-code) live vendored in [`../../third_party/verl-agent/`](../../third_party/verl-agent/).
-They are **not fetched from PyPI** — both service requirements files install them
-editable from this in-tree path (`-e ./third_party/verl-agent`), and at runtime
-each service also injects the package onto `sys.path` and loads the action parser
-in isolation (avoiding the package `__init__`, which would pull the old
-verl-0.3.1 / torch). Nothing here needs a separate install step beyond the
-`-r *_requirements.txt` above; just keep the directory present in the tree.
+code) are **vendored in-tree**, each beside its service:
+- WebShop: [`../envs/webshop/engine/`](../envs/webshop/engine/) — `web_agent_site` +
+  the shipped catalog data.
+- ALFWorld: [`../envs/alfworld/engine/`](../envs/alfworld/engine/) — the `AlfredTWEnv`
+  wrapper under a preserved `agent_system/environments/` import anchor, plus
+  `partition_strategy.py`.
+
+They are **not fetched from PyPI** and need **no editable install**. At runtime each
+service injects its engine onto `sys.path` and loads the action parser in isolation.
+The vendored `agent_system/environments/__init__.py` is intentionally **empty** — the
+upstream one imported verl-agent's `env_manager` (→ the old verl 0.3.x); neutralised so
+the engines carry **no verl-agent dependency**. Nothing here needs a separate install
+step beyond the `-r *_requirements.txt` above.
 
 ## 5. Models
 

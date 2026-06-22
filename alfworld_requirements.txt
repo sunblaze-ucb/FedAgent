@@ -221,7 +221,8 @@ tzdata==2025.2
 urllib3==2.5.0
 uvicorn==0.35.0
 uvloop==0.21.0
--e ./third_party/verl-agent
+# (removed -e ./third_party/verl-agent): the ALFWorld engine is vendored at
+# fedagent/envs/alfworld/engine/ and loaded via sys.path -- no verl-agent fork needed.
 virtualenv==20.34.0
 vllm==0.8.5
 wandb==0.21.1

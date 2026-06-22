@@ -9,57 +9,53 @@ source in this repository with their upstream LICENSE/NOTICE files preserved
 alongside that source.
 
 -------------------------------------------------------------------------------
-1. veRL
+1. veRL  (library dependency -- NOT vendored)
 -------------------------------------------------------------------------------
    (c) ByteDance / the veRL authors. License: Apache-2.0.
-   The base RL training framework. https://github.com/volcengine/verl
-   Vendored (modified) under third_party/verl-agent/, with its LICENSE and
-   Notice.txt preserved and its per-file copyright headers (SGLang, vLLM,
-   NVIDIA/Megatron, HuggingFace/EleutherAI, PRIME, ModelBest) intact.
-   FedAgent's modifications are documented in third_party/verl-agent/CHANGES.md.
+   https://github.com/volcengine/verl
+   FedAgent is a thin overlay on STOCK verl 0.8, imported as an installed library
+   (see fedagent/docs/installation.md). verl's source is NOT vendored here.
 
 -------------------------------------------------------------------------------
-2. verl-agent / GiGPO
+2. verl-agent / GiGPO  (environment wrappers vendored)
 -------------------------------------------------------------------------------
    Feng et al., "Group-in-Group Policy Optimization for LLM Agent Reinforcement
    Learning", arXiv:2505.10978. License: Apache-2.0.
-   The agent-RL fork FedAgent extends. https://github.com/langfengQ/verl-agent
+   https://github.com/langfengQ/verl-agent
+   FedAgent vendors verl-agent's WebShop/ALFWorld environment wrappers -- the
+   action parsers (projection.py), the partition strategies (partition_strategy.py),
+   and the ALFWorld AlfredTWEnv wrapper -- under fedagent/envs/{webshop,alfworld}/
+   engine/. The rest of the verl-agent tree (its veRL fork, recipes, tests, and the
+   unused gym_cards/sokoban/appworld environments) is not used and is not vendored.
 
 -------------------------------------------------------------------------------
 3. WebShop
 -------------------------------------------------------------------------------
    Yao et al., Princeton NLP. License: MIT.
-   E-commerce agent benchmark. Its LICENSE.md is preserved in the vendored copy
-   under third_party/verl-agent/.../env_package/webshop/webshop/.
+   E-commerce agent benchmark. Vendored under fedagent/envs/webshop/engine/webshop/
+   (web_agent_site + the shipped catalog data); its LICENSE.md is preserved there.
 
 -------------------------------------------------------------------------------
 4. ALFWorld
 -------------------------------------------------------------------------------
    Shridhar et al., Microsoft Research. License: MIT.
-   Embodied household agent benchmark. An MIT LICENSE text matching the upstream
-   ALFWorld terms (reconstructed; see the note at the top of the file) is included
-   under third_party/verl-agent/.../env_package/alfworld/alfworld/.
+   Embodied household agent benchmark. Vendored under
+   fedagent/envs/alfworld/engine/agent_system/environments/env_package/alfworld/alfworld/;
+   an MIT LICENSE text matching the upstream ALFWorld terms (reconstructed; see the
+   note at the top of the file) is preserved there.
 
    GPL component (disclosure): the vendored ALFWorld copy also includes the
    Metric-FF planner (Joerg Hoffmann) under
-   .../alfworld/alfworld/gen/ff_planner/, whose C sources carry GNU General Public
-   License v2-or-later headers. It is a standalone game-generation tool: it is NOT
-   compiled, linked, or imported by FedAgent's Apache-2.0 code, and is NOT used by
-   the released WebShop/ALFWorld experiments (which run on pre-generated game files
-   fetched via download_data.sh). It is shipped only as mere aggregation; its GPL
-   terms apply solely to that subdirectory, per the headers in its source files.
+   .../env_package/alfworld/alfworld/gen/ff_planner/, whose C sources carry GNU
+   General Public License v2-or-later headers. It is a standalone game-generation
+   tool: it is NOT compiled, linked, or imported by FedAgent's Apache-2.0 code, and
+   is NOT used by the released WebShop/ALFWorld experiments (which run on
+   pre-generated game files fetched via download_data.sh). It is shipped only as mere
+   aggregation; its GPL terms apply solely to that subdirectory, per the headers in
+   its source files.
 
 -------------------------------------------------------------------------------
-5. gym_cards (RL4VLM) and gym-sokoban
--------------------------------------------------------------------------------
-   Vendored under third_party/verl-agent/.../env_package/{gym_cards,sokoban}/;
-   each includes an MIT LICENSE text reconstructed to match the named upstream
-   project (see the note at the top of each file). These environments are part of
-   the upstream verl-agent tree and are NOT used by the FedAgent experiments
-   (which use WebShop and ALFWorld only).
-
--------------------------------------------------------------------------------
-6. Bundled data derived from WebShop / ALFWorld
+5. Bundled data derived from WebShop / ALFWorld
 -------------------------------------------------------------------------------
    data/env_heterogeneity/ ships small data files derived from the WebShop and
    ALFWorld benchmark data (items 3-4 above, both MIT):
@@ -68,4 +64,4 @@ alongside that source.
    - holdout_alfworld_v1.json, derived from the ALFWorld game data.
    These derived files are distributed under the same MIT terms as their source
    benchmark data, whose LICENSE texts are preserved in the vendored copies under
-   third_party/verl-agent/.../env_package/{webshop,alfworld}/.
+   fedagent/envs/{webshop,alfworld}/engine/.

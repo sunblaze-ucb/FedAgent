@@ -89,7 +89,7 @@ is in [`fedagent/docs/features.md`](fedagent/docs/features.md).
 fedagent/                      ← the maintained verl-0.8 overlay (start here)
 ├── fed/                       federated round loop (run_fed.py) + JSON metrics logger
 ├── envs/                      BaseTextEnv contract + registry; tiny_guess + per-env packages:
-│   └── {webshop,alfworld}/    └── <env>_env.py (trainer-side client) + service/ (HTTP backend)
+│   └── {webshop,alfworld}/    └── <env>_env.py (client) + service/ (HTTP backend) + engine/ (vendored sim)
 ├── agent_loops/               GymTextAgentLoop — multi-turn rollout (verl AgentLoopBase)
 ├── hetero/                    two-level heterogeneity constructions (task + environment)
 ├── data/                      AgenticDataset (verl custom_cls) + per-client partitioning
@@ -98,7 +98,6 @@ fedagent/                      ← the maintained verl-0.8 overlay (start here)
 ├── fedprox.py                 client-side FedProx proximal term
 └── main_ppo_fed.py            per-client entry: stock verl run_ppo + FedAgent hooks
 
-third_party/verl-agent/        vendored upstream (Apache-2.0); env packages sys.path-injected at runtime
 sitecustomize.py               repo-root FedProx hook (auto-imported on PYTHONPATH)
 tools/verl08_migration/        FedAvg aggregator, paper-config generator, hardness-traj generator, helpers
 data/env_heterogeneity/        shipped env-level heterogeneity data (holdout / lookalike sets)
@@ -133,7 +132,7 @@ W&B logging is **removed** — no tracking account or key needed.
 
 The default WebShop configs run **out of the box**: the small WebShop catalog files are
 already shipped inside the vendored env package
-(`third_party/verl-agent/.../webshop/data/`), and the env-level heterogeneity holdout/lookalike
+(`fedagent/envs/webshop/engine/webshop/data/`), and the env-level heterogeneity holdout/lookalike
 sets are tracked under [`data/env_heterogeneity/`](data/env_heterogeneity/). Two things are
 fetched/generated separately:
 

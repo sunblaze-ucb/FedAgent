@@ -241,10 +241,9 @@ def _distractor_disjoint_partition_webshop_v5(
 # Thin public API for the verl-0.8 WebShop remote service (the only additions).
 # --------------------------------------------------------------------------- #
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# Data still lives under the (being-retired) verl-agent tree; 5.5MB, not yet copied.
+# Vendored WebShop catalog data: fedagent/envs/webshop/engine/webshop/data.
 DEFAULT_DATA_DIR = os.path.abspath(os.path.join(
-    _HERE, "..", "..", "third_party", "verl-agent", "agent_system", "environments",
-    "env_package", "webshop", "webshop", "data",
+    _HERE, "..", "envs", "webshop", "engine", "webshop", "data",
 ))
 
 

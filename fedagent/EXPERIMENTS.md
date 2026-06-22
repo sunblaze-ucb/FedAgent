@@ -195,7 +195,7 @@ follow-up (Coverage run launched). Reproduce: `tools/verl08_migration/collect_fe
 
 A 3-agent ultracode workflow ported the remaining FedAgent heterogeneity variants + the
 ALFWorld env into the `fedagent/` overlay, **all science partition functions copied
-byte-for-byte** from `third_party/verl-agent/.../partition_strategy.py` (AST-verified:
+byte-for-byte** from verl-agent's `partition_strategy.py` (now vendored at `fedagent/envs/alfworld/engine/.../partition_strategy.py`; AST-verified:
 8/8 functions identical to source). Then wired + independently smoke-tested:
 
 - **Task-level variants** (full catalog, goal-distribution skew only):

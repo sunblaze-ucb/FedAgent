@@ -53,7 +53,7 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 | `envs/tiny_guess.py` | `TinyGuessEnv` — dependency-free in-process guess-the-number env. Wiring smoke test, not part of the research suite. |
 | `envs/webshop/webshop_env.py` | `WebShopEnv` — thin async **HTTP client** to the WebShop service. Ferries action text in, formats verl-agent `WEBSHOP_TEMPLATE` observations out. |
 | `envs/webshop/service/server.py` | WebShop remote service (FastAPI). Pre-warms a pool of `WebAgentTextEnv`; serves `/create`·`/reset`·`/step`·`/close`; parses actions server-side with the original `webshop_projection`; reads heterogeneity `env_kwargs` from the environment. Runs in the `verl-agent-webshop` conda env. ([README](../envs/webshop/service/README.md)) |
-| `envs/webshop/service/run_service.sh` | Launch script for the WebShop service (port, conda env, `third_party/verl-agent` on path). |
+| `envs/webshop/service/run_service.sh` | Launch script for the WebShop service (port, conda env, vendored `engine/` on path). |
 | `envs/alfworld/alfworld_env.py` | `AlfworldEnv` — thin async **HTTP client** to the ALFWorld service. Mirrors `WebShopEnv`; uses verl-agent's `ALFWORLD_TEMPLATE_NO_HIS`. |
 | `envs/alfworld/service/server.py` | ALFWorld remote service (FastAPI). Builds `AlfredTWEnv` once, pre-warms a pool of `batch_size=1` textworld envs; per-seed game selection via `env.seed(seed)`; parses actions with `alfworld_projection`. Runs in the `verl-agent-alfworld` conda env. ([README](../envs/alfworld/service/README.md)) |
 | `envs/alfworld/service/run_service.sh` | Launch script for the ALFWorld service (port, conda env, `$ALFWORLD_DATA` / `$ALF_CONFIG`). |
@@ -108,7 +108,7 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 
 | Path | Role |
 |---|---|
-| `third_party/verl-agent/` | The **vendored WebShop/ALFWorld engines** (+ original `partition_strategy.py`, `*_projection` action parsers). `sys.path`-injected by the env services so the environment MDP is the *same code* the original FedAgent used. The trainer itself is **stock verl 0.8**, not vendored. |
+| `envs/{webshop,alfworld}/engine/` | The **vendored WebShop/ALFWorld engines** (+ original `partition_strategy.py`, `*_projection` action parsers). `sys.path`-injected by the env services so the environment MDP is the *same code* the original FedAgent used — now carrying **no verl-agent dependency**. The trainer itself is **stock verl 0.8**. |
 | `sitecustomize.py` (repo root) | Auto-imported by CPython at interpreter startup in every process on `PYTHONPATH` (client + Ray workers). Gated on `FEDPROX_MU`, it applies `fedprox.py`'s patch — deliberately **not** a Ray `runtime_env` hook (that clobbered per-worker `CUDA_VISIBLE_DEVICES`). |
 | `tools/verl08_migration/aggregate_fedavg_fsdp.py` | The FedAvg core. Run under `torchrun --nproc_per_node=world_size`: each rank averages its own FSDP shard in place across clients and re-saves, byte-structurally identical to a verl checkpoint so the next round loads it unchanged. Shelled out to by `run_fed.py`'s `fedavg`. |
 
@@ -220,7 +220,7 @@ trainer (fedagent-verl08)  ──HTTP──>  client 0 service (verl-agent-websh
 
 `run_fed.py` launches one service per participating client (`start_webshop_services` /
 `start_alfworld_services`), waits for each `/health`, and tears them down at the end. The
-services `sys.path`-inject the vendored engine from `third_party/verl-agent/` — the **same
+services `sys.path`-inject the vendored engine from `fedagent/envs/<name>/engine/` — the **same
 code the original FedAgent used**, so the environment MDP is unchanged (see
 [migration.md](./migration.md)). This isolation is also why the service packages live at the
 top level of `fedagent/`, not under `envs/`.

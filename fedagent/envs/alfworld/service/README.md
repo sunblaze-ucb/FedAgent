@@ -12,8 +12,7 @@ ALFWorld needs the **TextWorld + Fast-Downward planning stack** plus `alfworld`,
 `gymnasium`, and pinned `torch`/`torchvision` — none of which are compatible with
 the trainer's `fedagent-verl08` env (see the [root README](../../../README.md)).
 So the heavy engine runs in its **own conda env** (`verl-agent-alfworld`, holding
-the vendored engine under
-[`third_party/verl-agent`](../../../../third_party/verl-agent), which `server.py`
+the vendored engine under [`../engine/`](../engine/), which `server.py`
 injects onto `sys.path`), and the trainer talks to it over HTTP through the thin
 client [`../alfworld_env.py`](../alfworld_env.py). Only that client is imported
 trainer-side; importing this package never pulls the ALFWorld deps.

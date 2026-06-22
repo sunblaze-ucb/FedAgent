@@ -25,19 +25,16 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# fedagent/envs/webshop/service/ -> repo root is four levels up.
-_VERL_AGENT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", "..", "third_party", "verl-agent"))
-_WEBSHOP = os.path.join(
-    _VERL_AGENT, "agent_system", "environments", "env_package", "webshop", "webshop"
-)
+# fedagent/envs/webshop/service/ -> the vendored WebShop engine is a sibling dir
+# (../engine). Holds web_agent_site + the shipped catalog data; self-contained, no
+# verl-agent dependency.
+_ENGINE = os.path.abspath(os.path.join(_HERE, "..", "engine"))
+_WEBSHOP = os.path.join(_ENGINE, "webshop")  # web_agent_site + catalog data
 if _WEBSHOP not in sys.path:
     sys.path.append(_WEBSHOP)
 
-# Load the original action parser in isolation (it only imports re/typing), avoiding
-# the agent_system package __init__ (which would pull verl-0.3.1/torch).
-_PROJ = os.path.join(
-    _VERL_AGENT, "agent_system", "environments", "env_package", "webshop", "projection.py"
-)
+# Load the original action parser in isolation (it only imports re/typing).
+_PROJ = os.path.join(_ENGINE, "projection.py")
 _spec = importlib.util.spec_from_file_location("webshop_projection_mod", _PROJ)
 _proj = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_proj)

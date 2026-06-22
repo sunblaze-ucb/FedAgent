@@ -43,15 +43,18 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# fedagent/envs/alfworld/service/ -> repo root is four levels up.
-_VERL_AGENT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", "..", "third_party", "verl-agent"))
-# The alfworld env package imports ``agent_system.environments.partition_strategy`` and
-# ``agent_system.environments.env_package.alfworld.alfworld...`` -> put the verl-agent
-# root on the path so those absolute imports resolve.
-if _VERL_AGENT not in sys.path:
-    sys.path.append(_VERL_AGENT)
+# fedagent/envs/alfworld/service/ -> the vendored ALFWorld engine is a sibling dir
+# (../engine). It preserves the ``agent_system/environments/`` package anchor so the
+# engine's absolute imports (``agent_system.environments.partition_strategy`` and
+# ``agent_system.environments.env_package.alfworld.alfworld...``) still resolve. The
+# vendored ``agent_system/environments/__init__.py`` is EMPTY: the original imported
+# env_manager -> the old verl 0.3.x, which this overlay does not use (neutralized so no
+# verl-agent dependency remains; AlfredTWEnv itself needs only textworld/alfworld).
+_ENGINE = os.path.abspath(os.path.join(_HERE, "..", "engine"))
+if _ENGINE not in sys.path:
+    sys.path.append(_ENGINE)
 
-_ALF_PKG = os.path.join(_VERL_AGENT, "agent_system", "environments", "env_package", "alfworld")
+_ALF_PKG = os.path.join(_ENGINE, "agent_system", "environments", "env_package", "alfworld")
 
 # Load the original action parser in isolation (it only imports re/typing), avoiding the
 # agent_system package __init__ (which would pull verl-0.3.1/torch) AND the alfworld

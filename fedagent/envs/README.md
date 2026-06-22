@@ -4,7 +4,7 @@ The environments a FedAgent agent-loop drives, one **instance per dataset row**.
 implements a single async contract (`BaseTextEnv`) and is selected by name through a small
 registry. The smoke env (`TinyGuess`) runs fully in-process; the research envs (`WebShop`,
 `ALFWorld`) are **thin HTTP clients** to per-client remote services that wrap the heavy real
-environments (which live in `third_party/verl-agent` and ship their own conflicting deps).
+environments (whose engines are vendored under `envs/<name>/engine/` and ship their own conflicting deps).
 
 This package is a thin overlay on stock verl 0.8 — see [`../README.md`](../README.md) for the
 project overview, and [`../agent_loops/`](../agent_loops/) for the loop that drives these envs.
