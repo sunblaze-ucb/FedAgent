@@ -2,71 +2,55 @@
 
 The **Hardness** task-heterogeneity arm partitions train goals into *easy* / *hard*
 by a per-goal success label from a **reference policy**, then Beta-allocates the easy
-goals across clients (dispersion = `success_std` = ξ′). That partition
-([`../../hetero/webshop_hardness.py`](../../hetero/webshop_hardness.py), ported verbatim
-from the original verl-agent) **requires** a labels file — there is no usable default.
+goals across clients (dispersion = `success_std` = ξ′). The partition
+([`../../hetero/webshop_hardness.py`](../../hetero/webshop_hardness.py) for WebShop;
+the ALFWorld branch of the vendored
+[`partition_strategy.py`](../../envs/alfworld/engine/agent_system/environments/partition_strategy.py))
+**requires** a labels file — there is no usable default.
 
-This folder holds those labels.
+These are the **original FedAgent reference labels**, produced by the paper's **trained
+checkpoint** (a Qwen2.5-1.5B policy fine-tuned on each benchmark — *not* zero-shot), via
+the original verl-agent inference pipeline (`scripts/inference/run_{webshop,alfworld}_inference.sh`,
+Sept 2025), and copied verbatim from the original `output/inference/` summaries.
 
-| file | env | reference policy | coverage | easy rate |
+| file | env | reference | coverage | easy rate |
 |---|---|---|---|---|
-| `qwen2.5-1.5b_webshop_trajectories.json` | WebShop | Qwen2.5-1.5B-Instruct, zero-shot, greedy | 2,498 goals | 36 (1.4 %) |
-| `qwen2.5-1.5b_alfworld_trajectories.json` | ALFWorld | — | **not generated** | — |
+| `qwen2.5-1.5b_webshop_trajectories.json` | WebShop | trained Qwen2.5-1.5B | 6,402 goals (full train pool) | 1,780 (27.8 %) |
+| `qwen2.5-1.5b_alfworld_trajectories.json` | ALFWorld | trained Qwen2.5-1.5B | 3,553 games (full train pool) | 2,112 (59.4 %) |
 
 ## Schema
 
 ```json
-{ "trajectories": [
-    { "task_info": { "task_id": "<asin>_<md5(goal_options)>" },
-      "traj_info": { "success": false } },
+{ "metadata": { ... },
+  "trajectories": [
+    { "task_info": { "task_id": "<key>" }, "traj_info": { "success": false } },
     ...
 ] }
 ```
 
-`task_id` is computed by the **exact** formula `hardness_partition` keys on
-(`f"{asin}_{abs(md5(sorted(goal_options.items())))}"`, else asin+instruction hash, else
-asin). The labelling service derives it from the env's real `server.goals` via the same
-function, so labels match the partition **by construction** — no asin-vs-options-hash drift.
-`success` is a **strict binary**: `True` iff the episode ended with a *perfect* WebShop
-match (`done and dense_score == 1.0`), mirroring the original verl-agent reward
-(`envs.py:32-40`) and the partition loader (which reads `traj_info.success` as a bool).
+The partition reads only `trajectories` (the `metadata` block records provenance and is
+ignored). `success` is a **strict binary** (the episode achieved the benchmark's success
+condition). `task_id` matches the partition's keying **by construction** — both the labels
+and the partition come from the same verl-agent code:
+- **WebShop**: `f"{asin}_{abs(md5(sorted(goal_options.items())))}"` (e.g.
+  `B07WMMYB6G_18488311…`).
+- **ALFWorld**: `f"alfworld_{task_type_dir}_{trial_dir}_game"` (e.g.
+  `alfworld_pick_clean_then_place_in_recep-Plate-None-DiningTable-19_trial_T2019…_game`).
 
-## How the WebShop file was generated
+## Regenerating
 
-```bash
-python -m tools.verl08_migration.gen_hardness_trajectories \
-    --config fedagent/config/fed_webshop_scaled_hardness.yaml \
-    --model  <Qwen2.5-1.5B-Instruct snapshot> \
-    --num-goals 2500 \
-    --output fedagent/data/hardness/qwen2.5-1.5b_webshop_trajectories.json --n-gpus 4
-```
-
-The generator ([`../../../tools/verl08_migration/gen_hardness_trajectories.py`](../../../tools/verl08_migration/gen_hardness_trajectories.py))
-reuses the overlay end to end: it starts a WebShop service on the **train** split / full
-unperturbed catalog with `FEDAGENT_LOG_GOAL_ID=1`, runs a `val_only` pass of the reference
-model (one greedy trajectory per goal), and aggregates per-`task_id` success into the file
-above. 2,500 goals were labelled (contiguous train goals `[500:3000]`); 2 collided on
-`task_id` → 2,498 unique.
-
-## Caveat — sparse easy pool (read before reproducing the Hardness arm)
-
-The 1.4 % easy rate is the **true strict-success rate of the zero-shot Qwen2.5-1.5B
-reference** on WebShop — it is *faithful*, not a bug (WebShop's dense graded score is
-computed but the label, like the original, is strict perfect-match success). But 36 easy
-goals is a **small easy pool**: at the paper's 100-client scale the Beta allocation has
-little room to spread, so the *magnitude* of the Hardness heterogeneity signal will be
-muted. The arm still runs and `success_std=1` vs `256` still produce different allocations.
-
-To strengthen the signal, regenerate with any of:
-- **More coverage** — `--num-goals 6410` (the whole train pool; ~80 min on 4×H100).
-- **A stronger reference** — pass a fine-tuned / few-shot checkpoint via `--model`; a
-  reference that succeeds on a larger fraction yields a more balanced easy/hard split.
+The labels depend on the reference policy, so regenerate per backbone if you change it:
+- **WebShop**: the overlay ships a generator — run it with a **trained** checkpoint as the
+  reference (NOT the base instruct model; zero-shot Qwen2.5-1.5B strictly succeeds on only
+  ~1.4 % of goals, which collapses the easy/hard split):
+  ```bash
+  python -m tools.verl08_migration.gen_hardness_trajectories \
+      --config fedagent/config/fed_webshop_scaled_hardness.yaml \
+      --model <trained Qwen2.5-1.5B checkpoint> --num-goals 6410 \
+      --output fedagent/data/hardness/qwen2.5-1.5b_webshop_trajectories.json
+  ```
+- **ALFWorld**: there is no overlay-native generator; the shipped labels come from the
+  original verl-agent inference pipeline (`run_alfworld_inference.sh` over the train split).
+  Regenerating requires that pipeline (or a port of it) with a trained checkpoint.
 
 Both keep the schema identical, so no config change is needed — just overwrite the file.
-
-## ALFWorld — not yet generated
-
-The 4 ALFWorld Hardness configs reference `qwen2.5-1.5b_alfworld_trajectories.json`, but the
-generator is **WebShop-only** (it drives a WebShop service and keys on `asin`). ALFWorld
-labels need a separate reference pass keyed on the game id; that generator does not exist
-yet, so the ALFWorld Hardness arm remains blocked. The configs are marked accordingly.

@@ -3,11 +3,12 @@
 # (fedagent/hetero/webshop_hardness.py). Qwen2.5-1.5B @ 15 turns, 2x4.
 #
 # hardness REQUIRES `trajectories_file` (task_id -> success labels) to grade goal difficulty.
-# Reference-policy labels (Qwen2.5-1.5B) SHIP in data/hardness/ -- this smoke points at them
-# below, so it runs out of the box. They cover a subset of train goals (see
-# data/hardness/README.md); to regenerate the FULL pool:
+# Trained-checkpoint reference labels (Qwen2.5-1.5B, full train pool, 27.8% easy) SHIP in
+# data/hardness/ -- this smoke points at them below, so it runs out of the box. To regenerate
+# with a different reference, pass a TRAINED checkpoint (NOT the base model; see
+# data/hardness/README.md -- zero-shot collapses the easy/hard split):
 #   python -m tools.verl08_migration.gen_hardness_trajectories \
-#       --config fedagent/config/fed_webshop_scaled_hardness.yaml --model <ref hf> \
+#       --config fedagent/config/fed_webshop_scaled_hardness.yaml --model <trained ckpt> \
 #       --num-goals 6410 --output fedagent/data/hardness/qwen2.5-1.5b_webshop_trajectories.json
 # Without any labels the service raises FileNotFoundError (by design).
 

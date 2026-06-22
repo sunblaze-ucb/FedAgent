@@ -191,10 +191,11 @@ randomly. Larger `success_std` -> uniform difficulty across clients; `success_st
 -> extreme (some clients see almost only solvable goals, others almost only hard
 ones).
 
-> **Required input — there is no usable default.** `hardness_for_client` raises
-> if `trajectories_file` is missing, and the verbatim body raises
-> `FileNotFoundError` for a bad path. Generate it **once per backbone** (labels
-> depend on the reference policy) with
+> **Shipped input.** The original **trained-checkpoint** labels ship in
+> `data/hardness/` (WebShop + ALFWorld, full train pool), so the Hardness configs run
+> as-is; `hardness_for_client` still raises `FileNotFoundError` for a bad path. Labels
+> depend on the reference policy, so regenerate **per backbone** with a **trained**
+> checkpoint (the base/zero-shot model collapses the easy/hard split) via
 > `tools/verl08_migration/gen_hardness_trajectories.py`, which writes labels keyed
 > on the **exact** `task_id` formula the partitioner uses:
 > ```python

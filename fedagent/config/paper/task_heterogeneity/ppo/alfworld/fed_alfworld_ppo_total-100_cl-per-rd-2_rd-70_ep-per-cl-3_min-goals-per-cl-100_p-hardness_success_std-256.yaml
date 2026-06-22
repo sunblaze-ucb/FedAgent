@@ -32,7 +32,7 @@ alfworld_base_port: 8551
 # --- heterogeneity ---
 partition_strategy: hardness
 success_std: 256
-trajectories_file: data/hardness/qwen2.5-1.5b_alfworld_trajectories.json   # REQUIRED, NOT shipped: ALFWorld needs a separate reference pass (generator is WebShop-only) -- see data/hardness/README.md
+trajectories_file: data/hardness/qwen2.5-1.5b_alfworld_trajectories.json   # trained-checkpoint reference labels (shipped; see data/hardness/README.md)
 
 client_overrides:
   - data.train_batch_size=64

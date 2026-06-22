@@ -247,15 +247,9 @@ def build_config(header, *, env_kind, algo, model, total, m, t, e, seed, min_goa
     if partition == "hardness":
         tag = "qwen2.5-1.5b"   # het backbone
         traj = f"data/hardness/{tag}_{env_kind}_trajectories.json"
-        if env_kind == "webshop":
-            # WebShop reference-policy labels are produced by gen_hardness_trajectories.py and
-            # ship in data/hardness/ (qwen2.5-1.5b); see data/hardness/README.md for coverage.
-            note = ("# reference-policy labels (see data/hardness/README.md); "
-                    "regenerate via tools/verl08_migration/gen_hardness_trajectories.py")
-        else:
-            # ALFWorld labels need a SEPARATE reference pass -- the generator is WebShop-only.
-            note = ("# REQUIRED, NOT shipped: ALFWorld needs a separate reference pass "
-                    "(generator is WebShop-only) -- see data/hardness/README.md")
+        # Trained-checkpoint reference labels for BOTH envs ship in data/hardness/
+        # (full train pool; see data/hardness/README.md for provenance + regeneration).
+        note = "# trained-checkpoint reference labels (shipped; see data/hardness/README.md)"
         lines.append(f"trajectories_file: {traj}   {note}")
     lines += ["", "client_overrides:"]
     lines += [f"  - {o}" for o in client_overrides(is_ppo, GROUP_SIZE, env_kind)]

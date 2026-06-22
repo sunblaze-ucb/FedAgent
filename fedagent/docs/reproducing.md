@@ -33,29 +33,34 @@ CLI overrides). This is **scientific-equivalence** reproduction, not bit-identic
   (e.g. `Qwen/Qwen2.5-1.5B-Instruct`) which auto-downloads. On an offline cluster
   pass `--model-path <local snapshot>` to point at a pre-fetched directory.
 
-> ### ⚠️ The Hardness arm needs a generated labels file (absent by design)
+> ### ℹ️ The Hardness arm uses a shipped reference-labels file
 >
 > The **task-heterogeneity Hardness** configs (`p-hardness_success_std-*`) are the
-> **only** cells with a required external input. Each references a
-> `trajectories_file` — a `task_id`→success-label map produced by a reference
-> policy — that is **not shipped**; `data/hardness/` is deliberately absent from
-> the repo. **Generate it before running any Hardness cell**, or the run aborts at
-> service start:
->
-> ```bash
-> python tools/verl08_migration/gen_hardness_trajectories.py \
->   --config fedagent/config/fed_webshop_scaled_hardness.yaml \
->   --model  Qwen/Qwen2.5-1.5B-Instruct --num-goals 6410 \
->   --output data/hardness/qwen2.5-1.5b_webshop_trajectories.json
-> ```
+> **only** cells with a required external input: each references a
+> `trajectories_file` — a `task_id`→success-label map from a reference policy.
+> **These ship in `data/hardness/`** (the original **trained-checkpoint** labels —
+> Qwen2.5-1.5B fine-tuned, full train pool: WebShop 6,402 goals / 27.8 % easy,
+> ALFWorld 3,553 games / 59.4 % easy), so the Hardness cells run out of the box.
 >
 > The eight Hardness configs reference exactly two paths —
 > `data/hardness/qwen2.5-1.5b_webshop_trajectories.json` and
 > `data/hardness/qwen2.5-1.5b_alfworld_trajectories.json` (the het backbone is
-> Qwen2.5-1.5B for both envs). The generator rolls the zero-shot reference policy
-> over the training pool, labels each goal easy/hard, and writes the
-> `{"trajectories": [{"task_info": {"task_id": ...}, "traj_info": {"success": ...}}, ...]}`
-> schema the partitioner consumes. See
+> Qwen2.5-1.5B for both envs). To regenerate with a different backbone, use a
+> **trained** checkpoint as the reference (NOT the base instruct model — zero-shot
+> strictly succeeds on only ~1.4 % of WebShop goals, which collapses the easy/hard
+> split):
+>
+> ```bash
+> python -m tools.verl08_migration.gen_hardness_trajectories \
+>   --config fedagent/config/fed_webshop_scaled_hardness.yaml \
+>   --model  <trained Qwen2.5-1.5B checkpoint> --num-goals 6410 \
+>   --output fedagent/data/hardness/qwen2.5-1.5b_webshop_trajectories.json
+> ```
+>
+> (ALFWorld labels come from the original verl-agent inference pipeline.) The
+> schema is `{"trajectories": [{"task_info": {"task_id": ...}, "traj_info":
+> {"success": ...}}, ...]}`. See
+> [`../data/hardness/README.md`](../data/hardness/README.md) and
 > [`./heterogeneity.md`](./heterogeneity.md#the-hardness-labels-file).
 
 - **ALFWorld arms** drive episodes at `max_turns: 50` (the original
