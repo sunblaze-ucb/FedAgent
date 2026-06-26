@@ -5,7 +5,8 @@
 <h1 align="center">FedAgent: A Library for Decentralized Agent Learning</h1>
 
 <p align="center">
-  <em>Train LLM agents collaboratively across decentralized clients, without sharing local data.</em>
+  <!-- <em>Train LLM agents collaboratively across decentralized clients, without sharing local data.</em> -->
+  <em>Train agents on everyone’s experience without anyone sharing it.</em>
 </p>
 
 <p align="center">
