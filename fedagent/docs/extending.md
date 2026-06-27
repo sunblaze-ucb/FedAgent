@@ -379,7 +379,7 @@ if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
   value head on the backbone). For this to work the PPO config **must** include
   `critic.checkpoint.save_contents=[model]` (and `...actor.checkpoint.save_contents=[model]`)
   in `client_overrides`, so the aggregator finds the value-model weights. See
-  `fedagent/config/fed_webshop_scaled_ppo.yaml`.
+  `fedagent/config/examples/webshop/scaled/ppo.yaml`.
 
 ### What federating a new algorithm entails
 
@@ -487,18 +487,24 @@ root is auto-imported by CPython at interpreter startup in **every** process on
 
 ```python
 # sitecustomize.py (repo root)
-import os
-if os.environ.get("FEDPROX_MU"):
-    try:
-        from fedagent.fedprox import maybe_enable_from_env
-        maybe_enable_from_env()
-    except Exception:
+import importlib.util, os
+mu = float(os.environ.get("FEDPROX_MU", "0") or "0")
+if mu > 0:
+    if importlib.util.find_spec("verl") is None:
         pass   # non-trainer env (e.g. a service conda env without verl) -> silent no-op
+    else:
+        from fedagent.fedprox import install_deferred_patch
+        if not install_deferred_patch(mu):   # arms a meta-path hook; fail CLOSED
+            raise RuntimeError("FedProx requested (FEDPROX_MU>0) but the patch could not be armed")
 ```
 
-`fedagent/fedprox.py` monkeypatches `FSDPEngine.optimizer_step` (verl
-`verl/workers/engine/fsdp/transformer_impl.py`): snapshot `w_t` on the first call, then
-add the proximal gradient per local shard (FSDP1 sharded view / FSDP2 DTensor — the
+`install_deferred_patch` arms a `sys.meta_path` finder that monkeypatches
+`FSDPEngine.optimizer_step` on verl's **first** import of
+`verl/workers/engine/fsdp/transformer_impl.py` — which happens *after* the Ray worker has
+its per-rank `CUDA_VISIBLE_DEVICES` set. (Importing `FSDPEngine` eagerly here at interpreter
+startup would pull in torch/verl before device assignment and break per-rank GPU isolation
+at multi-GPU, "Duplicate GPU detected".) The patch snapshots `w_t` on the first call, then
+adds the proximal gradient per local shard (FSDP1 sharded view / FSDP2 DTensor — the
 elementwise `grad.add_` is correct on each shard) before the original step. The driver
 sets `FEDPROX_MU` per client when `fedprox_mu > 0`; plain FedAvg leaves `mu = 0` (a
 no-op, and `fedagent` is never even imported). Eval always strips `FEDPROX_MU`.
@@ -517,7 +523,7 @@ rounds, 1 step/client/round — closes the full federated loop in minutes, no se
 
 ```bash
 # inside the fedagent-verl08 conda env, on a GPU node
-python -m fedagent.fed.run_fed --config fedagent/config/fed_tinyguess_2cl_2rd.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml
 ```
 
 This trains each client (`python -m fedagent.main_ppo_fed`), FedAvgs the two clients'
@@ -527,7 +533,7 @@ from the aggregated model. A clean run ends with `FEDERATED LOOP CLOSED` and wri
 `started_from → aggregated_hf`). CLI flags override the YAML:
 
 ```bash
-python -m fedagent.fed.run_fed --config fedagent/config/fed_tinyguess_2cl_2rd.yaml \
+python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml \
     --rounds 3 --clients 4 --n-gpus 2 --output-dir /tmp/my_smoke
 ```
 
@@ -538,7 +544,7 @@ What to check per extension point:
 | **A new in-process env** | point `env_spec` at your `config/envs/<env>.yaml` — it resolves, rolls out, and aggregates | full run on real data |
 | **A service-backed env** | (TinyGuess can't test the service) | set `env_kind: <env>`, watch `/health` come up, confirm episodes step |
 | **A heterogeneity strategy** | set `partition_strategy` + knobs; confirm the service `/health` echoes your partition and per-client slices differ | the het arm under [`./reproducing.md`](./reproducing.md) |
-| **A new algorithm** | set `adv_estimator`; for a critic-bearing algo confirm both components FedAvg/merge | `fed_webshop_scaled_ppo.yaml` as the PPO template |
+| **A new algorithm** | set `adv_estimator`; for a critic-bearing algo confirm both components FedAvg/merge | `examples/webshop/scaled/ppo.yaml` as the PPO template |
 | **An aggregation rule** | run `--phase verify` on a real round's shards | a multi-round run, diffing against average-of-clients |
 
 For the run-mode/GPU matrix and the federated-key reference see

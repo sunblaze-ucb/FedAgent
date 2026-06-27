@@ -3,9 +3,9 @@
 # config/ tree (structure + naming); contents are verl-0.8 run_fed.py configs.
 
 env_kind: alfworld
-env_spec: config/envs/alfworld.yaml
+env_spec: config/envs/alfworld_ppo.yaml
 val_env_spec: config/envs/alfworld_val.yaml
-output_dir: /tmp/xbb9020_fedpaper/task_heterogeneity/alfworld_ppo_coverage
+output_dir: /tmp/xbb9020_fedpaper/task_heterogeneity/ppo/alfworld/fed_alfworld_ppo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-coverage_std-1
 model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 adv_estimator: gae                                  # PPO: federate actor + critic
@@ -27,7 +27,8 @@ val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 100
 alfworld_pool_size: 8
-alfworld_base_port: 8548
+alfworld_base_port: 48192
+alfworld_val_port: 48292
 
 # --- heterogeneity ---
 partition_strategy: coverage

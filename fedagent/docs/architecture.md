@@ -218,8 +218,13 @@ trainer (fedagent-verl08)  ──HTTP──>  client 0 service (verl-agent-websh
                            ──HTTP──>  shared unperturbed VAL service (:8090)
 ```
 
-`run_fed.py` launches one service per participating client (`start_webshop_services` /
-`start_alfworld_services`), waits for each `/health`, and tears them down at the end. The
+(Only the round's selected clients are up at once, so **at most `clients_per_round`
+per-client services are alive simultaneously** — not the whole fleet.)
+
+`run_fed.py` starts the per-client services **lazily each round** (only that round's
+selected clients) via `start_webshop_services` / `start_alfworld_services`, waits for each
+`/health`, and **tears them down per round, before aggregation**; only the shared
+unperturbed VAL service stays up for the whole run and is stopped at the end. The
 services `sys.path`-inject the vendored engine from `fedagent/envs/<name>/engine/` — the **same
 code the original FedAgent used**, so the environment MDP is unchanged (see
 [migration.md](./migration.md)). This isolation is also why the service packages live at the

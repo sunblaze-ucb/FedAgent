@@ -160,9 +160,13 @@ FedProx is injected **without** a Ray `runtime_env` hook (which would clobber ve
 per-worker `CUDA_VISIBLE_DEVICES`): the driver sets `FEDPROX_MU` in each client's
 environment, and the repo-root [`sitecustomize.py`](../../sitecustomize.py) — auto-imported
 at interpreter startup in every process on `PYTHONPATH` — calls
-`fedagent.fedprox.maybe_enable_from_env()`, which monkeypatches
-`FSDPEngine.optimizer_step`. Eval passes scrub `FEDPROX_MU` so the proximal term never
-fires during validation. Adding a new aggregation rule → [extending.md](./extending.md).
+`fedagent.fedprox.install_deferred_patch()` (fail-closed when `verl` is present). That arms a
+`sys.meta_path` hook which monkeypatches `FSDPEngine.optimizer_step` the moment verl first
+imports its FSDP-engine module — i.e. **after** the Ray worker has its per-rank
+`CUDA_VISIBLE_DEVICES` set. (Importing `FSDPEngine` eagerly at interpreter startup instead
+pulls in torch/verl before device assignment and breaks per-rank GPU isolation at multi-GPU,
+"Duplicate GPU detected".) Eval passes scrub `FEDPROX_MU` so the proximal term never fires
+during validation. Adding a new aggregation rule → [extending.md](./extending.md).
 
 ## 6. Baselines
 

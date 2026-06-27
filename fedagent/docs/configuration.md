@@ -192,7 +192,7 @@ decentralized ablations vary exactly one of these tokens.
 | `p-rank_wrapper_N-<n>` | `rank_wrapper` | `variant_n` | env — Rank Wrapper |
 
 The ALFWorld env-het analogue (not in the filename grammar above; used in the hand-written
-`fed_alfworld_paper.yaml`) is `partition_strategy: env_disjoint` — disjoint per-client game
+`examples/alfworld/paper.yaml`) is `partition_strategy: env_disjoint` — disjoint per-client game
 shards. Its WebShop task-only sibling is `task_disjoint` (disjoint goals, full catalog).
 
 ### Sweep endpoints

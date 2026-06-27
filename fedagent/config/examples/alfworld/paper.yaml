@@ -6,13 +6,14 @@
 #
 # ALFWorld has ~3.5k solvable train games, so the client count is smaller than WebShop's 100
 # (min_goals_per_client=100 => up to ~35 clients); 8 clients x 2/round keeps >=100 games each.
-# Protocol otherwise matches the paper: E=3, T=70, 4-GPU FSDP. Qwen2.5-1.5B @ 12-turn budget.
+# Protocol otherwise matches the paper: E=3, T=70, 4-GPU FSDP. Qwen2.5-1.5B @ 50-turn budget
+# (matches the original ALFWorld max_steps=50; see config/envs/alfworld.yaml).
 
 env_kind: alfworld
 env_spec: config/envs/alfworld.yaml
 val_env_spec: config/envs/alfworld_val.yaml          # unperturbed 274-game in-distribution eval
 output_dir: /tmp/xbb9020_fedpaper_alfworld
-model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 total_clients: 8
 clients_per_round: 2

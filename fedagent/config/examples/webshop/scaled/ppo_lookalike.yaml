@@ -1,6 +1,6 @@
 # PPO (adv_estimator=gae) x ENV-heterogeneity (Lookalike Injection) -- the algorithm-ablation
 # arm: does the Input-Dynamics Asymmetry (env-het hurts FedAvg) still hold under PPO+critic,
-# not just GRPO? Same lookalike partition + kwargs as fed_webshop_scaled_lookalike.yaml; only
+# not just GRPO? Same lookalike partition + kwargs as examples/webshop/scaled/lookalike.yaml; only
 # the algorithm changes (gae + a federated critic). Mirrors the original
 # env_heterogeneity/lookalike_injection_ppo arm. Qwen2.5-1.5B @ 15 turns, 2 clients x 4 rounds,
 # 4 GPUs. The federated critic is FedAvg'd + carried forward exactly like the actor (run_fed).
@@ -8,7 +8,7 @@
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
 output_dir: /tmp/xbb9020_fedagent_scaled_ppo_lookalike
-model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 adv_estimator: gae
 

@@ -48,7 +48,7 @@ def generate_client_sizes(C, low, center, high, dispersion_s, target_sum, rng):
     elif target_sum > C * high:
         print(f"Warning: target_sum {target_sum} > C*high {C*high}, adjusting target_sum")
         target_sum = C * high
-    
+
     mu = (center - low) / (high - low) if high > low else 0.5
     mu = min(max(mu, 1e-6), 1 - 1e-6)
     s = max(dispersion_s, 2e-3)
@@ -83,7 +83,7 @@ def generate_client_sizes(C, low, center, high, dispersion_s, target_sum, rng):
             idxs = np.where(room > 0)[0]
             for i in idxs[:(-diff)]:
                 sizes[i] -= 1
-    
+
     # Final reconciliation: if the sum still does not match (e.g. the bounds left
     # no room in the loop above), force it into agreement.
     final_sum = sizes.sum()
@@ -168,7 +168,7 @@ def assign_with_overlap(N, sizes, r, rng):
             for c in choices:
                 client_sets[c].add(sample_id)
                 remaining[c] -= 1
-    
+
     # Inspect the result; if fewer assignments were made than required, top up.
     actual_assign = sum(len(s) for s in client_sets)
     if actual_assign < total_assign:
@@ -195,5 +195,5 @@ def assign_with_overlap(N, sizes, r, rng):
     final_assign = sum(len(s) for s in client_sets)
     if final_assign != total_assign:
         print(f"Warning: Assignment mismatch - expected {total_assign}, got {final_assign}")
-    
+
     return client_sets, k

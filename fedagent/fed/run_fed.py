@@ -31,7 +31,7 @@ verl-agent 0.3.1 base bash script (core/fed/script_builder.py) and assumes a
 checkpoints -- none of which the thin overlay uses. This is its verl-0.8 successor.
 
 Usage (run inside the fedagent-verl08 env, on the GPU node):
-    python -m fedagent.fed.run_fed --config fedagent/config/fed_tinyguess_2cl_2rd.yaml
+    python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml
 CLI flags override the YAML: --model-path --output-dir --rounds --clients.
 """
 import argparse
@@ -164,9 +164,9 @@ def critic_dir_for(actor_dir: Optional[Path]) -> Optional[Path]:
     """The critic FSDP-shard dir saved alongside an actor dir (PPO/gae), or None (GRPO).
 
     verl saves PPO's value model to ``global_step_K/critic`` next to ``actor`` (same world
-    size, same ``model_world_size_*_rank_*.pt`` layout + ``huggingface/`` config whose
-    architecture is ``...ForTokenClassification`` -- so it FedAvgs + merges with the exact
-    actor machinery). GRPO writes no critic, so this returns None and the critic path is
+    size, same ``model_world_size_*_rank_*.pt`` layout + a ``huggingface/`` config that
+    serializes as ``...ForCausalLM`` with a scalar value head -- so it FedAvgs + merges with the
+    exact actor machinery). GRPO writes no critic, so this returns None and the critic path is
     skipped entirely."""
     if actor_dir is None:
         return None
@@ -214,63 +214,78 @@ def webshop_service_url(cfg, client_id: int) -> str:
     return f"http://localhost:{cfg.webshop_base_port + client_id}"
 
 
-def start_webshop_services(cfg, env_base: dict) -> List[dict]:
-    """Launch ONE WebShop remote service per client (Design A: one service == one
-    client's environment / hidden transition kernel). Each service builds its whole
-    env pool with that client's Catalog-Split variant (via env-var bridge). Returns
-    handles for teardown. Raises if any service fails to come up healthy."""
+def start_webshop_services(cfg, env_base: dict, client_ids: Optional[List[int]] = None) -> List[dict]:
+    """Launch ONE WebShop remote service per client in ``client_ids`` (Design A: one service
+    == one client's environment / hidden transition kernel). Each service builds its whole
+    env pool with that client's Catalog-Split variant (via env-var bridge). Returns handles
+    for teardown. Raises if any service fails to come up healthy.
+
+    ``client_ids`` defaults to ALL participating clients; run_fed passes only the ROUND's
+    selected clients (lazy per-round startup), so an N=100 config never starts 100 services
+    at once -- at most ``clients_per_round`` are alive at a time. The per-client shard is a
+    function of CLIENT_ID/CLIENT_NUM (round-independent), so lazy startup is reproducible."""
     import urllib.request
 
+    if client_ids is None:
+        client_ids = participating_client_ids(cfg)
+    # Launch + health-wait inside a try so a PARTIAL-startup failure (a later service in this
+    # batch dies / times out) tears down the ones already Popen'd -- otherwise the caller's
+    # `round_services = start_*_services(...)` never binds (the call raised), its finally sees
+    # [] and stop_services([]) is a no-op, leaking uvicorn procs + their bound ports.
     services = []
-    for c in participating_client_ids(cfg):
-        port = cfg.webshop_base_port + c
-        env = dict(env_base)
-        env.update({
-            "WEBSHOP_PORT": str(port),
-            "WEBSHOP_POOL_SIZE": str(cfg.webshop_pool_size),
-            "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 200)),
-            "PARTITION_STRATEGY": cfg.partition_strategy or "",
-            "CLIENT_ID": str(c),
-            "CLIENT_NUM": str(cfg.total_clients),
-            "ENV_DIV": str(cfg.env_div),
-            "KEEP_RATIO": str(cfg.keep_ratio),
-            "OMEGA": str(cfg.get("omega", 0.5)),
-            "SIZE_STD": str(cfg.get("size_std", 1.0)),
-            "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
-            "VARIANT_N": (str(cfg.get("variant_n")) if cfg.get("variant_n", 0) else ""),
-            "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
-            "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
-        })
-        log_path = Path(cfg.output_dir) / f"webshop_service_client{c}.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        lf = open(log_path, "w")
-        log(f"starting WebShop service client {c} on :{port} "
-            f"(pool={cfg.webshop_pool_size}, partition={cfg.partition_strategy or 'none'}, "
-            f"env_div={cfg.env_div})  (log: {log_path})")
-        proc = subprocess.Popen(["bash", str(cfg.webshop_run_service)], env=env,
-                                stdout=lf, stderr=subprocess.STDOUT)
-        services.append({"client_id": c, "port": port, "proc": proc, "log": log_path, "lf": lf})
+    try:
+        for c in client_ids:
+            port = cfg.webshop_base_port + c
+            env = dict(env_base)
+            env.update({
+                "WEBSHOP_PORT": str(port),
+                "WEBSHOP_POOL_SIZE": str(cfg.webshop_pool_size),
+                "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 200)),
+                "PARTITION_STRATEGY": cfg.partition_strategy or "",
+                "CLIENT_ID": str(c),
+                "CLIENT_NUM": str(cfg.total_clients),
+                "ENV_DIV": str(cfg.env_div),
+                "KEEP_RATIO": str(cfg.keep_ratio),
+                "OMEGA": str(cfg.get("omega", 0.5)),
+                "SIZE_STD": str(cfg.get("size_std", 1.0)),
+                "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
+                "VARIANT_N": (str(cfg.get("variant_n")) if cfg.get("variant_n", 0) else ""),
+                "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
+                "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
+            })
+            log_path = Path(cfg.output_dir) / f"webshop_service_client{c}.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            lf = open(log_path, "w")
+            log(f"starting WebShop service client {c} on :{port} "
+                f"(pool={cfg.webshop_pool_size}, partition={cfg.partition_strategy or 'none'}, "
+                f"env_div={cfg.env_div})  (log: {log_path})")
+            proc = subprocess.Popen(["bash", str(cfg.webshop_run_service)], env=env,
+                                    stdout=lf, stderr=subprocess.STDOUT)
+            services.append({"client_id": c, "port": port, "proc": proc, "log": log_path, "lf": lf})
 
-    # wait for each to report /health (pool warmup of WebShop envs takes minutes)
-    for s in services:
-        url = f"http://localhost:{s['port']}/health"
-        deadline_polls = int(cfg.service_health_timeout / 3)
-        up = False
-        for _ in range(deadline_polls):
-            if s["proc"].poll() is not None:
-                raise RuntimeError(f"WebShop service client {s['client_id']} DIED; see {s['log']}")
-            try:
-                with urllib.request.urlopen(url, timeout=3) as r:
-                    import json as _json
-                    d = _json.loads(r.read())
-                log(f"WebShop service client {s['client_id']} healthy on :{s['port']} "
-                    f"(partition={d.get('partition')}, catalog_size={d.get('catalog_size')})")
-                up = True
-                break
-            except Exception:
-                time.sleep(3)
-        if not up:
-            raise RuntimeError(f"WebShop service client {s['client_id']} health timeout; see {s['log']}")
+        # wait for each to report /health (pool warmup of WebShop envs takes minutes)
+        for s in services:
+            url = f"http://localhost:{s['port']}/health"
+            deadline_polls = int(cfg.service_health_timeout / 3)
+            up = False
+            for _ in range(deadline_polls):
+                if s["proc"].poll() is not None:
+                    raise RuntimeError(f"WebShop service client {s['client_id']} DIED; see {s['log']}")
+                try:
+                    with urllib.request.urlopen(url, timeout=3) as r:
+                        import json as _json
+                        d = _json.loads(r.read())
+                    log(f"WebShop service client {s['client_id']} healthy on :{s['port']} "
+                        f"(partition={d.get('partition')}, catalog_size={d.get('catalog_size')})")
+                    up = True
+                    break
+                except Exception:
+                    time.sleep(3)
+            if not up:
+                raise RuntimeError(f"WebShop service client {s['client_id']} health timeout; see {s['log']}")
+    except BaseException:
+        stop_services(services)   # no orphaned uvicorn/port survives a partial-startup failure
+        raise
     return services
 
 
@@ -301,63 +316,72 @@ def alfworld_service_url(cfg, client_id: int) -> str:
     return f"http://localhost:{cfg.alfworld_base_port + client_id}"
 
 
-def start_alfworld_services(cfg, env_base: dict) -> List[dict]:
-    """Launch ONE ALFWorld remote service per client (Design A: one service == one
-    client's game shard / hidden transition kernel). Each service builds its textworld
-    env pool from that client's slice of the train games (via the env-var bridge).
-    Mirrors start_webshop_services. Raises if any service fails to come up healthy."""
+def start_alfworld_services(cfg, env_base: dict, client_ids: Optional[List[int]] = None) -> List[dict]:
+    """Launch ONE ALFWorld remote service per client in ``client_ids`` (Design A: one service
+    == one client's game shard / hidden transition kernel). Each service builds its textworld
+    env pool from that client's slice of the train games (via the env-var bridge). Mirrors
+    start_webshop_services, incl. lazy per-round startup: ``client_ids`` defaults to all
+    participating clients; run_fed passes only the round's selected clients. Raises on failure."""
     import urllib.request
 
+    if client_ids is None:
+        client_ids = participating_client_ids(cfg)
+    # partial-startup teardown (see start_webshop_services): a later service failing must not
+    # leak the ones already launched, since the caller's finally would otherwise see [].
     services = []
-    for c in participating_client_ids(cfg):
-        port = cfg.alfworld_base_port + c
-        env = dict(env_base)
-        env.update({
-            "ALFWORLD_PORT": str(port),
-            "ALFWORLD_POOL_SIZE": str(cfg.alfworld_pool_size),
-            "ALFWORLD_TRAIN_EVAL": str(cfg.get("alfworld_train_eval", "train")),
-            "PARTITION_STRATEGY": cfg.partition_strategy or "uniform",
-            "CLIENT_ID": str(c),
-            "CLIENT_NUM": str(cfg.total_clients),
-            "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
-            # task-het knobs (the service forwards only the ones its strategy needs ->
-            # AlfredTWEnv -> partition_dataset): preference(omega)/coverage(size_std)/
-            # hardness(success_std,trajectories_file). uniform/env_disjoint ignore them.
-            "OMEGA": str(cfg.get("omega", 0.5)),
-            "SIZE_STD": str(cfg.get("size_std", 1.0)),
-            "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
-            "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
-        })
-        log_path = Path(cfg.output_dir) / f"alfworld_service_client{c}.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        lf = open(log_path, "w")
-        log(f"starting ALFWorld service client {c} on :{port} "
-            f"(pool={cfg.alfworld_pool_size}, partition={cfg.partition_strategy or 'uniform'}, "
-            f"split={cfg.get('alfworld_train_eval', 'train')})  (log: {log_path})")
-        proc = subprocess.Popen(["bash", str(cfg.alfworld_run_service)], env=env,
-                                stdout=lf, stderr=subprocess.STDOUT)
-        services.append({"client_id": c, "port": port, "proc": proc, "log": log_path, "lf": lf})
+    try:
+        for c in client_ids:
+            port = cfg.alfworld_base_port + c
+            env = dict(env_base)
+            env.update({
+                "ALFWORLD_PORT": str(port),
+                "ALFWORLD_POOL_SIZE": str(cfg.alfworld_pool_size),
+                "ALFWORLD_TRAIN_EVAL": str(cfg.get("alfworld_train_eval", "train")),
+                "PARTITION_STRATEGY": cfg.partition_strategy or "uniform",
+                "CLIENT_ID": str(c),
+                "CLIENT_NUM": str(cfg.total_clients),
+                "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
+                # task-het knobs (the service forwards only the ones its strategy needs ->
+                # AlfredTWEnv -> partition_dataset): preference(omega)/coverage(size_std)/
+                # hardness(success_std,trajectories_file). uniform/env_disjoint ignore them.
+                "OMEGA": str(cfg.get("omega", 0.5)),
+                "SIZE_STD": str(cfg.get("size_std", 1.0)),
+                "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
+                "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
+            })
+            log_path = Path(cfg.output_dir) / f"alfworld_service_client{c}.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            lf = open(log_path, "w")
+            log(f"starting ALFWorld service client {c} on :{port} "
+                f"(pool={cfg.alfworld_pool_size}, partition={cfg.partition_strategy or 'uniform'}, "
+                f"split={cfg.get('alfworld_train_eval', 'train')})  (log: {log_path})")
+            proc = subprocess.Popen(["bash", str(cfg.alfworld_run_service)], env=env,
+                                    stdout=lf, stderr=subprocess.STDOUT)
+            services.append({"client_id": c, "port": port, "proc": proc, "log": log_path, "lf": lf})
 
-    # wait for each to report /health (ALFWorld collects game files -> can take minutes)
-    for s in services:
-        url = f"http://localhost:{s['port']}/health"
-        deadline_polls = int(cfg.service_health_timeout / 3)
-        up = False
-        for _ in range(deadline_polls):
-            if s["proc"].poll() is not None:
-                raise RuntimeError(f"ALFWorld service client {s['client_id']} DIED; see {s['log']}")
-            try:
-                with urllib.request.urlopen(url, timeout=3) as r:
-                    import json as _json
-                    d = _json.loads(r.read())
-                log(f"ALFWorld service client {s['client_id']} healthy on :{s['port']} "
-                    f"(partition={d.get('partition')}, num_games={d.get('num_games')})")
-                up = True
-                break
-            except Exception:
-                time.sleep(3)
-        if not up:
-            raise RuntimeError(f"ALFWorld service client {s['client_id']} health timeout; see {s['log']}")
+        # wait for each to report /health (ALFWorld collects game files -> can take minutes)
+        for s in services:
+            url = f"http://localhost:{s['port']}/health"
+            deadline_polls = int(cfg.service_health_timeout / 3)
+            up = False
+            for _ in range(deadline_polls):
+                if s["proc"].poll() is not None:
+                    raise RuntimeError(f"ALFWorld service client {s['client_id']} DIED; see {s['log']}")
+                try:
+                    with urllib.request.urlopen(url, timeout=3) as r:
+                        import json as _json
+                        d = _json.loads(r.read())
+                    log(f"ALFWorld service client {s['client_id']} healthy on :{s['port']} "
+                        f"(partition={d.get('partition')}, num_games={d.get('num_games')})")
+                    up = True
+                    break
+                except Exception:
+                    time.sleep(3)
+            if not up:
+                raise RuntimeError(f"ALFWorld service client {s['client_id']} health timeout; see {s['log']}")
+    except BaseException:
+        stop_services(services)   # no orphaned uvicorn/port survives a partial-startup failure
+        raise
     return services
 
 
@@ -412,18 +436,22 @@ def start_val_service(cfg, env_base: dict) -> Optional[dict]:
     proc = subprocess.Popen(["bash", str(run_service)], env=env, stdout=lf, stderr=subprocess.STDOUT)
     s = {"client_id": "val", "port": port, "proc": proc, "log": log_path, "lf": lf}
     url = f"http://localhost:{port}/health"
-    for _ in range(int(cfg.service_health_timeout / 3)):
-        if proc.poll() is not None:
-            raise RuntimeError(f"{tag} VAL service DIED; see {log_path}")
-        try:
-            with urllib.request.urlopen(url, timeout=3) as r:
-                import json as _json
-                d = _json.loads(r.read())
-            log(f"{tag} VAL service healthy on :{port} ({health_extra}={d.get(health_extra)})")
-            return s
-        except Exception:
-            time.sleep(3)
-    raise RuntimeError(f"{tag} VAL service health timeout; see {log_path}")
+    try:  # mirror the per-client starters: a death/timeout here must not orphan the uvicorn/port
+        for _ in range(int(cfg.service_health_timeout / 3)):
+            if proc.poll() is not None:
+                raise RuntimeError(f"{tag} VAL service DIED; see {log_path}")
+            try:
+                with urllib.request.urlopen(url, timeout=3) as r:
+                    import json as _json
+                    d = _json.loads(r.read())
+                log(f"{tag} VAL service healthy on :{port} ({health_extra}={d.get(health_extra)})")
+                return s
+            except Exception:
+                time.sleep(3)
+        raise RuntimeError(f"{tag} VAL service health timeout; see {log_path}")
+    except BaseException:
+        stop_services([s])   # caller hasn't received the handle yet -> clean up here before propagating
+        raise
 
 
 def summarize_val_dump(dump_dir: Path) -> Optional[dict]:
@@ -656,8 +684,8 @@ def merge_to_hf(cfg, round_num: int, agg_dir: Path, env_base: dict,
                 kind: str = "actor") -> Path:
     """Merge aggregated FSDP shards -> a complete HF model dir for the next round's model.path
     (actor) or critic.model.path (critic). The merger auto-detects the architecture from the
-    shard's huggingface/config.json (...ForCausalLM for the actor, ...ForTokenClassification
-    for the value model), so no per-kind flag is needed."""
+    shard's huggingface/config.json (both serialize as ...ForCausalLM; the value model just
+    carries an extra scalar value head), so no per-kind flag is needed."""
     sub = "hf" if kind == "actor" else f"{kind}_hf"
     hf_dir = Path(cfg.output_dir) / f"round_{round_num}" / "aggregated" / sub
     cmd = [
@@ -722,24 +750,40 @@ def run(cfg) -> dict:
     if not AGGREGATOR.is_file():
         raise FileNotFoundError(f"aggregator not found: {AGGREGATOR}")
 
-    services = []
-    if cfg.env_kind == "webshop":
-        log(f"env_kind=webshop -> starting {cfg.total_clients} per-client services "
-            f"(partition={cfg.partition_strategy or 'none'}, env_div={cfg.env_div})")
-        services = start_webshop_services(cfg, env_base)
-    elif cfg.env_kind == "alfworld":
-        log(f"env_kind=alfworld -> starting {cfg.total_clients} per-client services "
-            f"(partition={cfg.partition_strategy or 'uniform'}, split={cfg.get('alfworld_train_eval', 'train')})")
-        services = start_alfworld_services(cfg, env_base)
+    # Per-client env services start LAZILY, one round at a time (only that round's selected
+    # clients) -- NOT all N upfront. An N=100 config would otherwise try to start 100 services
+    # / N*pool envs before round 1 for the 2 clients it actually uses (and collide ports). The
+    # shared unperturbed VAL service is the exception: started once, stays up the whole run.
+    # (An LRU service pool could keep recently-used clients warm; lazy per-round is the simplest
+    # correct policy since M-of-N random selection rarely repeats a client.)
+    if cfg.env_kind in ("webshop", "alfworld"):
+        log(f"env_kind={cfg.env_kind} -> per-client services start LAZILY each round "
+            f"(<= clients_per_round={cfg.clients_per_round} alive at a time; "
+            f"partition={cfg.partition_strategy or ('uniform' if cfg.env_kind == 'alfworld' else 'none')})")
 
     # shared unperturbed validation service + the round->val-metrics curve (off unless val_env_spec set)
     do_eval = bool(cfg.get("val_env_spec"))
     val_url = val_service_url(cfg) if do_eval else None
     val_history: List[dict] = []
+    val_services: List[dict] = []
     if do_eval:
+        # guard: the always-on val service port must NOT fall inside the per-client service band
+        # [base, base+total_clients) or that client's service can't bind -> a confusing multi-minute
+        # health hang instead of a clear error. (Generated paper configs are safe; this catches
+        # hand-written/default-port configs, e.g. webshop_base_port=8080 + client 10 == val 8090.)
+        if cfg.env_kind in ("webshop", "alfworld"):
+            _base = int(cfg.webshop_base_port if cfg.env_kind == "webshop" else cfg.alfworld_base_port)
+            _vp = int(cfg.webshop_val_port if cfg.env_kind == "webshop" else cfg.alfworld_val_port)
+            if _base <= _vp < _base + int(cfg.total_clients):
+                raise ValueError(
+                    f"{cfg.env_kind}_val_port={_vp} collides with the per-client service band "
+                    f"[{_base}, {_base + int(cfg.total_clients)}); move {cfg.env_kind}_val_port or "
+                    f"{cfg.env_kind}_base_port so the val service and client services use disjoint ports.")
         log(f"eval ON: unperturbed val every test_freq={cfg.test_freq} rounds "
             f"(val_before_train={cfg.val_before_train}, temp={cfg.val_temperature}) -> {cfg.val_env_spec}")
-        services.append(start_val_service(cfg, env_base))
+        vs = start_val_service(cfg, env_base)
+        if vs:
+            val_services.append(vs)
 
     is_ppo = str(cfg.get("adv_estimator", "grpo")).lower() == "gae"
     if is_ppo:
@@ -776,15 +820,25 @@ def run(cfg) -> dict:
             log(f"round {r} starting model: {current_model}"
                 + (f"  |  critic: {current_critic}" if is_ppo else ""))
 
+            # lazy per-round services: start ONLY this round's selected clients' env services,
+            # train, then tear them down (services aren't needed for aggregation/merge/eval).
+            round_services: List[dict] = []
             client_actors, client_critics = [], []
-            for c in selected:
-                actor, critic = run_client(cfg, r, c, current_model, env_base,
-                                           critic_model_path=current_critic)
-                client_actors.append(actor)
-                if critic is not None:
-                    client_critics.append(critic)
-                if c != selected[-1] and cfg.wait_between_clients > 0:
-                    time.sleep(cfg.wait_between_clients)
+            try:
+                if cfg.env_kind == "webshop":
+                    round_services = start_webshop_services(cfg, env_base, client_ids=selected)
+                elif cfg.env_kind == "alfworld":
+                    round_services = start_alfworld_services(cfg, env_base, client_ids=selected)
+                for c in selected:
+                    actor, critic = run_client(cfg, r, c, current_model, env_base,
+                                               critic_model_path=current_critic)
+                    client_actors.append(actor)
+                    if critic is not None:
+                        client_critics.append(critic)
+                    if c != selected[-1] and cfg.wait_between_clients > 0:
+                        time.sleep(cfg.wait_between_clients)
+            finally:
+                stop_services(round_services)   # free this round's services before aggregation
 
             agg_actor = fedavg(cfg, r, client_actors, env_base, kind="actor")
             hf_dir = merge_to_hf(cfg, r, agg_actor, env_base, kind="actor")
@@ -822,7 +876,7 @@ def run(cfg) -> dict:
                 if m:
                     val_history.append({"round": r, "model": "aggregated", **m})
     finally:
-        stop_services(services)
+        stop_services(val_services)   # round services are torn down per-round; only val remains
 
     summary = {
         "total_clients": cfg.total_clients,
@@ -884,6 +938,14 @@ def load_cfg(args) -> "OmegaConf":
         v = cfg.get(key)
         if v and not os.path.isabs(str(v)):
             cfg[key] = str(PKG_DIR / str(v))
+    if str(cfg.get("partition_strategy", "")).strip().lower() == "hardness":
+        if not cfg.get("trajectories_file"):
+            raise ValueError(
+                "partition_strategy=hardness requires trajectories_file "
+                "(see fedagent/data/hardness/README.md)."
+            )
+        if not Path(str(cfg.trajectories_file)).is_file():
+            raise FileNotFoundError(f"hardness trajectories_file not found: {cfg.trajectories_file}")
     return cfg
 
 

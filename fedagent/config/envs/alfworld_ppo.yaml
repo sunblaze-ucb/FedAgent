@@ -1,0 +1,16 @@
+# ALFWorld env-spec for PPO. n_envs=64 == the original ALFWorld PPO train_data_size
+# (legacy/config/uniform/.../main/ppo/fed_alfworld_ppo_*.yaml:117). GRPO uses alfworld.yaml
+# (n_envs=8 == the original GRPO train_data_size:106); this mirrors the WebShop split
+# (webshop_15.yaml n_envs=8 for GRPO / webshop_15_ppo.yaml n_envs=64 for PPO). Required because
+# the AgenticDataset emits exactly n_envs train rows: with PPO's train_batch_size=64 and
+# drop_last, an n_envs=8 spec yields ZERO full batches -> "Train dataloader is empty!". Same env
+# (remote ALFWorld service, max_turns=50, gym_text concat loop) -- only the train-pool size differs.
+# GPU-VERIFY: confirm no OOM / prompt truncation at 50 turns; raise max_model_len if episodes
+# truncate before done (50*(action+obs) can exceed 16384 on verbose rooms).
+envs:
+  - name: ALFWorld
+    n_envs: 64
+    max_turns: 50   # original ALFWorld max_steps=50 (see GPU-VERIFY note above)
+    agent_name: gym_text
+    config:
+      timeout: 180.0

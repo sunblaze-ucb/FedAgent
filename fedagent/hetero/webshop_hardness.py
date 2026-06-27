@@ -125,7 +125,7 @@ def hardness_partition(
     print(f"Loaded {len(task_success_map)} tasks with success information")
     success_count = sum(task_success_map.values())
     print(f"Success distribution: {success_count}/{len(task_success_map)} tasks succeeded ({success_count/len(task_success_map)*100:.1f}%)")
-    
+
     # Read the success_std parameter from kwargs (kept for backward compatibility).
     if 'success_std' not in kwargs:
         if 'dispersion_s' in kwargs:
@@ -201,7 +201,7 @@ def hardness_partition(
                         task_id = f"{asin}_{abs(instruction_hash)}"
                     else:
                         task_id = asin
-        
+
         if task_id and task_id in task_success_map:
             success = task_success_map[task_id]
             if success:
@@ -270,7 +270,7 @@ def hardness_partition(
     print(f"Hardness partition completed for client {client_id + 1}")
     print(f"  Success samples: {current_success_count}")
     print(f"  Total samples: {len(current_client_data)} (max: {max_samples_per_client})")
-    
+
     return current_client_data
 
 

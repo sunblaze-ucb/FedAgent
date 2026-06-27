@@ -14,7 +14,11 @@ config/
 ├── envs/                      # env specs (one row per episode); -> data.train_files
 │   ├── tiny_guess.yaml        webshop.yaml  webshop_15.yaml  webshop_15_ppo.yaml
 │   └── webshop_15_val.yaml    alfworld.yaml  alfworld_val.yaml
-├── fed_*.yaml                 # hand-written federated-runner smokes (2 clients x 4 rounds)
+├── examples/                  # hand-written federated-runner configs, grouped by env:
+│   ├── tinyguess_2cl_2rd.yaml         #   in-process wiring smoke
+│   ├── webshop/                       #   *_long / probe / fedprox / 2cl_catalog_split smokes
+│   │   └── scaled/                    #   the 15 scaled WebShop arms (homog, task, pref, …, ppo)
+│   └── alfworld/                      #   smoke.yaml + paper.yaml (env-het, 8cl x 70rd)
 └── paper/                     # generated paper matrix (176): uniform/ env_heterogeneity/ task_heterogeneity/ decentralized/
 ```
 
@@ -33,7 +37,7 @@ figure-by-figure reproduction guide.
 | **Hydra base config** | `fedagent_ppo.yaml` | `fedagent.main_ppo_fed` (`@hydra.main(config_name="fedagent_ppo")`) | The single training config for one client; composes verl's stock `ppo_trainer` and overrides only the leaves FedAgent needs. |
 | **Agent registry** | `agent.yaml` | verl's `AgentLoopManager` (via `actor_rollout_ref.rollout.agent.agent_loop_config_path`) | Maps each `agent_name` carried on dataset rows to its `AgentLoopBase` class. |
 | **Env spec** | `envs/*.yaml` | `fedagent.data.agentic_dataset.AgenticDataset` (via `data.train_files` / `data.val_files`) | Declares the env pool: one dataset row per episode (`n_envs` rows, distinct seeds). |
-| **Federated-runner config** | `fed_*.yaml`, `paper/**/*.yaml` | `python -m fedagent.fed.run_fed --config <file>` | Top-level federation knobs; keys map to `run_fed.py`'s `DEFAULTS` dict. Drives the round loop, FedAvg, env services, and validation. |
+| **Federated-runner config** | `examples/**/*.yaml`, `paper/**/*.yaml` | `python -m fedagent.fed.run_fed --config <file>` | Top-level federation knobs; keys map to `run_fed.py`'s `DEFAULTS` dict. Drives the round loop, FedAvg, env services, and validation. |
 
 The runner config is the *outer* layer: `run_fed` reads it, launches per-client env
 services, then shells out to `main_ppo_fed` (which loads `fedagent_ppo.yaml`) once per
@@ -60,9 +64,9 @@ hydra:
 It then overrides only the FedAgent-specific leaves. Notable defaults:
 
 - **Algorithm: GRPO.** `algorithm.adv_estimator: grpo`, `use_kl_in_reward: false`.
-- **GRPO group size G = 8.** `actor_rollout_ref.rollout.n: 8` (the runner's
-  `client_overrides` re-pin `rollout.n` per arm; smokes use 2). PPO arms switch to
-  `adv_estimator: gae` and federate a critic — see below.
+- **GRPO group size.** `actor_rollout_ref.rollout.n: 4` in the base; the runner's
+  `client_overrides` re-pin `rollout.n` per arm (paper arms = 8, smokes = 2). PPO arms
+  switch to `adv_estimator: gae` and federate a critic — see below.
 - **Async multi-turn rollout:** `rollout.name: vllm`, `mode: async`,
   `multi_turn.enable: true`, with `agent.default_agent_loop: gym_text` and
   `agent_loop_config_path` (-> `agent.yaml`) supplied on the CLI.
@@ -108,8 +112,8 @@ separate `*_val.yaml` via `cfg.val_env_spec`.
 | `webshop_15.yaml` | 8 | 15 | WebShop **GRPO** train (`n_envs=8` == original GRPO train_data_size). |
 | `webshop_15_ppo.yaml` | 64 | 15 | WebShop **PPO** train (`n_envs=64` == original PPO train_data_size). |
 | `webshop_15_val.yaml` | 500 | 15 | WebShop validation: held-out `goals[0:500]` on the full catalog. |
-| `alfworld.yaml` | 8 | 12 | ALFWorld train (game shards). |
-| `alfworld_val.yaml` | 140 | 12 | ALFWorld validation: `valid_seen` (in-distribution). |
+| `alfworld.yaml` | 8 | 50 | ALFWorld train (game shards). |
+| `alfworld_val.yaml` | 140 | 50 | ALFWorld validation: `valid_seen` (in-distribution). |
 
 Common row fields: `name`, `n_envs`, `max_turns`, `agent_name` (default `gym_text`), and a
 per-env `config` block (e.g. `timeout`). WebShop/ALFWorld are HTTP clients to per-client
@@ -118,12 +122,13 @@ client by `run_fed`), so it is **not** pinned in the spec.
 
 ---
 
-## `fed_*.yaml` — federated-runner configs
+## `examples/` — hand-written federated-runner configs
 
-These are inputs to `python -m fedagent.fed.run_fed --config config/<file>`. Every key
-corresponds to an entry in `run_fed.py`'s `DEFAULTS` dict; anything omitted falls back to
-the default. The hand-written `fed_*.yaml` files here are fast **smokes** (typically 2
-clients x 4 rounds); the full paper-scale runs live under `paper/`.
+These are inputs to `python -m fedagent.fed.run_fed --config config/examples/<...>.yaml`. Every
+key corresponds to an entry in `run_fed.py`'s `DEFAULTS` dict; anything omitted falls back to
+the default. Most configs under `examples/` are fast **smokes** (typically 2 clients x 4
+rounds); the full paper-scale runs live under `paper/` (a couple — `webshop/*_long`,
+`alfworld/paper` — are longer demos, noted below).
 
 Representative keys (see [`../fed/README.md`](../fed/README.md) for the **full** reference):
 
@@ -154,17 +159,17 @@ client_overrides:                 # extra `key=value` Hydra overrides applied to
   - actor_rollout_ref.rollout.max_model_len=8192
 ```
 
-**Families in this folder** (all smokes unless noted):
+**Families under `examples/`** (all smokes unless noted):
 
-- **`fed_tinyguess_*`** — `fed_tinyguess_2cl_2rd.yaml`: in-process wiring smoke.
-- **`fed_webshop_*`** — `homog_long`, `envhet_long`, `probe_signal`, `fedprox_test`,
+- **`examples/tinyguess_2cl_2rd.yaml`** — in-process wiring smoke.
+- **`examples/webshop/`** — `homog_long`, `envhet_long`, `probe_signal`, `fedprox_test`,
   `2cl_catalog_split`: early WebShop smokes / probes.
-- **`fed_webshop_scaled_*`** — the scaled WebShop arms at the 15-turn budget:
+- **`examples/webshop/scaled/`** — the scaled WebShop arms at the 15-turn budget:
   `homog` (IID anchor), `task`/`pref` (task-het), `coverage`, `hardness`, `catalog`
   (env-het), `envhet_fedprox`, `local`, `centralized`, `lookalike`, `rank`, `bm25field`,
   `bm25reweight`, `ppo`, `ppo_lookalike`. (`hardness` requires a `trajectories_file` —
   generate one with `tools/verl08_migration/gen_hardness_trajectories.py`.)
-- **`fed_alfworld_*`** — `fed_alfworld_smoke.yaml` and `fed_alfworld_paper.yaml`
+- **`examples/alfworld/`** — `smoke.yaml` and `paper.yaml`
   (game-shard env-het, `partition_strategy: env_disjoint`, 8 clients x 70 rounds).
 
 Baseline modes are selected via the same schema: **Centralized** = `total_clients: 1`;

@@ -161,10 +161,10 @@ the `fedagent-verl08` env (WebShop/ALFWorld runs also need their service env ava
 
 ```bash
 # 0) In-process smoke — verifies the federated loop end-to-end, no remote service
-python -m fedagent.fed.run_fed --config fedagent/config/fed_tinyguess_2cl_2rd.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml
 
 # 1) WebShop, homogeneous, GRPO
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_homog_long.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/homog_long.yaml
 
 # 2) A paper cell (WebShop, Qwen2.5-1.5B, main, GRPO) from the 176-config matrix
 python -m fedagent.fed.run_fed \

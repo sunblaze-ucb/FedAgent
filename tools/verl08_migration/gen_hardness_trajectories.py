@@ -25,7 +25,7 @@ configs' trajectories_file at the output. Greedy reference by default (determini
 
 Usage (inside fedagent-verl08, on the GPU node):
     python -m tools.verl08_migration.gen_hardness_trajectories \
-        --config fedagent/config/fed_webshop_scaled_hardness.yaml \
+        --config fedagent/config/examples/webshop/scaled/hardness.yaml \
         --model  /path/to/reference/hf  --num-goals 6410 \
         --output fedagent/data/hardness/webshop_trajectories_qwen1.5b.json [--n-gpus 4]
 """

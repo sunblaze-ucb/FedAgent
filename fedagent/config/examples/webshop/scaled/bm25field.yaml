@@ -1,12 +1,13 @@
-# ENV-heterogeneity Variant 3 (BM25 Reweighting): each client's BM25 scorer uses different
-# k1/b weights -> a distinct ranking transition kernel P_i, goal/task split UNIFORM (full
-# catalog). Verbatim _bm25_variant_partition_webshop (fedagent/hetero/webshop_env_variants.py).
+# ENV-heterogeneity Variant 2 (Field-Subset Index): each client's BM25 index sees a
+# different subset of product fields -> a distinct retrieval transition kernel P_i, with
+# the goal/task split held UNIFORM (full catalog). Verbatim _bm25_variant_partition_webshop
+# (fedagent/hetero/webshop_env_variants.py); kwargs merged into gym.make server-side.
 # Qwen2.5-1.5B @ 15 turns, 2x4. Robust single-run recipe (n_gpus 4, pool 16).
 
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
-output_dir: /tmp/xbb9020_fedagent_scaled_bm25reweight
-model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+output_dir: /tmp/xbb9020_fedagent_scaled_bm25field
+model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 total_clients: 2
 clients_per_round: 2
@@ -19,9 +20,9 @@ total_training_steps: 4
 save_freq: 4
 wait_between_clients: 8
 
-partition_strategy: bm25_reweight      # env-variant V3: reweighted BM25 (k1/b), UNIFORM goals
+partition_strategy: bm25_field_subset  # env-variant V2: field-subset BM25 index, UNIFORM goals
 webshop_pool_size: 16
-webshop_base_port: 8106
+webshop_base_port: 8104
 
 client_overrides:
   - data.train_batch_size=8

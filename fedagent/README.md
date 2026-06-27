@@ -78,13 +78,13 @@ additionally need their own service env (`verl-agent-webshop` / `verl-agent-alfw
 
 ```bash
 # 1) In-process smoke (no remote service) — verifies the federated loop end-to-end
-python -m fedagent.fed.run_fed --config fedagent/config/fed_tinyguess_2cl_2rd.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml
 
 # 2) WebShop, homogeneous, GRPO
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_homog_long.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/homog_long.yaml
 
 # 3) WebShop with task-level heterogeneity (Preference, omega=0.5)
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_pref.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/pref.yaml
 
 # Common CLI overrides (win over the YAML):
 #   --rounds N  --clients N  --n-gpus 4  --base-seed S  --fedprox-mu 0.1  --local-client-id K

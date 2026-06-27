@@ -135,7 +135,7 @@ def coverage_partition(
     print(f"Generated client sizes: {client_sizes}")
     print(f"Current client {client_id} got {len(client_data)} samples")
     print(f"Sample replication counts (min, mean, max): {k.min()}, {k.mean():.3f}, {k.max()}")
-    
+
     return client_data
 
 

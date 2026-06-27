@@ -5,7 +5,7 @@
 env_kind: alfworld
 env_spec: config/envs/alfworld.yaml
 val_env_spec: config/envs/alfworld_val.yaml
-output_dir: /tmp/xbb9020_fedpaper/uniform/alfworld_grpo_uniform
+output_dir: /tmp/xbb9020_fedpaper/uniform/Qwen2.5-3B-Instruct/main/grpo/fed_alfworld_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform
 model_path: Qwen/Qwen2.5-3B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 # --- federation protocol ---
@@ -25,7 +25,8 @@ val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 100
 alfworld_pool_size: 8
-alfworld_base_port: 8429
+alfworld_base_port: 41792
+alfworld_val_port: 41892
 
 # --- heterogeneity ---
 partition_strategy: ""

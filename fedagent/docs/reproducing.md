@@ -52,7 +52,7 @@ CLI overrides). This is **scientific-equivalence** reproduction, not bit-identic
 >
 > ```bash
 > python -m tools.verl08_migration.gen_hardness_trajectories \
->   --config fedagent/config/fed_webshop_scaled_hardness.yaml \
+>   --config fedagent/config/examples/webshop/scaled/hardness.yaml \
 >   --model  <trained Qwen2.5-1.5B checkpoint> --num-goals 6410 \
 >   --output fedagent/data/hardness/qwen2.5-1.5b_webshop_trajectories.json
 > ```
@@ -340,7 +340,7 @@ Each leaf holds the two endpoints of each sub-type:
 
 > **Hardness needs the labels file** — generate
 > `data/hardness/qwen2.5-1.5b_<env>_trajectories.json` first; see the
-> [prerequisites callout](#️-the-hardness-arm-needs-a-generated-labels-file-absent-by-design).
+> [prerequisites callout](#️-the-hardness-arm-uses-a-shipped-reference-labels-file).
 > The other two sub-types need no external input.
 
 ### Run

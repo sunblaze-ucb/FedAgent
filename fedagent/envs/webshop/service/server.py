@@ -153,6 +153,15 @@ elif PARTITION_STRATEGY in ("bm25_field_subset", "bm25_reweight", "lookalike", "
     CATALOG_ASINS = None  # variants perturb dynamics, not the catalog filter
     print(f"[webshop-service] {PARTITION_STRATEGY} client {CLIENT_ID}/{CLIENT_NUM}: "
           f"env_variant_keys={list(ENV_VARIANT_KWARGS)} (UNIFORM goals, FULL catalog)", flush=True)
+elif PARTITION_STRATEGY:  # non-empty but unrecognized -> FAIL FAST (was: silent homogeneous run).
+    # A typo (e.g. legacy 'bm25_reweighting' vs new 'bm25_reweight', or 'distractor_disjoint')
+    # would otherwise fall through every branch -> CLIENT_GOAL_IDXS/CATALOG_ASINS stay None ->
+    # /reset draws uniformly from the full pool/catalog, silently running a HOMOGENEOUS arm.
+    raise ValueError(
+        f"[webshop-service] unknown PARTITION_STRATEGY={PARTITION_STRATEGY!r}; expected one of "
+        "catalog_split, task_disjoint, preference, coverage, hardness, bm25_field_subset, "
+        "bm25_reweight, lookalike, rank_wrapper (or '' for the uniform/centralized baseline)."
+    )
 
 _pool: asyncio.Queue = None
 _sessions: dict = {}
@@ -279,6 +288,9 @@ async def health():
 
 @app.post("/create")
 async def create(r: Sid):
+    if r.session_id in _sessions:
+        return {"ok": True}    # idempotent: a retried /create (lost response) must NOT borrow a
+                               # 2nd env -- that would orphan the 1st and slowly drain the pool.
     env = await _pool.get()  # borrow (waits if the pool is exhausted)
     _sessions[r.session_id] = env
     return {"ok": True}

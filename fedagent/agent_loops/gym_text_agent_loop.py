@@ -76,25 +76,29 @@ class GymTextAgentLoop(AgentLoopBase):
         seed = int(kwargs.get("seed", 0))
         max_turns = int(kwargs.get("max_turns", 6))
 
-        sys_obs = await env.system_prompt()
-        init_obs, _ = await env.reset(seed=seed)
-        messages = [
-            {"role": "system", "content": sys_obs["obs_str"]},
-            {"role": "user", "content": init_obs["obs_str"]},
-        ]
-
-        metrics: Dict[str, Any] = {}
-        prompt_ids = await self._tokenize_chat(messages)
-        cur_ids = list(prompt_ids)
-        response_ids: List[int] = []
-        response_mask: List[int] = []
-        env_rewards: List[float] = []
-        info: Dict[str, Any] = {}   # last-step info; init so the overflow-guard early-break is safe
-        success = False
-        turns = 0
-        n_invalid = 0   # invalid actions this episode (for the invalid-action penalty)
-
+        # Borrow + run the env entirely inside try/finally: reset() does /create+/reset for remote
+        # envs, so if /reset (or tokenize) raises AFTER /create borrowed a pooled session, finally
+        # still runs env.close() to return it. Otherwise that session leaks and -- with block-on-
+        # /create -- the pool eventually starves permanently (no env ever comes back).
         try:
+            sys_obs = await env.system_prompt()
+            init_obs, _ = await env.reset(seed=seed)
+            messages = [
+                {"role": "system", "content": sys_obs["obs_str"]},
+                {"role": "user", "content": init_obs["obs_str"]},
+            ]
+
+            metrics: Dict[str, Any] = {}
+            prompt_ids = await self._tokenize_chat(messages)
+            cur_ids = list(prompt_ids)
+            response_ids: List[int] = []
+            response_mask: List[int] = []
+            env_rewards: List[float] = []
+            info: Dict[str, Any] = {}   # last-step info; init so the overflow-guard early-break is safe
+            success = False
+            turns = 0
+            n_invalid = 0   # invalid actions this episode (for the invalid-action penalty)
+
             for _ in range(max_turns):
                 # Stop before the concat prompt would overflow the server's context window
                 # (it raises if len(prompt) >= max_model_len). Need >=1 token to generate.

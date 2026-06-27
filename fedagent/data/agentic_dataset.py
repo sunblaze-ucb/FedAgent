@@ -81,13 +81,24 @@ class AgenticDataset(Dataset):
     @staticmethod
     def _load_specs(data_files) -> List[Dict[str, Any]]:
         path = data_files[0] if isinstance(data_files, (list, tuple)) else data_files
+        # No path at all -> the built-in TinyGuess smoke (the genuine "no env-spec" case).
+        if not path:
+            return [{"name": "TinyGuess", "n_envs": 64, "max_turns": 6, "config": {"lo": 1, "hi": 50}}]
+        # A path WAS given: FAIL FAST on a missing file / unparseable YAML / no `envs:` list,
+        # rather than silently falling back to the TinyGuess toy env. A misconfigured paper run
+        # (typo'd env_spec, broken YAML) must NOT "succeed" against the wrong training objective.
+        if not os.path.exists(str(path)):
+            raise FileNotFoundError(f"AgenticDataset env-spec not found: {path!r}")
         try:
             cfg = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
-            specs = cfg.get("envs", []) if isinstance(cfg, dict) else []
-        except Exception:
-            specs = []
+        except Exception as e:
+            raise ValueError(f"AgenticDataset could not parse env-spec {path!r}: {e}") from e
+        specs = cfg.get("envs", []) if isinstance(cfg, dict) else []
         if not specs:
-            specs = [{"name": "TinyGuess", "n_envs": 64, "max_turns": 6, "config": {"lo": 1, "hi": 50}}]
+            raise ValueError(
+                f"AgenticDataset env-spec {path!r} has no `envs:` list -- refusing to silently "
+                f"fall back to TinyGuess (pass an empty data_files for the smoke default)."
+            )
         return specs
 
     def _partition_specs(self, specs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

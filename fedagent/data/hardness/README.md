@@ -45,7 +45,7 @@ The labels depend on the reference policy, so regenerate per backbone if you cha
   ~1.4 % of goals, which collapses the easy/hard split):
   ```bash
   python -m tools.verl08_migration.gen_hardness_trajectories \
-      --config fedagent/config/fed_webshop_scaled_hardness.yaml \
+      --config fedagent/config/examples/webshop/scaled/hardness.yaml \
       --model <trained Qwen2.5-1.5B checkpoint> --num-goals 6410 \
       --output fedagent/data/hardness/qwen2.5-1.5b_webshop_trajectories.json
   ```

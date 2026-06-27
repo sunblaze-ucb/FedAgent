@@ -4,7 +4,7 @@
 # (alfworld_val_split: eval_in_distribution=valid_seen / eval_out_of_distribution=valid_unseen).
 # n_envs=140 covers valid_seen for the in-loop round->success curve. For the FULL 274 + the
 # per-task-type breakdown, run tools/verl08_migration/eval_alfworld_by_tasktype.py which evals
-# BOTH splits on the final model. 12-turn budget matches training.
+# BOTH splits on the final model. 50-turn budget matches training.
 envs:
   - name: ALFWorld
     n_envs: 140

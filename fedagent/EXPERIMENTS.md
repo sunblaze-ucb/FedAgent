@@ -90,7 +90,7 @@ the federated loop on the real env. (Qwen0.5B → reward weak; mechanism proof.)
 (client0=762, client1=750 ASINs, Jaccard 0.62), goal slices disjoint, and IDENTICAL under numpy 1.26
 (WebShop env) and 2.2 (trainer env) — `RandomState` is version-stable.
 
-**P — signal probe.** `config/fed_webshop_probe_signal.yaml`. Qwen2.5-1.5B, 15-turn WebShop, 1 client,
+**P — signal probe.** `config/examples/webshop/probe_signal.yaml`. Qwen2.5-1.5B, 15-turn WebShop, 1 client,
 4 steps, full catalog. **critic/rewards/mean = 0.026 → 0.036 → 0.104 → 0.147** (max → 0.857). First
 nonzero, *rising* reward — the env produces a learnable signal with a capable model + 15-turn budget.
 
@@ -101,15 +101,15 @@ factor each so the asymmetry decomposes cleanly:
 
 | run | config | goals | catalog | isolates |
 |---|---|---|---|---|
-| **A** | `fed_webshop_scaled_catalog.yaml` (catalog_split) | disjoint | disjoint | env + task heterogeneity |
-| **B** | `fed_webshop_scaled_task.yaml` (task_disjoint) | disjoint | FULL | task heterogeneity only |
-| **C** | `fed_webshop_scaled_homog.yaml` (partition="") | shared | FULL | IID baseline |
+| **A** | `examples/webshop/scaled/catalog.yaml` (catalog_split) | disjoint | disjoint | env + task heterogeneity |
+| **B** | `examples/webshop/scaled/task.yaml` (task_disjoint) | disjoint | FULL | task heterogeneity only |
+| **C** | `examples/webshop/scaled/homog.yaml` (partition="") | shared | FULL | IID baseline |
 
 → **A − B = pure environment-heterogeneity effect**, **B − C = pure task-heterogeneity effect**, both
 under FedAvg. Expected (Input-Dynamics Asymmetry): A−B negative (env-het hurts), B−C ≈ 0 (task-het robust).
 Analyze with `tools/verl08_migration/summarize_fed_run.py A=… B=… C=…`.
 
-**Fx — FedProx hook test.** `config/fed_webshop_fedprox_test.yaml` (μ=0.1). Verifies the non-fork FedProx
+**Fx — FedProx hook test.** `config/examples/webshop/fedprox_test.yaml` (μ=0.1). Verifies the non-fork FedProx
 injection (`fedagent/fedprox.py` patches `FSDPEngine.optimizer_step` via the Ray
 `worker_process_setup_hook`). Look for `[fedprox] enabled: proximal mu=0.1` in the worker log.
 
@@ -227,7 +227,7 @@ byte-for-byte** from verl-agent's `partition_strategy.py` (now vendored at `feda
   - **Federated plumbing wired** in `run_fed.py`: `env_kind=alfworld` →
     `start_alfworld_services` (per-client `ALFWORLD_PORT`/`POOL_SIZE`/`TRAIN_EVAL`/`CLIENT_*`)
     + per-client `ALFWORLD_SERVICE_URL` + generic `stop_services`. New `config/envs/alfworld.yaml`
-    (max_turns 20) + `config/fed_alfworld_smoke.yaml` (2×2, n_gpus 4). Config validated
+    (max_turns 20) + `config/examples/alfworld/smoke.yaml` (2×2, n_gpus 4). Config validated
     offline (service URLs, gen_batch=pool=8, registry); GPU federated run pending a free node.
   - **GPU federated run — 2nd-env loop PROVEN (2026-06-20).** After two GPU bugs found+fixed,
     the federated ALFWorld loop **trained 2 full GRPO steps end-to-end** (service → concat
@@ -323,7 +323,7 @@ Open design points to resolve as we go:
 Exhaustive feature-completeness audit (overlay vs 0.3.1 source) found the overlay **ran** but
 diverged from the paper recipe on 8 science-critical points. All fixed + GPU-verified:
 
-- **B1 save_freq** `-1` → `100000` (gen_paper_configs + fed_alfworld_paper): `-1` NEVER saves →
+- **B1 save_freq** `-1` → `100000` (gen_paper_configs + examples/alfworld/paper): `-1` NEVER saves →
   FedAvg would average nothing. Regenerated 56 paper configs (0 stale `save_freq:-1`).
 - **B2 SEARCH_RETURN_N** default 50 → **200** (run_fed DEFAULTS + both service starters + hardness
   generator): env-het needs ≥100 (filtered catalogs drop targets under top-50 BM25).
@@ -400,9 +400,8 @@ ALFWorld matrix, decentralized M/E-T/min_goals ablations) — additive generator
 bash fedagent/scripts/run_smoke.sh                         # TinyGuess package smoke
 bash fedagent/scripts/run_tinyguess_fed_smoke.sh           # federated loop (TinyGuess 2x2)
 bash fedagent/scripts/run_webshop_fed_smoke.sh CFG         # federated WebShop (CFG = a fed config)
-#   CFG ∈ config/{fed_webshop_2cl_catalog_split, fed_webshop_scaled_catalog,
-#                 fed_webshop_scaled_task, fed_webshop_scaled_homog,
-#                 fed_webshop_probe_signal, fed_webshop_fedprox_test}.yaml
+#   CFG ∈ config/examples/webshop/{2cl_catalog_split, probe_signal, fedprox_test}.yaml
+#       or config/examples/webshop/scaled/{catalog, task, homog}.yaml
 # extra args forwarded to run_fed, e.g.:  ... CFG --base-seed 43 --output-dir /tmp/run_s43 --port-base 8090
 python tools/verl08_migration/summarize_fed_run.py A=/tmp/...scaled_env B=/tmp/...scaled_task C=/tmp/...scaled_homog
 ```

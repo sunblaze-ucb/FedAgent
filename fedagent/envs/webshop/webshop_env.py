@@ -12,7 +12,9 @@ model's text in and formats observations out using verl-agent's WebShop prompt c
 history as the literal chat, so per-turn observations carry only the current page +
 admissible actions (task is in the first turn / chat history).
 """
+import asyncio
 import os
+import random
 from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
@@ -79,13 +81,47 @@ class WebShopEnv(BaseTextEnv):
             self._client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
         return self._client
 
+    async def _post(self, path: str, payload: dict, *, retry: bool = False,
+                    block: bool = False, retries: int = 8, base: float = 0.3):
+        """POST to the env service; raise on HTTP errors, and (only when ``retry``) retry transport errors.
+
+        ``retry=True`` is used ONLY for the idempotent endpoints (/create, /reset): at the full PPO
+        batch the rollout fires train_batch_size x rollout.n episodes at once, so they hit this
+        client's pooled per-client service near-simultaneously and the HTTP boundary is overwhelmed
+        (sockets reset mid-response -> httpx.ReadError). Bounded backoff + jitter spreads the retried
+        requests across the pool. /step is NOT retried: it mutates env state, so replaying it after the
+        server already applied the action would corrupt the trajectory -- it fails fast instead.
+        raise_for_status() ensures a 4xx/5xx body (e.g. {"detail":"unknown session"}) is never
+        silently parsed as an empty observation. (GRPO's smaller batch never trips the storm.)
+
+        ``block=True`` (used for /create) disables the per-request read timeout: borrowing a pooled
+        env legitimately blocks until one frees, and that wait scales with batch/pool, NOT with the
+        180s timeout. (train_batch_size*rollout.n=512 episodes share a fixed pool; with long-episode
+        envs a waiting /create can exceed 180s -- a hard timeout there would crash the whole rollout.)
+        A blocking /create also removes the duplicate-create race: no timeout -> no retry-resend ->
+        exactly one borrow per session, so the idempotency check can't be bypassed by a re-sent create.
+        """
+        c = self._c()
+        for attempt in range(retries + 1):
+            try:
+                # block: only the READ wait is unbounded (server-side _pool.get() can exceed the
+                # 180s default); connect/write/pool stay bounded so a dead service still fails fast
+                # instead of hanging the rollout forever.
+                resp = (await c.post(path, json=payload, timeout=httpx.Timeout(self.timeout, read=None)) if block
+                        else await c.post(path, json=payload))
+                resp.raise_for_status()
+                return resp
+            except httpx.TransportError:
+                if not retry or attempt >= retries:
+                    raise
+                await asyncio.sleep(min(base * (2 ** attempt), 4.0) + random.uniform(0.0, base))
+
     async def system_prompt(self) -> Obs:
         return {"obs_str": WEBSHOP_SYSTEM}
 
     async def reset(self, seed: int = 0) -> Tuple[Obs, Dict[str, Any]]:
-        c = self._c()
-        await c.post("/create", json={"session_id": self.session_id})
-        r = await c.post("/reset", json={"session_id": self.session_id, "seed": int(seed)})
+        await self._post("/create", {"session_id": self.session_id}, retry=True, block=True)
+        r = await self._post("/reset", {"session_id": self.session_id, "seed": int(seed)}, retry=True)
         d = r.json()
         raw = d.get("obs", "") or ""
         self._task = _extract_task(raw)
@@ -96,9 +132,7 @@ class WebShopEnv(BaseTextEnv):
         return {"obs_str": obs_str}, {}
 
     async def step(self, action_str: str) -> Tuple[Obs, float, bool, Dict[str, Any]]:
-        r = await self._c().post(
-            "/step", json={"session_id": self.session_id, "text": action_str}
-        )
+        r = await self._post("/step", {"session_id": self.session_id, "text": action_str})
         d = r.json()
         obs_str = _STEP_OBS.format(
             obs=d.get("obs", "") or "", actions=_fmt_actions(d.get("available_actions", {}))

@@ -13,7 +13,7 @@ that type's games -> robust, no per-sample tagging needed).
 
 Usage (inside fedagent-verl08, on the GPU node):
     python -m tools.verl08_migration.eval_alfworld_by_tasktype \
-        --config fedagent/config/fed_alfworld_paper.yaml \
+        --config fedagent/config/examples/alfworld/paper.yaml \
         --model  /path/to/final/aggregated/hf \
         --output /path/to/alfworld_tasktype_breakdown.json [--n-gpus 4]
 """

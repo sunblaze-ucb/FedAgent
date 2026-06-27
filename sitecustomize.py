@@ -9,23 +9,40 @@ so all FSDP ranks land on GPU 0 ("Duplicate GPU detected: rank N and rank 0 both
 device ..."). sitecustomize runs at plain interpreter startup, touches no runtime_env, and
 so leaves verl's GPU isolation intact.
 
-Safety: this runs in EVERY python process on PYTHONPATH, including the WebShop / ALFWorld
-env-service conda envs (which do NOT have verl installed). It is therefore:
-  - gated on FEDPROX_MU being set (normal FedAvg runs / services never set it -> no-op,
-    and `fedagent` is never even imported), and
-  - wrapped in a broad try/except (a missing verl/fedagent, or any import error in a
-    non-trainer env, degrades to a silent no-op rather than breaking the process).
-The patch itself (monkeypatching FSDPEngine.optimizer_step) is CUDA-free -- importing
-FSDPEngine does not initialize CUDA -- so it is safe to run before verl assigns devices.
+Safety / fail-closed: this runs in EVERY python process on PYTHONPATH, but the patch is only
+attempted when FEDPROX_MU>0 -- i.e. in the federated client training subprocess and its Ray
+workers (run_fed sets it there); env-service conda envs never set it, so they no-op before the
+import. We distinguish the two cases by whether `verl` is importable:
+  - verl ABSENT  -> not a trainer process (e.g. a service env that inherited a globally
+    exported FEDPROX_MU). FedProx is N/A here -> silent no-op.
+  - verl PRESENT -> a trainer process where the patch MUST apply. Any failure PROPAGATES
+    (fail closed): silently downgrading a requested FedProx run to FedAvg would corrupt the
+    experiment. fedprox prints "[fedprox] enabled ..." on success for log verification.
+The patch is applied LAZILY (install_deferred_patch): FSDPEngine is imported only when verl
+itself first imports its FSDP-engine module -- i.e. AFTER the Ray worker has its per-rank
+CUDA_VISIBLE_DEVICES set. Importing it EAGERLY here (at interpreter startup, before device
+assignment) breaks per-rank GPU isolation at multi-GPU ("Duplicate GPU detected: rank N and
+rank 0 ..."); deferral avoids that while still patching before the first optimizer step.
 """
+import importlib.util
 import os
 
-if os.environ.get("FEDPROX_MU"):
-    try:
-        from fedagent.fedprox import maybe_enable_from_env
+try:
+    _mu = float(os.environ.get("FEDPROX_MU", "0") or "0")
+except ValueError:
+    _mu = 0.0
 
-        maybe_enable_from_env()
-    except Exception:
-        # non-trainer env (e.g. env-service conda env without verl), or any startup-time
-        # import issue -> no-op. FedProx simply will not be active in that process.
-        pass
+if _mu > 0:
+    if importlib.util.find_spec("verl") is None:
+        pass  # not a trainer process (verl absent) -> FedProx N/A, no-op
+    else:
+        # trainer process: DEFER the patch to verl's first FSDP-engine import (after the worker
+        # sets CUDA_VISIBLE_DEVICES). fail CLOSED: install_deferred_patch raising / returning
+        # False propagates rather than silently downgrading FedProx to FedAvg.
+        from fedagent.fedprox import install_deferred_patch
+
+        if not install_deferred_patch(_mu):
+            raise RuntimeError(
+                f"sitecustomize: FEDPROX_MU={_mu} and verl is present, but the FedProx deferred "
+                "patch could not be armed -- refusing to run silently as FedAvg."
+            )

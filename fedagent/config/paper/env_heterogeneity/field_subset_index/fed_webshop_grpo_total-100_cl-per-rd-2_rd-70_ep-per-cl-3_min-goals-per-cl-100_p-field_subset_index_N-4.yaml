@@ -5,7 +5,7 @@
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
 val_env_spec: config/envs/webshop_15_val.yaml
-output_dir: /tmp/xbb9020_fedpaper/env_heterogeneity/webshop_grpo_bm25_field_subset
+output_dir: /tmp/xbb9020_fedpaper/env_heterogeneity/field_subset_index/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-field_subset_index_N-4
 model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 # --- federation protocol ---
@@ -25,7 +25,8 @@ val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 100
 webshop_pool_size: 16
-webshop_base_port: 8420
+webshop_base_port: 18192
+webshop_val_port: 18292
 search_return_n: 200                               # env-het perturbs the catalog -> paper top-K
 
 # --- heterogeneity ---

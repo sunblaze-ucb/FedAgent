@@ -5,7 +5,7 @@
 env_kind: alfworld
 env_spec: config/envs/alfworld.yaml
 val_env_spec: config/envs/alfworld_val.yaml
-output_dir: /tmp/xbb9020_fedpaper/uniform/alfworld_grpo_uniform
+output_dir: /tmp/xbb9020_fedpaper/uniform/Llama-3.2-3B-Instruct/centralized/grpo/fed_alfworld_grpo_total-1_cl-per-rd-1_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform
 model_path: meta-llama/Llama-3.2-3B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 # --- federation protocol ---
@@ -25,7 +25,8 @@ val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 100
 alfworld_pool_size: 8
-alfworld_base_port: 8497
+alfworld_base_port: 46144
+alfworld_val_port: 46145
 
 # --- heterogeneity ---
 partition_strategy: ""

@@ -7,7 +7,7 @@
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
 output_dir: /tmp/xbb9020_fedagent_scaled_lookalike
-model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 total_clients: 2
 clients_per_round: 2

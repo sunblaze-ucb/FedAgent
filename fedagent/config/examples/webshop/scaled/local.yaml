@@ -3,13 +3,13 @@
 # Pinned via local_client_id (== original 'uniform_single'); only that client's env service
 # is launched. Paired here with the catalog_split env-het arm (client 0 of 2) so it is the
 # direct "Local vs FedAvg under env-heterogeneity" comparison against
-# fed_webshop_scaled_catalog.yaml. Swap partition_strategy/total_clients/local_client_id to
+# examples/webshop/scaled/catalog.yaml. Swap partition_strategy/total_clients/local_client_id to
 # match any other federated arm. Qwen2.5-1.5B @ 15 turns, 4 GPUs.
 
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
 output_dir: /tmp/xbb9020_fedagent_scaled_local_c0
-model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 total_clients: 2                       # the partition is computed for 2 clients...
 local_client_id: 0                     # ...but only client 0 trains, alone, every round (no FedAvg)

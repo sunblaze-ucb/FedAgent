@@ -3,8 +3,11 @@
 A small [FastAPI](https://fastapi.tiangolo.com/) service that wraps the heavy,
 in-process WebShop gym env (`WebAgentTextEnv`) behind a handful of HTTP routes.
 The federated runner ([`../../../fed/run_fed.py`](../../../fed/run_fed.py)) launches **one
-service per client**, and each service builds its *entire* env pool with that
-client's heterogeneity variant. So the design invariant is literally:
+service per client** — but **lazily per round**, only for that round's selected clients
+(at most `clients_per_round` concurrently), tearing them down per round before
+aggregation; only the shared val service persists to the end of the run. Each service
+builds its *entire* env pool with that client's heterogeneity variant. So the design
+invariant is literally:
 
 > **one service == one client's environment == one hidden transition kernel `P_i`.**
 

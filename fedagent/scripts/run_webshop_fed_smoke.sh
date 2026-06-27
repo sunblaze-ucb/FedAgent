@@ -19,7 +19,7 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 VLLM_USE_V1=1 VERL_LOGGING_LEVEL=
 export VLLM_USE_DEEP_GEMM=0 VLLM_SKIP_DEEP_GEMM_WARMUP=1
 export CUDA_HOME=/hpc/software/cuda/cuda-12.1.0
 
-CONFIG="${1:-$PKG_DIR/config/fed_webshop_2cl_catalog_split.yaml}"
+CONFIG="${1:-$PKG_DIR/config/examples/webshop/2cl_catalog_split.yaml}"
 echo "REPO_ROOT=$REPO_ROOT"
 echo "VERL_CFG=$VERL_CFG"
 echo "CONFIG=$CONFIG"

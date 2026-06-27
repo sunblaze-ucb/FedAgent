@@ -98,21 +98,49 @@ _CLIENT_ID = int(CLIENT_ID) if CLIENT_ID not in (None, "") else None
 _CLIENT_NUM = int(CLIENT_NUM) if CLIENT_NUM not in (None, "") else None
 
 
+def _float_env(name: str, value: str, default: float) -> float:
+    if value.strip().lower() in ("", "none", "null"):
+        return default
+    try:
+        return float(value)
+    except ValueError as e:
+        raise ValueError(f"{name} must be a float, got {value!r}") from e
+
+
 def _partition_kwargs() -> dict:
     """Strategy-specific het kwargs for AlfredTWEnv (forwarded to partition_dataset)."""
     s = PARTITION_STRATEGY
-    if s == "preference" and OMEGA:
-        return {"omega": float(OMEGA)}
-    if s == "coverage" and SIZE_STD:
-        return {"size_std": float(SIZE_STD)}
+    if s == "preference":
+        return {"omega": _float_env("OMEGA", OMEGA, 0.5)}
+    if s == "coverage":
+        return {"size_std": _float_env("SIZE_STD", SIZE_STD, 1.0)}
     if s == "hardness":
-        kw = {}
-        if SUCCESS_STD:
-            kw["success_std"] = float(SUCCESS_STD)
-        if TRAJECTORIES_FILE:
-            kw["trajectories_file"] = TRAJECTORIES_FILE
-        return kw
+        if not TRAJECTORIES_FILE.strip():
+            raise ValueError(
+                "ALFWorld hardness partition requires TRAJECTORIES_FILE "
+                "(run_fed config key: trajectories_file)."
+            )
+        if not os.path.isfile(TRAJECTORIES_FILE):
+            raise FileNotFoundError(f"ALFWorld hardness trajectories file not found: {TRAJECTORIES_FILE}")
+        return {
+            "success_std": _float_env("SUCCESS_STD", SUCCESS_STD, 1.0),
+            "trajectories_file": TRAJECTORIES_FILE,
+        }
     return {}  # uniform / env_disjoint take no extra kwargs
+
+
+# The unified config vocabulary (preference/hardness, shared with WebShop + the federated driver)
+# differs from the names the ALFWorld runtime engine accepts for the SAME partition algorithm:
+# preference == its "category" marginal skew, hardness == its "hardiness" success-std split (a typo
+# kept upstream). _partition_kwargs() above keys on the UNIFIED name so omega/success_std forward
+# correctly; ONLY the strategy name handed to AlfredTWEnv is translated here. uniform/coverage/
+# env_disjoint are identical in both vocabularies and pass through unchanged.
+_ENGINE_STRATEGY_ALIASES = {"preference": "category", "hardness": "hardiness"}
+
+
+def _engine_partition_strategy() -> str:
+    return _ENGINE_STRATEGY_ALIASES.get(PARTITION_STRATEGY, PARTITION_STRATEGY)
+
 
 _pool: asyncio.Queue = None
 _sessions: dict = {}
@@ -156,7 +184,7 @@ def _build_base_env():
         train_eval=TRAIN_EVAL,
         client_id=_CLIENT_ID,
         client_num=_CLIENT_NUM,
-        partition_strategy=PARTITION_STRATEGY,
+        partition_strategy=_engine_partition_strategy(),   # unified name -> engine name (category/hardiness)
         min_games_per_client=MIN_GOALS_PER_CLIENT,
         **pkw,                      # preference(omega)/coverage(size_std)/hardness(success_std,trajectories_file)
     )
@@ -237,6 +265,9 @@ async def health():
 
 @app.post("/create")
 async def create(r: Sid):
+    if r.session_id in _sessions:
+        return {"ok": True}    # idempotent: a retried /create (lost response) must NOT borrow a
+                               # 2nd env -- that would orphan the 1st and slowly drain the pool.
     env = await _pool.get()  # borrow (waits if the pool is exhausted)
     _sessions[r.session_id] = env
     return {"ok": True}

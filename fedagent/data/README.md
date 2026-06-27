@@ -111,10 +111,12 @@ envs:
 ```
 
 A spec with `n_envs: 8` produces **8 rows**, so `len(dataset) == 8`. Multiple
-entries under `envs:` are concatenated. If the file is missing / unparsable /
-has no `envs:`, the dataset falls back to a single built-in `TinyGuess` spec
-(`n_envs: 64`, `max_turns: 6`, `config: {lo: 1, hi: 50}`), so it always yields a
-valid dataset.
+entries under `envs:` are concatenated. A given env-spec path that is missing /
+unparsable / has no `envs:` now **raises** (`FileNotFoundError` / `ValueError`),
+so a misconfigured run cannot silently train the TinyGuess toy objective. The
+built-in `TinyGuess` spec (`n_envs: 64`, `max_turns: 6`, `config: {lo: 1, hi: 50}`)
+is used **only** when `data_files` is empty/unset (the genuine "no env-spec" smoke
+default).
 
 ---
 

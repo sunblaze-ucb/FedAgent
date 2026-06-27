@@ -24,8 +24,11 @@ hidden transition kernel `P_i`**. When `CLIENT_NUM > 1`, the whole env pool is
 built from this client's slice of the **train** games (the env arm of the paper's
 Input-Dynamics Asymmetry; eval splits stay full). `../../../fed/run_fed.py`'s
 `start_alfworld_services()` launches one `run_service.sh` per client on
-`alfworld_base_port + client_id`, sets `ALFWORLD_SERVICE_URL` per client, waits on
-each `/health`, and tears them all down at the end of the run.
+`alfworld_base_port + client_id`, sets `ALFWORLD_SERVICE_URL` per client, and waits on
+each `/health`. `run_fed.py` starts these **lazily per round** — only the round's
+selected clients, so at most `clients_per_round` services run concurrently — and tears
+them down **per round, before aggregation**; only the shared val service persists to the
+end of the run.
 
 `run_service.sh` activates `verl-agent-alfworld`, exports `ALFWORLD_DATA`
 (default `~/.cache/alfworld`, the PDDL + `game.tw-pddl` files fetched by

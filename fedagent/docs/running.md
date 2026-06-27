@@ -64,7 +64,7 @@ The mode is selected by the config, not a flag. `run_fed.py` derives it as: `loc
 
 | Mode | How to select (YAML / flag) | What happens | Services launched |
 |---|---|---|---|
-| **Federated** (default) | `total_clients: N>1`, `local_client_id: -1` | each round samples `clients_per_round` clients, trains each **sequentially**, then FedAvg → merge → next round starts from the merged model | one per client (`0..N-1`) |
+| **Federated** (default) | `total_clients: N>1`, `local_client_id: -1` | each round samples `clients_per_round` clients, trains each **sequentially**, then FedAvg → merge → next round starts from the merged model | lazily, per round: one per **selected** client only (the round's sample), torn down after the round; the val service (if eval on) is always-on |
 | **Centralized** | `total_clients: 1` (and `clients_per_round: 1`, `partition_strategy: ""`) | one model on the pooled (unpartitioned) data; FedAvg of a single client is the identity, so the loop is just `total_rounds × epochs_per_round` of continued training | one (client 0, full env) |
 | **Local** | `local_client_id: k ≥ 0` (with `total_clients: N`) | the paper's "Local Agent Training": pin client `k`'s slice of the N-way partition, train it alone every round, no federation | only the one pinned client `k` |
 
@@ -72,15 +72,15 @@ The mode is selected by the config, not a flag. `run_fed.py` derives it as: `loc
 
 ```bash
 # Federated (the default — any multi-client config)
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_coverage.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/coverage.yaml
 
 # Centralized (total_clients=1 baked into the config)
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_centralized.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/centralized.yaml
 
 # Local (local_client_id baked into the config…)
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_local.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/local.yaml
 # …or pin a client of an existing federated config from the CLI:
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_coverage.yaml \
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/coverage.yaml \
   --clients 2 --local-client-id 0
 ```
 
@@ -98,12 +98,12 @@ Set by `adv_estimator` in the config (no flag):
   actor** each round. Round-1 critic = the base model (random value head on the backbone);
   thereafter the aggregated critic carries forward via `critic.model.path`. PPO configs
   carry the critic block in `client_overrides` (e.g.
-  [`fed_webshop_scaled_ppo.yaml`](../config/fed_webshop_scaled_ppo.yaml)). If any selected
+  [`examples/webshop/scaled/ppo.yaml`](../config/examples/webshop/scaled/ppo.yaml)). If any selected
   client fails to emit a critic checkpoint, the round aborts — keep
   `critic.checkpoint.save_contents=[model]` in the overrides.
 
 ```bash
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_ppo.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/ppo.yaml
 ```
 
 ## Hardware recipe
@@ -163,7 +163,7 @@ python -m fedagent.fed.run_fed --config <...> --fedprox-mu 0.1
 step. `mu = 0` → plain FedAvg. It is injected via `sitecustomize` **not** a Ray
 `runtime_env` hook (the hook clobbered verl's per-worker `CUDA_VISIBLE_DEVICES`). Eval passes
 strip `FEDPROX_MU`, so validation never enables the term. A ready pair is
-[`fed_webshop_scaled_envhet_fedprox.yaml`](../config/fed_webshop_scaled_envhet_fedprox.yaml)
+[`examples/webshop/scaled/envhet_fedprox.yaml`](../config/examples/webshop/scaled/envhet_fedprox.yaml)
 (FedProx, `mu=0.1`) vs its FedAvg twin.
 
 ## Seeds
@@ -252,7 +252,7 @@ srun --jobid="$JID" --overlap bash -lc '
   export VLLM_USE_DEEP_GEMM=0 VLLM_SKIP_DEEP_GEMM_WARMUP=1   # deep_gemm asserts a CUDA toolkit
   export CUDA_HOME=/hpc/software/cuda/cuda-12.1.0            # point at the CUDA module
 
-  python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_coverage.yaml --n-gpus 4
+  python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/coverage.yaml --n-gpus 4
 '
 ```
 
@@ -275,13 +275,13 @@ fast wiring checks:
 
 ```bash
 # In-process, no service — fastest end-to-end check of the federated loop
-python -m fedagent.fed.run_fed --config fedagent/config/fed_tinyguess_2cl_2rd.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml
 
 # WebShop smoke (driver launches 2 services), shortened to 2 rounds
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_homog_long.yaml --rounds 2
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/homog_long.yaml --rounds 2
 
 # Wrapper (sets env + srun-friendly), forwarding extra flags to run_fed
-bash fedagent/scripts/run_webshop_fed_smoke.sh fedagent/config/fed_webshop_scaled_homog.yaml \
+bash fedagent/scripts/run_webshop_fed_smoke.sh fedagent/config/examples/webshop/scaled/homog.yaml \
   --base-seed 43 --output-dir /tmp/run_s43 --port-base 8090
 ```
 
@@ -292,7 +292,11 @@ bash fedagent/scripts/run_webshop_fed_smoke.sh fedagent/config/fed_webshop_scale
 python -m fedagent.fed.run_fed \
   --config fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
 
-# Same config, second seed + its own output dir + ports (concurrent-safe)
+# Same config, second seed + its own output dir + client-service ports.
+# NOTE: --port-base moves ONLY webshop_base_port (the per-client services). This paper config
+# enables eval, which uses a fixed webshop_val_port (no CLI flag) -- two concurrent runs of the
+# SAME config would share that one val port. To deconflict, copy the YAML and change
+# webshop_val_port too, or disable eval for the second run (val_env_spec: "").
 python -m fedagent.fed.run_fed --config <...same...> \
   --base-seed 21 --output-dir /tmp/run_s21 --port-base 8120
 

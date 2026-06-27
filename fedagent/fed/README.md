@@ -67,14 +67,16 @@ combined stdout/stderr to the console (tagged) **and** to a per-stage log file.
 ### Environment services (`webshop` / `alfworld`)
 
 `tinyguess` runs **in-process** (no service). For `webshop`/`alfworld`,
-`start_webshop_services` / `start_alfworld_services` launch **one remote HTTP env service
-per participating client** before round 1 (one service == one client's hidden
+`start_webshop_services` / `start_alfworld_services` launch remote HTTP env services
+**lazily each round, only for that round's selected clients** (`client_ids=selected`), so at
+most `clients_per_round` services are alive at once (one service == one client's hidden
 transition kernel / data shard). Each service is started with an env-var bridge
 (`CLIENT_ID`, `CLIENT_NUM`, `PARTITION_STRATEGY`, the heterogeneity knobs, …) that selects
 that client's heterogeneity variant, and the driver waits for each `/health` endpoint
 (up to `service_health_timeout`). `run_client` points each client at its own service via
-`WEBSHOP_SERVICE_URL` / `ALFWORLD_SERVICE_URL`. `stop_services` tears them all down in the
-`finally` block.
+`WEBSHOP_SERVICE_URL` / `ALFWORLD_SERVICE_URL`. The round's per-client services are torn
+down **per round, before aggregation**; only the shared unperturbed VAL service is started
+once and persists for the whole run (stopped at the end).
 
 ### Round-threaded data seed
 
@@ -256,19 +258,19 @@ the repo root so `sitecustomize.py` and `fedagent` are importable in every subpr
 conda activate fedagent-verl08
 
 # TinyGuess smoke (in-process, fast):
-python -m fedagent.fed.run_fed --config fedagent/config/fed_tinyguess_2cl_2rd.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml
 
 # WebShop, env-level heterogeneity (per-client services), single 4-GPU node:
 python -m fedagent.fed.run_fed \
-  --config fedagent/config/fed_webshop_scaled_catalog.yaml --n-gpus 4
+  --config fedagent/config/examples/webshop/scaled/catalog.yaml --n-gpus 4
 
 # Baselines (same config family, different mode):
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_centralized.yaml
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_local.yaml \
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/centralized.yaml
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/local.yaml \
   --local-client-id 0
 
 # FedProx + a seed sweep entry:
-python -m fedagent.fed.run_fed --config fedagent/config/fed_webshop_scaled_catalog.yaml \
+python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/catalog.yaml \
   --fedprox-mu 0.1 --base-seed 7
 ```
 
