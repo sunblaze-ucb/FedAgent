@@ -66,9 +66,11 @@ it via `client_overrides` — paper=`8`, smokes=`2`), **async multi-turn rollout
 
 ### `agent.yaml`
 
-A list mapping `agent_name` -> `AgentLoopBase` `_target_`; the only entry is `gym_text` ->
-`fedagent.agent_loops.gym_text_agent_loop.GymTextAgentLoop`, the concat-style multi-turn
-loop every env uses. The `agent_name` travels on each dataset row (see below), so verl
+A list mapping `agent_name` -> `AgentLoopBase` `_target_`; it has two entries: `gym_text` ->
+`fedagent.agent_loops.gym_text_agent_loop.GymTextAgentLoop` (the concat-style multi-turn
+loop) and `gym_text_windowed` ->
+`fedagent.agent_loops.windowed_agent_loop.WindowedGymTextAgentLoop` (the per-turn windowed
+variant). The `agent_name` travels on each dataset row (see below), so verl
 instantiates the right loop per rollout.
 
 ---
@@ -358,8 +360,8 @@ leaves at smoke defaults. The key ones:
 |---|---|
 | `actor_rollout_ref.rollout.n=8` | **GRPO group size G** (8 in the paper). |
 | `data.train_batch_size=8` (PPO: `64`) | Prompts per optimizer step; pair with `actor_rollout_ref.actor.ppo_mini_batch_size`. |
-| `data.max_prompt_length` / `max_response_length` (`2048` / `6144`; ALFWorld `8192`) | Token budgets; mirror on `rollout.prompt_length` / `response_length`. |
-| `actor_rollout_ref.rollout.max_model_len=8192` | vLLM context window (ALFWorld widens to `16384`). |
+| `data.max_prompt_length` / `max_response_length` (WebShop `4096` / `512`; ALFWorld `2048` / `512`) | Token budgets; mirror on `rollout.prompt_length` / `response_length`. |
+| `actor_rollout_ref.rollout.max_model_len` (WebShop `4608`; ALFWorld `2560`) | vLLM context window. |
 | `actor_rollout_ref.rollout.gpu_memory_utilization` | vLLM KV-cache fraction (`0.5`–`0.6`). |
 
 > **`ppo_mini_batch_size` is set in `client_overrides`, not the filename or top-level
@@ -430,7 +432,7 @@ A real `uniform/main/grpo` WebShop config
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
 val_env_spec: config/envs/webshop_15_val.yaml
-output_dir: /tmp/xbb9020_fedpaper/uniform/webshop_grpo_uniform
+output_dir: /tmp/xbb9020_fedpaper/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform
 model_path: Qwen/Qwen2.5-1.5B-Instruct
 
 total_clients: 100
@@ -445,18 +447,25 @@ save_freq: 100000              # save only the round's last step
 test_freq: 5
 val_before_train: true
 val_temperature: 0.4
+wait_between_clients: 8
+min_goals_per_client: 100
+webshop_pool_size: 16
+webshop_base_port: 10000
+webshop_val_port: 10100
+search_return_n: 50            # engine default (matches the original non-het baselines)
 partition_strategy: ""         # IID
 
 client_overrides:
   - data.train_batch_size=8
-  - data.max_prompt_length=2048
-  - data.max_response_length=6144
+  - data.max_prompt_length=4096
+  - data.max_response_length=512
   - actor_rollout_ref.actor.ppo_mini_batch_size=8
   - actor_rollout_ref.rollout.n=8
-  - actor_rollout_ref.rollout.prompt_length=2048
-  - actor_rollout_ref.rollout.response_length=6144
-  - actor_rollout_ref.rollout.max_model_len=8192
+  - actor_rollout_ref.rollout.prompt_length=4096
+  - actor_rollout_ref.rollout.response_length=512
+  - actor_rollout_ref.rollout.max_model_len=4608
   - actor_rollout_ref.rollout.gpu_memory_utilization=0.6
+  - actor_rollout_ref.actor.checkpoint.save_contents=[model]
 ```
 
 Run it directly:

@@ -30,9 +30,10 @@ do not start them manually. TinyGuess runs in-process (no service). The mode (fe
 centralized / local) and the algorithm (GRPO / PPO) are **implied by the config**, not by a
 flag — see [Run-mode matrix](#run-mode-matrix) and [Algorithm: GRPO vs PPO](#algorithm-grpo-vs-ppo).
 
-The `fedagent/config/fed_*.yaml` (hand-written, repo top of `config/`) are small smokes for
-wiring checks; the paper grid lives under `fedagent/config/paper/`. See
-[Smoke tests](#smoke-tests) and [Worked examples](#worked-examples).
+The hand-written smoke configs under `fedagent/config/examples/`
+(`examples/tinyguess_2cl_2rd.yaml`, `examples/webshop/`, `examples/alfworld/`) are small
+smokes for wiring checks; the paper grid lives under `fedagent/config/paper/`. See
+[Smoke tests](#smoke-tests) and [Worked examples](#worked-examples-paper-configs).
 
 ## CLI flags → config keys
 
@@ -189,7 +190,7 @@ no client skew) and scores the aggregated **global** model:
 | Key | Effect | Default |
 |---|---|---|
 | `val_env_spec` | the unperturbed val env-spec; `""` → no eval | `""` |
-| `test_freq` | eval the global model every K rounds (+ always the final round) | `5` |
+| `test_freq` | verl's **within-job** step cadence (per-client circle marks), **not** the global-eval gate — the aggregated global model is scored **every round** | `5` |
 | `val_before_train` | also eval the **base** model before round 1 (the round-0 point) | `true` |
 | `val_temperature` | val sampling temperature (`val_kwargs.temperature`) | `0.4` |
 
@@ -270,8 +271,8 @@ Notes:
 
 ## Smoke tests
 
-The hand-written `fedagent/config/fed_*.yaml` are small (e.g. 2 clients × a few rounds) for
-fast wiring checks:
+The hand-written smoke configs under `fedagent/config/examples/` are small (e.g. 2 clients ×
+a few rounds) for fast wiring checks:
 
 ```bash
 # In-process, no service — fastest end-to-end check of the federated loop

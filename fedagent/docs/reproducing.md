@@ -61,7 +61,7 @@ CLI overrides). This is **scientific-equivalence** reproduction, not bit-identic
 > schema is `{"trajectories": [{"task_info": {"task_id": ...}, "traj_info":
 > {"success": ...}}, ...]}`. See
 > [`../data/hardness/README.md`](../data/hardness/README.md) and
-> [`./heterogeneity.md`](./heterogeneity.md#the-hardness-labels-file).
+> [`./heterogeneity.md`](./heterogeneity.md#hardness--beta-skewed-easyhard-mix-over-success-labels).
 
 - **ALFWorld arms** drive episodes at `max_turns: 50` (the original
   `max_steps=50`) paired with a **widened context window**
@@ -302,7 +302,7 @@ python -m fedagent.fed.run_fed --config \
   generalization, not per-client overfitting.
 - To reproduce a figure point, run **both** the GRPO config and its `*_ppo`
   sibling, 3 seeds each.
-- See [`./heterogeneity.md`](./heterogeneity.md#the-arms) for the per-stage
+- See [`./heterogeneity.md`](./heterogeneity.md#arm---knob---paper-config-map) for the per-stage
   construction and the per-client variant-assignment seeding.
 
 ---
@@ -340,7 +340,7 @@ Each leaf holds the two endpoints of each sub-type:
 
 > **Hardness needs the labels file** — generate
 > `data/hardness/qwen2.5-1.5b_<env>_trajectories.json` first; see the
-> [prerequisites callout](#️-the-hardness-arm-uses-a-shipped-reference-labels-file).
+> [prerequisites callout](#ℹ️-the-hardness-arm-uses-a-shipped-reference-labels-file).
 > The other two sub-types need no external input.
 
 ### Run

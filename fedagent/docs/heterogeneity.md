@@ -417,7 +417,7 @@ from the paper config tree.
 
 ```yaml
 env_kind: webshop
-search_return_n: 200          # env-het perturbs the catalog -> paper top-K (>= 100 required)
+search_return_n: 200          # env-het perturbs the catalog -> paper top-K
 partition_strategy: catalog_split
 env_div: 0.7                  # 0.0 stable floor -> 1.0 collapse
 keep_ratio: 0.7
@@ -444,15 +444,15 @@ An **env-variant** arm is just a strategy name plus `variant_n`:
 
 ```yaml
 env_kind: webshop
-search_return_n: 200
+search_return_n: 200                # env-het perturbs the catalog -> paper top-K
 partition_strategy: bm25_reweight   # or bm25_field_subset / lookalike / rank_wrapper
 variant_n: 4
 ```
 
-The env-variant arms set `search_return_n: 200` (the runner aborts under 100):
-raising the BM25 top-K keeps the rendered result page full after aggressive
-per-client filtering so a target is never silently dropped. The task-level arms
-leave it at the engine default (50), matching the non-het baselines.
+The env-variant arms set `search_return_n: 200`: raising the BM25 top-K keeps the
+rendered result page full after aggressive per-client filtering so a target is
+never silently dropped. The task-level arms leave it at the engine default (50),
+matching the non-het baselines.
 
 ---
 

@@ -32,6 +32,10 @@
 
 ## 0. Scope & references
 
+- **➜ Companion docs.** *This* doc is the **analysis & plan**. Also:
+  [acceleration_report.md](acceleration_report.md) — the **complete end-to-end walkthrough** (every lever &
+  feature in depth, the investigations + corrections, all results); and
+  [acceleration_results.md](acceleration_results.md) — the **results at a glance** (status table + numbers).
 - **Repo (overlay):** `/gpfs/projects/b1222/userdata/canyu/kangyu/fedagent`
 - **verl 0.8 source (editable):** `/gpfs/projects/b1222/userdata/canyu/kangyu/others/verl/verl`
 - **Bar:** scientific equivalence with the FedAgent paper (reproduce within 3-seed noise).
@@ -314,13 +318,42 @@ process must reproduce each of these by hand:
 > So #4 is a **genuinely new capability** with no reference to port: it must solve *in-process* what
 > legacy solved by process death. → must be A/B-validated against the subprocess path before adoption.
 
-### Lever #3 — parallel clients within a round *(multi-node; biggest throughput; bit-equivalent)*
-`for c in selected` → concurrent, each client on its own GPU allocation/node. **Numerically identical**
+### Lever #3 — parallel clients within a round *(single-node wins for small models — GPU-validated; multi-node for large)*
+`for c in selected` → concurrent, each client on its own GPU subset/node. **Numerically identical**
 to sequential (FedAvg is order-free; the per-client env seed is `base_seed + round*100 + client`
-(`run_fed.py:635`), *client-indexed, not order-dependent*). Up to `clients_per_round×` on the train
-portion. **Needs ≥2 nodes / enough GPUs to isolate** — on a single node it's just contention (the iron
-law). Caveat: splitting 4 GPUs → 2+2 changes FSDP `world_size` → shard layout (aggregator reads
-`world_size_of` dynamically, handles it; same global batch ⇒ same numerics).
+(`run_fed.py:635`), *client-indexed, not order-dependent*). Splitting 4 GPUs → 2+2 changes FSDP
+`world_size` → shard layout (aggregator reads `world_size_of` dynamically; same global batch ⇒ same numerics).
+
+**GPU-validated on ONE node (2 client × 2 GPU, 1.5B, paper settings) — and it's ~35% faster, not a wash.**
+Two independent verl/Ray/vLLM jobs **coexist cleanly** on the 4-GPU node: engines load on disjoint pairs
+(6519 MiB ×4), no Ray-port / GPU / `/dev/shm` collision — isolation is just per-job `CUDA_VISIBLE_DEVICES`
++ `RAY_TMPDIR`. Timing:
+
+| arm | wall-clock |
+|---|---|
+| `t1` — 1 client, 4 GPU | 558s |
+| `t1` — 1 client, 2 GPU | 725s |
+| **#3 — 2 client × 2 GPU, concurrent** | **727s** |
+| sequential — 2 client × 4 GPU | 2×558 = **1116s** |
+
+The win is **sub-linear FSDP scaling at small model size**: 4 GPUs are only `725/558 = 1.30×` faster than
+2 for 1.5B (FSDP all-gather/reduce-scatter overhead + the env-latency-bound WebShop rollout + fixed
+cold-start all weigh more when per-GPU compute is small). So 4→2+2 split + both clients concurrent beats
+sequential-at-"full"-4-GPU. **This inverts the earlier "single-node #3 = contention" claim** — for small
+models it's a real win. *Caveat:* for a large model where 4-GPU scaling ≈2×, single-node #3 ties/loses →
+that's the regime that genuinely needs **≥2 nodes (one client per node)**.
+
+**Robustness bug found + fixed (FedAvg rendezvous port).** Concurrency exposed a real bug: the FedAvg
+step (`torchrun --nproc_per_node=ws aggregate_fedavg_fsdp.py`) used torchrun's **default c10d rendezvous
+`localhost:29500`**, so two clients aggregating at the same time **collide on 29500** → one dies `rc=1`
+mid-aggregate (`CUDA_VISIBLE_DEVICES`/`RAY_TMPDIR` don't isolate a TCP port; this also makes *any* two
+`run_fed`s sharing a node unsafe at aggregation). Fix: `torchrun --standalone` (auto free port) + clear
+inherited `MASTER_*`/`RANK`/`WORLD_SIZE` on the aggregator env (`run_fed.py fedavg()`). Touches **only**
+the aggregator's comm port — FedAvg math, rollout, eval unchanged; PPO-critic FedAvg routes through the
+same path. GPU-validated: the exact concurrent A+B that failed now closes **both** (`rc=0`, no `EADDRINUSE`).
+*Debugging note:* the surface symptom was `DataLoader worker killed (SIGKILL)` — a **red herring** (benign
+`__del__` teardown noise in *both* runs; dmesg showed no OOM-killer, node RAM 966 G / `/dev/shm` 504 G /
+cgroup unlimited all free). The real failure was the 29500 collision one step later.
 
 ### Lever #1 — eval(r) ∥ train(r+1) *(needs extra GPU; bounded)*
 Both read `model_r` (§2.4) → independent. Run eval on a spare allocation while round `r+1` trains.
@@ -333,7 +366,7 @@ overlaps it onto spare GPUs. Pure measurement ⇒ **zero numerical risk.**
 ### ROI ranking by hardware
 | hardware | do first | the big lever | skip (contention) |
 |---|---|---|---|
-| **single 4-GPU node** (default) | **#2** (free, zero-risk) | **#4** (only thing that touches the 88%) | #1, #3 |
+| **single 4-GPU node** (default) | **#2** (free, zero-risk) | **#4** (only thing that touches the 88%); **#3 for *small* models** (2×2 = −35% on 1.5B, GPU-validated §Lever #3) | #1 (needs spare GPU); #3 on *large* models (4-GPU scaling ≈2× ⇒ wash) |
 | **≥2 nodes / 8 GPUs** | #2 + **#3** (huge, bit-equivalent) | #1 free on spare alloc; #4 still ultimate GPU-hour win | — |
 
 ---
@@ -343,7 +376,7 @@ overlaps it onto spare GPUs. Pure measurement ⇒ **zero numerical risk.**
 |---|---|---|
 | #2 env prewarm | none (pure scheduling) | ✅ safe |
 | #1 eval ∥ train | none (measurement) | ✅ safe |
-| #3 parallel clients | none (FedAvg order-free, client-indexed seed) | ✅ safe |
+| #3 parallel clients | none (FedAvg order-free, client-indexed seed) | ✅ safe; single-node 2×2 GPU-validated (−35% on 1.5B) + FedAvg rendezvous-port bug fixed (`--standalone`, §Lever #3) |
 | #4 persistent trainer | **none measured**: smoke max\|Δ\|≈1e-6, full-loop max\|Δ\|=1.13e-5; high IF resets missed | ✅ validated (§7) incl. full-loop + PPO critic reload; confirm at larger step counts |
 
 ---
@@ -514,10 +547,37 @@ eval runs, never the result. `rc=0` for all four (`shared`/`worker` emit benign 
 teardown noise on shutdown, run still closes clean).
 
 **Saturated 4-GPU paper case → `worker`.** With `n_gpus_per_node=4` there are no spare GPUs, so
-`parallel` is N/A and `shared` pays a per-round eval cold-start. `worker` reuses the **hot** rollout
-engine (no second vLLM → no OOM, no cold-start), so per-round eval is cheap and `cross_round` speed
-is kept. Validated end-to-end (**703s** vs shared **874s** on the 2-round smoke; the gap widens at the
-paper's 70-round / 15-eval scale, where `shared` pays ~15 eval cold-starts and `worker` pays ~0).
+`parallel` is N/A *as 4-train* (it can still run as **2 train + 2 eval**, below) and `shared` pays a
+per-round eval cold-start. `worker` reuses the **hot** rollout engine (no second vLLM → no OOM, no
+cold-start), so per-round eval is cheap and `cross_round` speed is kept. Validated end-to-end (**703s**
+vs shared **874s** on the 2-round smoke; refined at 1.5B/n=500 below, where `shared` is in fact *slowest*).
+
+**1.5B paper-settings, 4-card comparison (GPU-validated).** The 0.5B table above floors at −0.6; re-run
+at **paper settings** (1.5B, G=8, `webshop_15` 15-turn, response 512, **n=500 val**, 100-client uniform
+partition 2/round, seed 42, 2 rounds), with every mode using the **full 4-card node** — three at 4 training
+GPUs, `parallel` at **2 train + 2 eval**. (`n_gpus_per_node` is not an algorithm parameter — FSDP across
+2 vs 4 GPUs is the same math — so all four stay paper-algorithm-consistent.)
+
+| eval_mode | GPU layout | wall-clock | rc |
+|---|---|---|---|
+| **parallel** | 2 train + 2 eval | **2493s** | 0 |
+| **worker** | 4 train (hot-engine eval) | 2637s | 0 |
+| **inline** | 4 train (blocking eval after merge) | 3090s | 0 |
+| **shared** | 4 train + 2nd eval engine @ 0.3 util | **3316s** | 0 |
+
+All four run clean — **no OOM** even for `shared`'s coexisting 2nd engine and `parallel`'s split.
+Ranking `parallel < worker < inline < shared` — two things the 0.5B floor hid:
+- **`shared` flips to slowest at a large val set.** At 0.5B/n=8 `shared` (874s) beat `inline` (1018s);
+  at 1.5B/**n=500** `shared` (3316s) is *slowest*, past `inline` (3090s). Cause: `shared`'s reduced-KV
+  (0.3-util) eval engine caps batch concurrency, so a 500-episode eval is throttled — a penalty that
+  **scales with val-set size** and was invisible at n=8. So `shared` is the wrong pick when val is large.
+- **`parallel` wins by hiding the expensive eval.** Its full-util eval engine on the disjoint 2 cards
+  overlaps the next round's training (n=500 eval off the critical path); `worker` is a close 2nd (full-util
+  hot engine, serial but cheap); `inline` pays per-round cold-start **and** blocks on the eval.
+
+The val numbers vary across modes by **eval sampling** (temp=0.4, n=500 but only 3–25 successes) and
+eval-path, not training: cross-mode **weight equivalence** was confirmed directly (worker vs inline 1.5B
+aggregates, max|Δ| 3.8e-6 / 7.6e-6), so `eval_mode` still never changes the trajectory.
 
 **What `worker` needed** (verl-lifecycle fixes, [persistent_task_runner.py](../fed/persistent_task_runner.py)).
 verl's `_validate()` is built to run *inside* `fit()`'s engine lifecycle; driving it from the persistent
@@ -597,7 +657,7 @@ Everything below is **overlay-only (no verl fork)** and currently **local/uncomm
 | file | change |
 |---|---|
 | [sitecustomize.py](../../sitecustomize.py) | gated `FEDAGENT_PERSISTENT=1` → `install_deferred_persistent_patch()` (every Ray worker gets the reset methods) |
-| [run_fed.py](../fed/run_fed.py) | **#4 per-round:** `persistent` flag + `run_round_persistent()` + run-loop branch. **#4 cross-round:** `cross_round` flag + `BgProc` (line-buffered log) + `_wait_signal` + `stop_persistent_cross_round` + signal-file handshake. **routing:** `client_service_url()` + plan `service_url` + `FEDAGENT_SERVICE_URL_FILE`. **eval modes (§7.4):** `eval_mode` inline/parallel/shared/worker — `_build_eval`/`eval_global`/`launch_eval_async`/`collect_eval`; per-round eval **every round** (`if do_eval:`, not `r%test_freq`); `cross_round`+inline → auto-fallback to per-round. **client-end circles (§7.4):** `client_end_eval` flag + `eval_client()` (merge client actor → `client_<c>/hf` + eval on val service, before cleanup) + `merge_to_hf(out_hf=)`/`_build_eval(client_id=)`; emits `client_curve` in summary. **metrics:** flush BgProc + parse the launch log (cross-round) so `metrics.json` isn't `[]`. **#2:** `prewarm_next_round_services()`. **windowed:** `history_length_env()` |
+| [run_fed.py](../fed/run_fed.py) | **#4 per-round:** `persistent` flag + `run_round_persistent()` + run-loop branch. **#4 cross-round:** `cross_round` flag + `BgProc` (line-buffered log) + `_wait_signal` + `stop_persistent_cross_round` + signal-file handshake. **routing:** `client_service_url()` + plan `service_url` + `FEDAGENT_SERVICE_URL_FILE`. **eval modes (§7.4):** `eval_mode` inline/parallel/shared/worker — `_build_eval`/`eval_global`/`launch_eval_async`/`collect_eval`; per-round eval **every round** (`if do_eval:`, not `r%test_freq`); `cross_round`+inline → auto-fallback to per-round. **client-end circles (§7.4):** `client_end_eval` flag + `eval_client()` (merge client actor → `client_<c>/hf` + eval on val service, before cleanup) + `merge_to_hf(out_hf=)`/`_build_eval(client_id=)`; emits `client_curve` in summary. **metrics:** flush BgProc + parse the launch log (cross-round) so `metrics.json` isn't `[]`. **#2:** `prewarm_next_round_services()`. **windowed:** `history_length_env()`. **#3 (concurrent aggregation, §Lever #3):** `fedavg()` uses `torchrun --standalone` + clears `MASTER_*`/`RANK`/`WORLD_SIZE` so two clients/experiments aggregating on one node don't collide on the default rendezvous port 29500 |
 | [fedagent_ppo.yaml](../config/fedagent_ppo.yaml) | added `critic:` block (PPO/gae value-model micro-batch; inert under GRPO) |
 | `fedagent/config/paper/*.yaml` (176) | **regenerated** to the windowed `response_length=512` budget (was `6144`/`8192`); via `tools/verl08_migration/gen_paper_configs.py --out fedagent/config/paper` |
 | [base.py](../envs/base.py) | `resolve_service_url(env_var, cfg, default)` — file-channel routing helper (file > env-var > config > default) |

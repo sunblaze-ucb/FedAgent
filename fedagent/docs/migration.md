@@ -81,9 +81,14 @@ applies three fixes surfaced by the WebShop/ALFWorld implementation audits:
    `env_heterogeneity/` arms, **50** elsewhere — matching the original baselines.
 2. **ALFWorld `max_turns = 50`** (was 12). The original ran 50-turn episodes; a smaller cap
    can only lower ALFWorld success. Set in `config/envs/alfworld.yaml` + `alfworld_val.yaml`.
-3. **ALFWorld context window** sized for 50-turn transcripts: the ALFWorld
-   `client_overrides` use `rollout.max_model_len=16384`, `response_length=8192` (WebShop
-   keeps its verified 15-turn shape). `rollout.n` stays at G=8.
+3. **ALFWorld context window**, sized for the **windowed** (per-turn, `history_length=2`)
+   default rollout — which is what changed the context sizing. Each turn is one training
+   sample whose prompt is the bounded windowed template (task + last-2 (obs,action) + current
+   obs), not a growing transcript, so the old growing-transcript budgets
+   (`max_model_len=16384`, `response_length=8192`) are gone. The ALFWorld `client_overrides`
+   now use `rollout.max_model_len=2560`, `response_length=512` (prompt `2048` for the short
+   room text); WebShop uses `rollout.max_model_len=4608`, `response_length=512` (prompt `4096`
+   for the long product pages). `rollout.n` stays at G=8.
 
 > Fixes #2/#3 are **GPU-VERIFY**: confirm no OOM / prompt truncation at 50 turns on the
 > target hardware; raise `max_model_len` further if episodes truncate before `done`.
@@ -122,6 +127,9 @@ GRPO WebShop federated path **is** GPU-verified end-to-end).
 
 ## See also
 
+- [migration_report.md](./migration_report.md) — the **complete migration walkthrough**: the route decision,
+  the environment-build saga, and the hard problems (checkpoint/agent-loop/env-service/windowed) *in depth*.
+  *This* doc is the condensed fidelity record; that one is the full engineering account.
 - [architecture.md](./architecture.md) — how the overlay is built
 - [reproducing.md](./reproducing.md) — the paper config matrix
 - [`../EXPERIMENTS.md`](../EXPERIMENTS.md) — the running experiment log + per-fix detail

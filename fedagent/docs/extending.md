@@ -402,9 +402,10 @@ if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
    `checkpoint.save_contents=[model]`, and FedAvg/merge it with the same machinery —
    `run_fed.fedavg(..., kind="<component>")` and `merge_to_hf(..., kind="<component>")`
    are already component-agnostic (they average and merge whatever shard dir they are
-   given). The merger auto-detects the architecture from the shard's
-   `huggingface/config.json` (`...ForCausalLM` for the actor,
-   `...ForTokenClassification` for the value model), so no per-component flag is needed.
+   given). The merger reads the architecture from the shard's `huggingface/config.json`,
+   and **both** the actor and the value model serialize as `...ForCausalLM` (the value
+   model just carries an extra scalar value head), so no per-component special-casing is
+   needed.
 
 ---
 

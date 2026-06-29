@@ -43,6 +43,7 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 |---|---|
 | `fed/run_fed.py` | The federated round loop. Verl-agnostic driver: launches one client **subprocess** per (client, round), starts/stops per-client + val env services, FedAvgs the FSDP shards, merges to HF, advances rounds, runs eval. Functions: `run`, `select_clients`, `run_client`, `fedavg`, `merge_to_hf`, `cleanup_round_checkpoints`, `eval_global`, `start_*_services`. |
 | `fed/metrics_logger.py` | Parses each client's verl `training.log` stdout into `json_logs/metrics.json` in the FedAgent plot schema (`[{"step", "metrics"}]`). Restores measurability without forking verl's `Tracking`. |
+| `fed/persistent_main.py`, `fed/persistent_patch.py`, `fed/persistent_task_runner.py` | The optional **persistent-trainer** path (lever #4, [acceleration.md](./acceleration.md)), used when `persistent=true`/`cross_round=true`. `persistent_main.py` is a `main_ppo_fed` counterpart that drives a `PersistentFedTaskRunner` (`init_workers()` once, then `fit()` per client over a JSON plan) to avoid the per-client subprocess cold-start; `persistent_task_runner.py` is that runner; `persistent_patch.py` arms (via `sitecustomize.py`, gated on `FEDAGENT_PERSISTENT=1`) the `reload_client_model` worker method that re-points the live FSDP engines at the next aggregated model. |
 
 ### `envs/` — env contract + clients ([README](../envs/README.md))
 
@@ -68,7 +69,7 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 
 | File | Role |
 |---|---|
-| `data/agentic_dataset.py` | `AgenticDataset` — verl `data.custom_cls` that emits one row **per env instance** from an env-spec YAML (`name`/`n_envs`/`max_turns`/`agent_name`/`config`), each with a distinct seed. Non-tensor columns flow to `AgentLoop.run()` as kwargs. `_partition_specs` is the per-client heterogeneity seam (reads `PARTITION_STRATEGY`/`CLIENT_ID`/… → `hetero/`). |
+| `data/agentic_dataset.py` | `AgenticDataset` — verl `data.custom_cls` that emits one row **per env instance** from an env-spec YAML (`name`/`n_envs`/`max_turns`/`agent_name`/`config`), each with a distinct seed. Non-tensor columns flow to `AgentLoop.run()` as kwargs. `_partition_specs` is the *designated* per-client heterogeneity seam (meant to read `PARTITION_STRATEGY`/`CLIENT_ID`/… → `hetero/`), but is presently an identity no-op — heterogeneity is injected service-side, not here. |
 
 ### `hetero/` — heterogeneity constructions ([README](../hetero/README.md))
 
@@ -92,8 +93,8 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 | `config/fedagent_ppo.yaml` | The training config layered on verl's **stock** `ppo_trainer` (via `hydra.searchpath` → `$VERL_CFG`). Sets `adv_estimator`, `data.custom_cls`, batch sizes; machine paths come from the CLI. |
 | `config/agent.yaml` | Agent-loop registry consumed by verl's `AgentLoopManager`: maps `agent_name: gym_text` → `GymTextAgentLoop._target_`. |
 | `config/envs/*.yaml` | Env-spec files read by `AgenticDataset` (`tiny_guess`, `webshop_15`, `webshop_15_ppo`, `webshop_15_val`, `alfworld`, `alfworld_val`, …) — the per-run env pool + turn budget. |
-| `config/fed_*.yaml` | Top-level **run configs** for `run_fed.py` (one per experiment: smoke, scaled WebShop arms, ALFWorld, centralized/local baselines, FedProx). |
-| `config/paper/` | The paper matrix: `uniform/<model>/`, `task_heterogeneity/{grpo,ppo}/`, `env_heterogeneity/<variant>{,_ppo}/`, `decentralized/`. See [reproducing.md](./reproducing.md). |
+| `config/examples/**` | **Run configs** for `run_fed.py` (`examples/tinyguess_2cl_2rd.yaml`, `examples/webshop/`, `examples/alfworld/`): smoke, scaled WebShop arms, ALFWorld, FedProx. The top level holds **no** `fed_*.yaml` — only `agent.yaml` + `fedagent_ppo.yaml`. |
+| `config/paper/` | The paper matrix (the `fed_*.yaml` run configs live here): `uniform/<model>/`, `task_heterogeneity/{grpo,ppo}/`, `env_heterogeneity/<variant>{,_ppo}/`, `decentralized/`. See [reproducing.md](./reproducing.md). |
 
 ### Top-level overlay modules
 
@@ -249,10 +250,12 @@ It is deliberately **not** a Ray `runtime_env` hook (that clobbered verl's per-w
 ## Evaluation
 
 A single **unperturbed** validation service (full env, held-out val split, no heterogeneity)
-scores the **aggregated global model** every `test_freq` rounds — plus the base model at
-round 0 (`val_before_train`) — at sampling temperature `val_temperature`. `eval_global` runs
-a verl `val_only` pass and parses the round→success/reward curve into
-`federated_summary.json`. A failed eval never aborts the run (it is measurement, not the loop).
+scores the **aggregated global model** **every round** (`if do_eval: run_eval(current_model, r)`)
+— plus the base model at round 0 (`val_before_train`) — at sampling temperature
+`val_temperature`. (`test_freq` is *not* this gate: it is verl's within-job step cadence for
+the per-client "circle" marks, not the global red line.) `eval_global` runs a verl `val_only`
+pass and parses the round→success/reward curve into `federated_summary.json`. A failed eval
+never aborts the run (it is measurement, not the loop).
 
 ## Outputs
 
@@ -267,3 +270,4 @@ FSDP shards are deleted after each merge (`cleanup_checkpoints`) to bound disk t
 - [configuration.md](./configuration.md) — every config key
 - [reproducing.md](./reproducing.md) — the paper config matrix
 - [migration.md](./migration.md) — what changed from verl-agent 0.3.1, and the fidelity record
+- [migration_report.md](./migration_report.md) — the complete migration engineering report (route decision, the dependency saga, the checkpoint/agent-loop/env-service/windowed deep-dives)

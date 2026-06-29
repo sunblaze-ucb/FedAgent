@@ -13,8 +13,9 @@ overview in [`../README.md`](../README.md), then:
 | [features.md](./features.md) | Each capability → its config key → its source file (a navigation map). |
 | [heterogeneity.md](./heterogeneity.md) | The two-level (task vs environment) heterogeneity suite, with the construction math for each arm. |
 | [reproducing.md](./reproducing.md) | The paper's 176-config matrix mapped to run commands; 3-seed replication; baselines. |
+| [acceleration_report.md](./acceleration_report.md) | **Acceleration & validation — the complete walkthrough**: every lever & feature in depth (persistent trainer, eval modes, client-parallel #3, equivalence), the investigations + corrections, and how to run. Companions: [acceleration_results.md](./acceleration_results.md) (numbers at a glance) · [acceleration.md](./acceleration.md) (the original analysis & plan). |
 | [extending.md](./extending.md) | Extension points: a new dataset/env, heterogeneity strategy, RL algorithm, or aggregation rule. |
-| [migration.md](./migration.md) | What changed from the verl-agent-0.3.1 fork, the environment-engine reuse, and the fidelity record. |
+| [migration.md](./migration.md) · [migration_report.md](./migration_report.md) | **Migration** — `migration.md` is the condensed fidelity record (what changed from the verl-agent-0.3.1 fork + the science-critical alignments); `migration_report.md` is the **complete engineering walkthrough** (route decision, the dependency saga, and the checkpoint / agent-loop / env-service / windowed deep-dives). |
 
 ## Per-component references
 
