@@ -1,0 +1,37 @@
+# NODE1 DEPLOYMENT VARIANT: runs on the 1xH100 / 8-core node (qgpu3010) — how many service
+# replicas does a small node support? (CPU-bound question, not GPU.)
+# REPLICA-SHARDED rerun (Tier-1): alfworld_replicas=8, pool 64 total (~10/replica). Prediction to
+# falsify: gen 219->40-70s (4GPU) / 228->40-70s (1GPU), step 298->120-150s / 534->~350s. Same science
+# (same client shard per replica, iid game sampling).
+# ALFWorld Tier-2 GPU-scaling probe (1 GPU). See alf_scale_g4.yaml header. Output -> runs/alf_scale/g1_r4n1.
+env_kind: alfworld
+env_spec: config/envs/alfworld.yaml
+val_env_spec: ""
+output_dir: /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent/runs/alf_scale/g1_r4n1
+model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+total_clients: 1
+clients_per_round: 1
+total_rounds: 1
+epochs_per_round: 1
+total_training_steps: 1
+base_seed: 42
+val_before_train: false
+save_freq: 100000
+min_goals_per_client: 8
+alfworld_pool_size: 64
+alfworld_replicas: 4
+alfworld_base_port: 40800
+cleanup_checkpoints: false
+partition_strategy: ""
+n_gpus_per_node: 1
+client_overrides:
+  - data.train_batch_size=8
+  - data.max_prompt_length=2048
+  - data.max_response_length=4096
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=8
+  - actor_rollout_ref.rollout.prompt_length=2048
+  - actor_rollout_ref.rollout.response_length=4096
+  - actor_rollout_ref.rollout.max_model_len=6144
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.6
+  - actor_rollout_ref.actor.checkpoint.save_contents=[model]

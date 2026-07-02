@@ -181,6 +181,11 @@ Two faithfulness/env costs make even the running 12% slower than legacy:
 
 > Net of §2.2: even with infinite orchestration parallelism, windowed is ~1.47× slower *per step*
 > than concat, and ALFWorld adds a serialized env tax. These are understood and bounded.
+>
+> **⚠️ 2026-07-01 correction (§9):** "bounded" held only at the small batch measured here (160
+> steps → 13.7 s). At paper-scale batches (~3200 env steps/optimizer-step) the same 86 ms/step
+> constant becomes **73 % of a 4-GPU ALFWorld step** — now FIXED by env-service replica sharding
+> (`alfworld_replicas`): gen 219→52 s, step 298→128 s, end-to-end −31 %. See §9.
 
 ### 2.3 The unexploited parallelism — the whole pipeline layer is serial
 Nothing in `run_fed.py` overlaps:
@@ -692,6 +697,12 @@ and a clean demonstration that eval hides on dedicated GPUs — but #3 + worker 
 single-node fast path; the 1-GPU split is not a default.** The investigation's lasting value is the
 **weight-transfer fix** above, which hardens #3 and eval-parallel for *every* concurrent-job layout.
 
+> **⚠️ 2026-07-01 correction (§9.1):** the "env-latency-bound" explanation and the "1.37×" figure
+> were **wall-ratio inferences** on a 3-step round diluted by ~390 s of fixed overhead. WebShop's
+> first `timing_s` decomposition shows the opposite: WebShop is **GPU-compute-bound** (74 % of a
+> 1-GPU step) and the **per-step** 1-GPU penalty is **2.41×** — the verdict above (don't starve
+> training to 1 GPU) gets *stronger*. It is ALFWorld whose rollout is env-bound (§9).
+
 ---
 
 ## 8. Implementation reference (this session's changes)
@@ -807,3 +818,83 @@ python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/dev/tinygue
 > *history-length* migration is superseded by auto-map + `FEDAGENT_HISTORY_LENGTH`; the
 > *response-length* regen in (3) is the separate, now-done part. **Remaining:** a paper-scale (1.5B)
 > persistent run + a larger-step equivalence A/B (§7.6).
+
+---
+
+## 9. Tier-1 — env-service replica sharding (2026-07-01, GPU-validated end-to-end)
+
+**The finding that motivated it.** §2.2 measured ALFWorld's `_TW_LOCK` at **86 ms/step** on a
+160-step batch (13.7 s) and filed it as "understood and bounded." At **paper-scale batches that
+qualitative call inverts**: a windowed ALFWorld training step is 64 episodes × ~50 turns ≈ **3200
+env steps**, and 86 ms × 3200 ≈ 275 s — the measured `timing_s/gen` (219–228 s, **flat across
+1/2/4 GPU**) is almost exactly the lock-serialized env time. The lock's design comment assumed
+"env transitions are ms-fast vs *seconds* of LLM generation" — but windowed responses average
+**~100 tokens/turn** (measured), so the LLM hides under the lock, not the reverse. **gen ≈ the
+lock**, 73 % of a 4-GPU step.
+
+**The fix (implemented, both envs).** Run **K identical service processes per client** over the
+SAME shard — K processes = K independent parsers/locks; sessions spread round-robin client-side:
+- [envs/base.py](../envs/base.py) `resolve_service_url` accepts a **comma-separated replica list**
+  from any routing source (URL-file / process-env / spec); each env instance binds one replica
+  round-robin (PID-offset cursor, per-worker balance ±1) and stays sticky for its episode.
+- [fed/run_fed.py](../fed/run_fed.py): `alfworld_replicas` / `webshop_replicas` (default 1 =
+  byte-identical legacy). Train **and val** services replicate; ports `base + c*K + j`; the
+  configured pool is split ~evenly (+2 slack); the val/client port-collision guard is band-aware.
+- **Equivalence:** every replica gets the client's identical shard env-vars → identical game/goal
+  distribution, iid sampling; which replica an episode lands on changes scheduling only (same class
+  as the existing pool-borrow order). update_actor/old_log_prob/ref were bit-untouched by design and
+  measured unchanged.
+
+**Validation chain (all GPU-measured, 1.5B, response 4096, batch 8×8):**
+
+| level | experiment | result |
+|---|---|---|
+| mechanism | same-node K-sweep (1×H100, pool 64) | gen **217.5 (K1) → 65.8 (K4) → 61.8 (K8)** |
+| control | K=1 + pool 64 vs pool 8 baseline | gen 217.5 ≈ 228 → **pool size irrelevant; the lock is the whole story** |
+| component | `alf_scale_g4_r8` (4×H100, K=8) | gen **219.3 → 51.7 (−76 %)**, step **298.4 → 127.6 (−57 %, 2.34×)**; update_actor 43.3→43.7 (untouched ✓) |
+| component | `alf_scale_g1_r8` (+ node-1 K4/K8) | step **534.5 → 350–359 (−33 %)** on BOTH nodes; K=4 suffices on an 8-core node |
+| end-to-end | `alf_em_worker_r8` — same config as the 3509 s baseline + `alfworld_replicas: 8` | **2412 s (−31 %)**; training steps 359→**127 s mean (−65 %)**; rc=0, val healthy |
+
+Residual gen ≈ 52–66 s = the new floor (episode critical path: ~50 turns × (LLM ~0.2–0.3 s + env
+86 ms/K + HTTP)); more replicas stop paying once per-replica serial load < that path (K=4–8).
+
+**Strategic consequence — the 1-GPU story dies post-fix.** With the env floor removed, GPU compute
+dominates and ALFWorld's per-step 1-GPU penalty grows **1.79× → 2.81×** (358.8/127.6). The ALFWorld
+production recipe is `cross_round + eval_mode=worker + alfworld_replicas=8` on 4 GPUs (or 2×2 #3).
+
+### 9.1 WebShop decomposition — the OPPOSITE bottleneck (first measurement; corrects §7.7's inference)
+
+`ws_scale_g{1,g1b,g4}` (1 step, eval off, paper settings, pool 16) — WebShop had never had a
+`timing_s` decomposition; §7.7 *inferred* "env-latency-bound" from wall ratios. The decomposition
+says otherwise:
+
+| WebShop | gen | old_log_prob | ref | update_actor | GPU-compute Σ | step |
+|---|---|---|---|---|---|---|
+| 1×H100 (same node) | 54.6 (24 %) | 26.6 | 39.1 | 100.1 | **165.8 (74 %)** | 225.2 |
+| 4×H100 | 44.1 (47 %) | 10.2 | 8.8 | 27.9 | 46.9 (50 %) | 93.4 |
+
+- **WebShop is GPU-compute-bound** (74 % at 1 GPU) — the mirror image of ALFWorld's 73 % env.
+- gen is flat-ish (54.6→44.1) but *small*; GPU compute scales 3.54×.
+- **Correction:** the earlier "1-GPU only 1.37× slower" was **fixed-overhead dilution** of a 3-step
+  wall (995 ≈ 3×202 + ~390 overhead reconciles exactly). Per-step the WebShop 1-GPU penalty is
+  **2.41×** (225.2/93.4). §7.7's layout verdict (don't starve training to 1 GPU) gets *stronger*.
+- Node effect ruled out: 1-GPU probe on the 8-core node = 202.1 s vs 225.2 s on the 64-core node (±10 %).
+
+**WebShop levers measured** (4-GPU): pool 16→64 alone **hurts** (gen 44.1→50.1 — more concurrent
+sessions in ONE process amplifies GIL contention; the "wave-throttle" hypothesis is refuted);
+pool 64 + `webshop_replicas: 4` → gen **35.7**, step **82.2 (−12 %)** — GIL sharding is real but
+modest. WebShop's big lever remains GPU compute (#3 / more GPUs); replicas are a free garnish.
+
+### 9.2 Reproduce
+
+```bash
+# ALFWorld replica probes (4-GPU K=8, 1-GPU K=8, control K=1/pool64):
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/alfworld/alf_scale_g4_r8.yaml
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/alfworld/alf_scale_g1_r8.yaml
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/alfworld/alf_scale_g1_r1n1.yaml
+# end-to-end A/B vs the 3509s worker baseline:
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/alfworld/alf_em_worker_r8.yaml
+# WebShop decomposition + levers:
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/webshop/ws_scale_g4.yaml       # + g1, g1b
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/webshop/ws_scale_g4_p64r4.yaml # + g4_p64
+```

@@ -461,3 +461,28 @@ the eval-mode loser ✗). De-risk smoke (0.5B) GREEN earlier.
 launching step's **cgroup** was cleaned — `setsid` escapes the session but not the cgroup. Durable
 pattern: run the driver in the **foreground of a long-lived step**; monitor via **GPFS reads** + **log-mtime
 staleness** liveness (never self-matching `pgrep`). Banked to memory.
+
+## Tier-1 env-service replica sharding + WebShop decomposition (2026-07-01)
+
+Ran on TWO allocations simultaneously (4×H100 qgpu3021 + 1×H100/8-core qgpu3010). Full analysis:
+[`docs/acceleration.md`](docs/acceleration.md) §9; cross-env synthesis updated in
+[`docs/acceleration_cross_env.md`](docs/acceleration_cross_env.md).
+
+- **Implemented `alfworld_replicas`/`webshop_replicas`** (env-service replica sharding): K identical
+  service processes per client over the same shard, sessions round-robin client-side
+  (`envs/base.py::resolve_service_url` comma-list; run_fed replicates train+val services, splits the
+  pool, band-aware port guard). K=1 = byte-identical legacy.
+- **ALFWorld (env-bound, 73% of a 4-GPU step was `_TW_LOCK` serialization) — validated at 3 levels:**
+  mechanism (same-node K-sweep: gen 217.5→65.8→61.8 s; control K=1/pool64 = 217.5 s → pool
+  irrelevant, the lock is everything); component (4-GPU step **298→127.6 s, −57%**, gen −76%,
+  update_actor untouched; 1-GPU step 534→350–359 on BOTH nodes, K=4 suffices on 8 cores);
+  **end-to-end** (same config as the 3509 s worker baseline + K=8 → **2412 s, −31%**, steps −65%,
+  val healthy). Post-fix the 1-GPU per-step penalty grows 1.79×→2.81× → 1-GPU clients dead.
+- **WebShop decomposition (FIRST — corrects the docs' "env-latency-bound" inference):** 1-GPU step
+  225.2 s = gen 54.6 (24%) + GPU-compute 165.8 (74%) → **GPU-bound, the mirror image of ALFWorld**.
+  Per-step 1-GPU penalty **2.41×** (old "1.37×" was 3-step-wall overhead dilution; 995≈3×202+390
+  reconciles). Levers: pool 16→64 alone HURTS (gen 44.1→50.1, GIL amplification — wave-throttle
+  hypothesis refuted); pool64+`webshop_replicas: 4` → step 93.4→**82.2 (−12%)** — real but garnish.
+- **Production recipes:** ALFWorld 4×H100 = `cross_round + eval_mode=worker + alfworld_replicas: 8`;
+  ALFWorld 1×H100 = `alfworld_replicas: 4` (−33%); WebShop = GPUs + optional replicas −12%.
+- Configs: `tools/verl08_migration/accel/{alfworld,webshop}/` (`*_r8/r4/r1n1/p64*` probes).

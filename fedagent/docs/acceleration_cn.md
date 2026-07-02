@@ -180,6 +180,11 @@ flashinfer autotune 之所以是 **39 ms，是因为 JIT/inductor cache 已经 w
 
 > §2.2 的净效应：即使编排并行度无限大，windowed 仍比 concat *每步*慢约 1.47×，
 > 而且 ALFWorld 还额外加了一笔串行化的 env 税。这些都已被理解且有界。
+>
+> **⚠️ 2026-07-01 修正（§9）：**"有界"只在这里实测的小 batch（160 步 → 13.7 s）下成立。
+> 在论文级 batch（~3200 env 步/optimizer-step）下，同样的 86 ms/step 常数变成了
+> **4-GPU ALFWorld 一步的 73%** —— 现已通过 env-service replica 分片
+> （`alfworld_replicas`）修复：gen 219→52 s，step 298→128 s，端到端 −31%。见 §9。
 
 ### 2.3 尚未利用的并行度 —— 整个 pipeline 层都是串行的
 `run_fed.py` 中没有任何东西重叠：
@@ -653,6 +658,12 @@ round** 都付，而正确的基线不是*串行* eval —— 是 **`eval_mode=w
 路径；1-GPU 拆分不是默认。** 这次调查的持久价值是上面那个**权重传输修复**，它为*每一种*并发-job 布局加固了 #3
 和 eval-parallel。
 
+> **⚠️ 2026-07-01 修正（§9.1）：**"env-latency-bound"这个解释和"1.37×"这个数字都是
+> **墙钟比值推断**，来自一个被 ~390 s 固定开销稀释的 3-step round。WebShop 的第一次
+> `timing_s` 分解给出了相反结论：WebShop 是 **GPU-compute-bound** 的（1-GPU 一步的
+> 74%），**每步**的 1-GPU 代价是 **2.41×** —— 上面的裁定（别把训练饿到 1 GPU）反而
+> 变得*更强*。rollout 真正 env-bound 的是 ALFWorld（§9）。
+
 ---
 
 ## 8. 实现参考（本次会话的改动）
@@ -767,3 +778,80 @@ python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/dev/tinygue
 > *history-length* 迁移已被 auto-map + `FEDAGENT_HISTORY_LENGTH` 取代；（3）中的
 > *response-length* 重新生成是另一个、现已完成的部分。**剩余：** 一次论文级（1.5B）
 > 持久化 run + 一次更大 step 的等价 A/B（§7.6）。
+
+---
+
+## 9. Tier-1 —— env-service replica 分片（2026-07-01，GPU 端到端验证）
+
+**促成它的发现。** §2.2 在一个 160 步的 batch 上把 ALFWorld 的 `_TW_LOCK` 实测为 **86 ms/step**
+（13.7 s），并把它归档为"已理解且有界"。**到了论文级 batch，这个定性判断被反转**：一个 windowed
+ALFWorld 训练步是 64 episode × ~50 turn ≈ **3200 个 env 步**，而 86 ms × 3200 ≈ 275 s —— 实测的
+`timing_s/gen`（219–228 s，**在 1/2/4 GPU 上持平**）几乎恰好就是锁串行化的 env 时间。这把锁的
+设计注释假设"env transition 是 ms 级的，相对于 LLM generation 的*秒*级" —— 但 windowed 响应
+平均只有 **~100 token/turn**（实测），所以是 LLM 藏在锁下面，而不是反过来。**gen ≈ 这把锁**，
+占 4-GPU 一步的 73%。
+
+**修复（已实现，两个 env 都有）。** 给**每个 client 跑 K 个相同的 service 进程**，都指向同一个
+shard —— K 个进程 = K 个独立的 parser/锁；session 在 client 侧 round-robin 分摊：
+- [envs/base.py](../envs/base.py) 的 `resolve_service_url` 接受**逗号分隔的 replica 列表**，
+  来自任一路由源（URL-file / process-env / spec）；每个 env 实例 round-robin 绑定一个 replica
+  （PID 偏移游标，per-worker 均衡 ±1），并在其 episode 期间保持粘性。
+- [fed/run_fed.py](../fed/run_fed.py)：`alfworld_replicas` / `webshop_replicas`（默认 1 =
+  字节级等同 legacy）。训练**与 val** 服务都做 replica；端口 `base + c*K + j`；配置的 pool
+  被约等分（+2 余量）；val/client 端口冲突守卫是按 band 感知的。
+- **等价性：** 每个 replica 拿到该 client 完全相同的 shard 环境变量 → 相同的 game/goal
+  分布、iid 采样；episode 落在哪个 replica 上只改变调度（与现有 pool-borrow 顺序同一类）。
+  update_actor/old_log_prob/ref 设计上就一个 bit 都没碰，实测也未变。
+
+**验证链（全部 GPU 实测，1.5B，response 4096，batch 8×8）：**
+
+| 层级 | 实验 | 结果 |
+|---|---|---|
+| 机制 | 同节点 K 扫描（1×H100，pool 64） | gen **217.5 (K1) → 65.8 (K4) → 61.8 (K8)** |
+| 对照 | K=1 + pool 64 vs pool 8 基线 | gen 217.5 ≈ 228 → **pool 大小无关；这把锁就是全部原因** |
+| 组件 | `alf_scale_g4_r8`（4×H100，K=8） | gen **219.3 → 51.7（−76%）**，step **298.4 → 127.6（−57%，2.34×）**；update_actor 43.3→43.7（未动 ✓） |
+| 组件 | `alf_scale_g1_r8`（+ node-1 K4/K8） | step **534.5 → 350–359（−33%）**，两个节点上都成立；8 核节点上 K=4 就够 |
+| 端到端 | `alf_em_worker_r8` —— 与 3509 s 基线同配置 + `alfworld_replicas: 8` | **2412 s（−31%）**；训练步 359→**均值 127 s（−65%）**；rc=0，val 健康 |
+
+残余 gen ≈ 52–66 s = 新的地板（episode 关键路径：~50 turn ×（LLM ~0.2–0.3 s + env 86 ms/K +
+HTTP））；一旦 per-replica 串行负载 < 该路径，更多 replica 就不再有回报（K=4–8）。
+
+**战略后果 —— 修复之后，1-GPU 故事死了。** env 地板移除后，GPU 计算占主导，ALFWorld 每步的
+1-GPU 惩罚从 **1.79× 涨到 2.81×**（358.8/127.6）。ALFWorld 的生产配方是 4 GPU 上的
+`cross_round + eval_mode=worker + alfworld_replicas=8`（或 2×2 的 #3）。
+
+### 9.1 WebShop 分解 —— 相反的瓶颈（首次实测；修正 §7.7 的推断）
+
+`ws_scale_g{1,g1b,g4}`（1 step，eval 关闭，paper 设置，pool 16）—— WebShop 此前从未有过
+`timing_s` 分解；§7.7 的"env-latency-bound"是从墙钟比值*推断*的。分解给出了相反的答案：
+
+| WebShop | gen | old_log_prob | ref | update_actor | GPU-compute Σ | step |
+|---|---|---|---|---|---|---|
+| 1×H100（同节点） | 54.6 (24 %) | 26.6 | 39.1 | 100.1 | **165.8 (74 %)** | 225.2 |
+| 4×H100 | 44.1 (47 %) | 10.2 | 8.8 | 27.9 | 46.9 (50 %) | 93.4 |
+
+- **WebShop 是 GPU-compute-bound** 的（1 GPU 时 74%）—— 与 ALFWorld 的 73% env 恰好互为镜像。
+- gen 基本平坦（54.6→44.1）但*很小*；GPU 计算按 3.54× scaling。
+- **修正：** 早先的"1-GPU 只慢 1.37×"是 3-step 墙钟被**固定开销稀释**的结果（995 ≈ 3×202 + ~390
+  开销，恰好对账）。按每步算，WebShop 的 1-GPU 惩罚是 **2.41×**（225.2/93.4）。§7.7 的布局裁定
+  （别把训练饿到 1 GPU）反而*更强*了。
+- 节点效应已排除：8 核节点上的 1-GPU 探针 = 202.1 s，vs 64 核节点上的 225.2 s（±10%）。
+
+**WebShop 杠杆实测**（4-GPU）：仅把 pool 16→64 反而**有害**（gen 44.1→50.1 —— 更多并发 session
+挤在同一个进程里放大了 GIL 争用；"wave-throttle"假说被否证）；pool 64 + `webshop_replicas: 4` →
+gen **35.7**，step **82.2（−12%）** —— GIL 分片是真实的但收益有限。WebShop 的大杠杆仍是 GPU
+计算（#3 / 更多 GPU）；replica 只是免费的点缀。
+
+### 9.2 复现
+
+```bash
+# ALFWorld replica probes (4-GPU K=8, 1-GPU K=8, control K=1/pool64):
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/alfworld/alf_scale_g4_r8.yaml
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/alfworld/alf_scale_g1_r8.yaml
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/alfworld/alf_scale_g1_r1n1.yaml
+# end-to-end A/B vs the 3509s worker baseline:
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/alfworld/alf_em_worker_r8.yaml
+# WebShop decomposition + levers:
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/webshop/ws_scale_g4.yaml       # + g1, g1b
+python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/webshop/ws_scale_g4_p64r4.yaml # + g4_p64
+```

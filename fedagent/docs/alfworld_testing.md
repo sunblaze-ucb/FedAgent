@@ -250,6 +250,31 @@ or `parallel`** (~25–30% over inline). Run logs: gitignored `runs/alf_em`, `ru
 
 ---
 
+## 7. Tier-1 fix — env-service replica sharding kills the env-bound floor (2026-07-01)
+
+§6.2's env-bound `gen` (flat 219–228 s across GPU counts) is `_TW_LOCK` serialization: the tatsu
+PDDL parser is process-global, one service process = one lock = single-file env stepping
+(86 ms × ~3200 steps/optimizer-step ≈ the whole gen). **Fix:** `alfworld_replicas: K` — K identical
+service processes per client over the *same* game shard, sessions spread round-robin client-side
+(comma-URL list in `resolve_service_url`; run_fed replicates train **and val** services). Same
+episode distribution → science-safe. Validation chain (1.5B, batch 8×8, GPU-measured):
+
+| level | result |
+|---|---|
+| mechanism (same-node K-sweep, pool 64) | gen **217.5 (K1) → 65.8 (K4) → 61.8 (K8)** |
+| control (K=1, pool 8→64) | gen 217.5 ≈ 228 → **pool irrelevant; the lock is the whole story** |
+| 4×H100 component (K=8) | gen **219→51.7 (−76 %)**, step **298→127.6 (−57 %)**; update_actor untouched |
+| 1×H100 component (both nodes) | step **534→350–359 (−33 %)**; **K=4 suffices on an 8-core node** |
+| **end-to-end** (§6.3 worker config + K=8) | **3509 → 2412 s (−31 %)**; train steps −65 %; val healthy |
+
+Residual gen ≈ 52–66 s = episode critical path (new floor). **Post-fix consequence:** GPU compute
+now dominates → the per-step 1-GPU penalty grows **1.79× → 2.81×**, so the 1-GPU-per-client idea is
+dead for good. **ALFWorld production recipe: `cross_round + eval_mode=worker + alfworld_replicas: 8`
+(4×H100) / `alfworld_replicas: 4` (1×H100, −33 %).** Details + WebShop contrast (GPU-bound, replicas
+only −12 %): [acceleration.md](./acceleration.md) §9.
+
+---
+
 ## In one sentence
 
 ALFWorld should **not** be "tested all over again": correctness rides on the env-agnostic fixes (§1),

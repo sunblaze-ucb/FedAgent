@@ -94,8 +94,17 @@ DEFAULTS = {
     "search_return_n": 200,                 # WEBSHOP_SEARCH_RETURN_N: BM25 top-K (paper=200; engine default 50 drops targets under env-het filtering)
     # --- env_kind=alfworld: per-client remote ALFWorld services + game-shard heterogeneity ---
     "alfworld_run_service": str(PKG_DIR / "envs" / "alfworld" / "service" / "run_service.sh"),
-    "alfworld_base_port": 8200,             # client c's service -> alfworld_base_port + c
-    "alfworld_pool_size": 4,                # textworld env pool per service (must be >= gen_batch)
+    "alfworld_base_port": 8200,             # client c's service -> alfworld_base_port + c*replicas + j
+    "alfworld_pool_size": 4,                # textworld env pool per CLIENT, TOTAL across replicas (must be >= gen_batch)
+    # Env-service REPLICA SHARDING (Tier-1 lever, docs/acceleration.md): run K identical service
+    # processes per client (same game/goal shard -> same episode distribution; sessions spread
+    # round-robin client-side via the comma-separated URL list). Kills the per-PROCESS env
+    # serialization floor: ALFWorld's _TW_LOCK (tatsu PDDL parser is a process-global singleton)
+    # serializes ALL env steps in one service -- measured 86ms/step x ~3200 steps = ~73% of a
+    # 4-GPU training step. K replicas = K independent locks. WebShop has no lock but is one
+    # GIL-bound process -- same sharding applies. 1 = today's single-service behavior.
+    "alfworld_replicas": 1,
+    "webshop_replicas": 1,
     "alfworld_train_eval": "train",         # game split: train | eval_in_distribution | eval_out_of_distribution
     "alfworld_task_types": "",               # "" => all 6 types; else comma-sep IDs (1=Pick..6=Pick2) for the eval breakdown
     "partition_strategy": "",               # "" | catalog_split/task_disjoint (env) | preference/coverage/hardness (task) | bm25_field_subset/bm25_reweight/lookalike/rank_wrapper (env variants 2-5)
@@ -368,7 +377,11 @@ def _wait_services_healthy(cfg, services: List[dict], tag: str) -> None:
 
 # ----------------------------------------------------------------- webshop services
 def webshop_service_url(cfg, client_id: int) -> str:
-    return f"http://localhost:{cfg.webshop_base_port + client_id}"
+    """Client c's service URL. With webshop_replicas=K>1 this is a COMMA-SEPARATED list of K
+    replica URLs (ports base + c*K + j); the env client binds each episode to one replica
+    round-robin (fedagent/envs/base.py::_pick_replica). K=1 reduces to the legacy base+c."""
+    r = int(cfg.get("webshop_replicas", 1) or 1)
+    return ",".join(f"http://localhost:{cfg.webshop_base_port + client_id * r + j}" for j in range(r))
 
 
 def start_webshop_services(cfg, env_base: dict, client_ids: Optional[List[int]] = None,
@@ -391,35 +404,43 @@ def start_webshop_services(cfg, env_base: dict, client_ids: Optional[List[int]] 
     # `round_services = start_*_services(...)` never binds (the call raised), its finally sees
     # [] and stop_services([]) is a no-op, leaking uvicorn procs + their bound ports.
     services = []
+    # Replica sharding (Tier-1): K identical services per client, SAME shard env-vars (CLIENT_ID/
+    # CLIENT_NUM unchanged -> identical goal/catalog slice -> same episode distribution); the pool
+    # is split ~evenly (+2 slack for round-robin imbalance across agent-loop workers).
+    reps = int(cfg.get("webshop_replicas", 1) or 1)
+    per_pool = (-(-int(cfg.webshop_pool_size) // reps) + 2) if reps > 1 else int(cfg.webshop_pool_size)
     try:
         for c in client_ids:
-            port = cfg.webshop_base_port + c
-            env = dict(env_base)
-            env.update({
-                "WEBSHOP_PORT": str(port),
-                "WEBSHOP_POOL_SIZE": str(cfg.webshop_pool_size),
-                "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 200)),
-                "PARTITION_STRATEGY": cfg.partition_strategy or "",
-                "CLIENT_ID": str(c),
-                "CLIENT_NUM": str(cfg.total_clients),
-                "ENV_DIV": str(cfg.env_div),
-                "KEEP_RATIO": str(cfg.keep_ratio),
-                "OMEGA": str(cfg.get("omega", 0.5)),
-                "SIZE_STD": str(cfg.get("size_std", 1.0)),
-                "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
-                "VARIANT_N": (str(cfg.get("variant_n")) if cfg.get("variant_n", 0) else ""),
-                "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
-                "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
-            })
-            log_path = Path(cfg.output_dir) / f"webshop_service_client{c}.log"
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            lf = open(log_path, "w")
-            log(f"starting WebShop service client {c} on :{port} "
-                f"(pool={cfg.webshop_pool_size}, partition={cfg.partition_strategy or 'none'}, "
-                f"env_div={cfg.env_div})  (log: {log_path})")
-            proc = subprocess.Popen(["bash", str(cfg.webshop_run_service)], env=env,
-                                    stdout=lf, stderr=subprocess.STDOUT)
-            services.append({"client_id": c, "port": port, "proc": proc, "log": log_path, "lf": lf})
+            for j in range(reps):
+                port = cfg.webshop_base_port + c * reps + j
+                env = dict(env_base)
+                env.update({
+                    "WEBSHOP_PORT": str(port),
+                    "WEBSHOP_POOL_SIZE": str(per_pool),
+                    "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 200)),
+                    "PARTITION_STRATEGY": cfg.partition_strategy or "",
+                    "CLIENT_ID": str(c),
+                    "CLIENT_NUM": str(cfg.total_clients),
+                    "ENV_DIV": str(cfg.env_div),
+                    "KEEP_RATIO": str(cfg.keep_ratio),
+                    "OMEGA": str(cfg.get("omega", 0.5)),
+                    "SIZE_STD": str(cfg.get("size_std", 1.0)),
+                    "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
+                    "VARIANT_N": (str(cfg.get("variant_n")) if cfg.get("variant_n", 0) else ""),
+                    "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
+                    "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
+                })
+                suffix = f"_r{j}" if reps > 1 else ""
+                log_path = Path(cfg.output_dir) / f"webshop_service_client{c}{suffix}.log"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                lf = open(log_path, "w")
+                log(f"starting WebShop service client {c}{suffix} on :{port} "
+                    f"(pool={per_pool}, partition={cfg.partition_strategy or 'none'}, "
+                    f"env_div={cfg.env_div})  (log: {log_path})")
+                proc = subprocess.Popen(["bash", str(cfg.webshop_run_service)], env=env,
+                                        stdout=lf, stderr=subprocess.STDOUT)
+                services.append({"client_id": f"{c}{suffix}", "port": port, "proc": proc,
+                                 "log": log_path, "lf": lf})
 
         if wait:
             # health-wait extracted to _wait_services_healthy so the prewarm path can defer it
@@ -455,7 +476,10 @@ def stop_services(services: List[dict]):
 
 # ----------------------------------------------------------------- alfworld services
 def alfworld_service_url(cfg, client_id: int) -> str:
-    return f"http://localhost:{cfg.alfworld_base_port + client_id}"
+    """Client c's service URL; comma-separated replica list when alfworld_replicas=K>1
+    (see webshop_service_url / envs/base.py::_pick_replica). K=1 reduces to legacy base+c."""
+    r = int(cfg.get("alfworld_replicas", 1) or 1)
+    return ",".join(f"http://localhost:{cfg.alfworld_base_port + client_id * r + j}" for j in range(r))
 
 
 def client_service_url(cfg, client_id: int) -> Optional[str]:
@@ -482,35 +506,42 @@ def start_alfworld_services(cfg, env_base: dict, client_ids: Optional[List[int]]
     # partial-startup teardown (see start_webshop_services): a later service failing must not
     # leak the ones already launched, since the caller's finally would otherwise see [].
     services = []
+    # Replica sharding (Tier-1): K identical services per client over the SAME game shard
+    # (CLIENT_ID/CLIENT_NUM unchanged) -> K independent _TW_LOCKs. Pool split evenly (+2 slack).
+    reps = int(cfg.get("alfworld_replicas", 1) or 1)
+    per_pool = (-(-int(cfg.alfworld_pool_size) // reps) + 2) if reps > 1 else int(cfg.alfworld_pool_size)
     try:
         for c in client_ids:
-            port = cfg.alfworld_base_port + c
-            env = dict(env_base)
-            env.update({
-                "ALFWORLD_PORT": str(port),
-                "ALFWORLD_POOL_SIZE": str(cfg.alfworld_pool_size),
-                "ALFWORLD_TRAIN_EVAL": str(cfg.get("alfworld_train_eval", "train")),
-                "PARTITION_STRATEGY": cfg.partition_strategy or "uniform",
-                "CLIENT_ID": str(c),
-                "CLIENT_NUM": str(cfg.total_clients),
-                "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
-                # task-het knobs (the service forwards only the ones its strategy needs ->
-                # AlfredTWEnv -> partition_dataset): preference(omega)/coverage(size_std)/
-                # hardness(success_std,trajectories_file). uniform/env_disjoint ignore them.
-                "OMEGA": str(cfg.get("omega", 0.5)),
-                "SIZE_STD": str(cfg.get("size_std", 1.0)),
-                "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
-                "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
-            })
-            log_path = Path(cfg.output_dir) / f"alfworld_service_client{c}.log"
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            lf = open(log_path, "w")
-            log(f"starting ALFWorld service client {c} on :{port} "
-                f"(pool={cfg.alfworld_pool_size}, partition={cfg.partition_strategy or 'uniform'}, "
-                f"split={cfg.get('alfworld_train_eval', 'train')})  (log: {log_path})")
-            proc = subprocess.Popen(["bash", str(cfg.alfworld_run_service)], env=env,
-                                    stdout=lf, stderr=subprocess.STDOUT)
-            services.append({"client_id": c, "port": port, "proc": proc, "log": log_path, "lf": lf})
+            for j in range(reps):
+                port = cfg.alfworld_base_port + c * reps + j
+                env = dict(env_base)
+                env.update({
+                    "ALFWORLD_PORT": str(port),
+                    "ALFWORLD_POOL_SIZE": str(per_pool),
+                    "ALFWORLD_TRAIN_EVAL": str(cfg.get("alfworld_train_eval", "train")),
+                    "PARTITION_STRATEGY": cfg.partition_strategy or "uniform",
+                    "CLIENT_ID": str(c),
+                    "CLIENT_NUM": str(cfg.total_clients),
+                    "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
+                    # task-het knobs (the service forwards only the ones its strategy needs ->
+                    # AlfredTWEnv -> partition_dataset): preference(omega)/coverage(size_std)/
+                    # hardness(success_std,trajectories_file). uniform/env_disjoint ignore them.
+                    "OMEGA": str(cfg.get("omega", 0.5)),
+                    "SIZE_STD": str(cfg.get("size_std", 1.0)),
+                    "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
+                    "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
+                })
+                suffix = f"_r{j}" if reps > 1 else ""
+                log_path = Path(cfg.output_dir) / f"alfworld_service_client{c}{suffix}.log"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                lf = open(log_path, "w")
+                log(f"starting ALFWorld service client {c}{suffix} on :{port} "
+                    f"(pool={per_pool}, partition={cfg.partition_strategy or 'uniform'}, "
+                    f"split={cfg.get('alfworld_train_eval', 'train')})  (log: {log_path})")
+                proc = subprocess.Popen(["bash", str(cfg.alfworld_run_service)], env=env,
+                                        stdout=lf, stderr=subprocess.STDOUT)
+                services.append({"client_id": f"{c}{suffix}", "port": port, "proc": proc,
+                                 "log": log_path, "lf": lf})
 
         if wait:
             # health-wait extracted to _wait_services_healthy so the prewarm path can defer it
@@ -562,70 +593,75 @@ def prewarm_next_round_services(cfg, env_base: dict, round_num: int) -> List[dic
 
 # ----------------------------------------------------------------- unperturbed eval
 def val_service_url(cfg) -> str:
+    """Shared val-service URL; comma-separated replica list when the env's *_replicas=K>1
+    (val ports val_port..val_port+K-1). The env client picks a replica per episode."""
     base = cfg.webshop_val_port if cfg.env_kind == "webshop" else cfg.alfworld_val_port
-    return f"http://localhost:{base}"
+    reps = int(cfg.get(f"{cfg.env_kind}_replicas", 1) or 1)
+    return ",".join(f"http://localhost:{base + j}" for j in range(reps))
 
 
-def start_val_service(cfg, env_base: dict) -> Optional[dict]:
-    """Start the ONE shared UNPERTURBED validation service (full env, held-out val goal/game
-    split), used to score the aggregated GLOBAL model every test_freq rounds so all arms are
-    measured on the same fixed set. Returns None when eval is off (val_env_spec unset) or the
-    env is in-process (tinyguess). Mirrors the per-client starters' health-wait."""
-    import urllib.request
-
+def start_val_service(cfg, env_base: dict) -> List[dict]:
+    """Start the shared UNPERTURBED validation service (full env, held-out val goal/game split),
+    used to score the aggregated GLOBAL model every test_freq rounds so all arms are measured on
+    the same fixed set. Returns [] when eval is off (val_env_spec unset) or the env is in-process
+    (tinyguess). With *_replicas=K>1 starts K identical val services (same split -> same val
+    distribution; the client spreads the n_envs sessions across them). Mirrors the per-client
+    starters' health-wait."""
     if not cfg.get("val_env_spec"):
-        return None
+        return []
+    reps = int(cfg.get(f"{cfg.env_kind}_replicas", 1) or 1) if cfg.env_kind in ("webshop", "alfworld") else 1
     if cfg.env_kind == "webshop":
-        port = cfg.webshop_val_port
+        base_port = cfg.webshop_val_port
         run_service = cfg.webshop_run_service
-        env = dict(env_base)
-        env.update({
-            "WEBSHOP_PORT": str(port),
-            "WEBSHOP_POOL_SIZE": str(cfg.webshop_pool_size),
-            "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 200)),
-            "WEBSHOP_SPLIT": "val",          # held-out goals[0:VAL_SIZE]
-            "PARTITION_STRATEGY": "",        # UNPERTURBED (no catalog/goal/variant skew)
-            "CLIENT_ID": "0", "CLIENT_NUM": "1",
-        })
-        tag, health_extra = "WebShop", "split"
+        pool = int(cfg.webshop_pool_size)
+        def mk_env(port):
+            env = dict(env_base)
+            env.update({
+                "WEBSHOP_PORT": str(port),
+                "WEBSHOP_POOL_SIZE": str((-(-pool // reps) + 2) if reps > 1 else pool),
+                "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 200)),
+                "WEBSHOP_SPLIT": "val",          # held-out goals[0:VAL_SIZE]
+                "PARTITION_STRATEGY": "",        # UNPERTURBED (no catalog/goal/variant skew)
+                "CLIENT_ID": "0", "CLIENT_NUM": "1",
+            })
+            return env
+        tag = "WebShop"
     elif cfg.env_kind == "alfworld":
-        port = cfg.alfworld_val_port
+        base_port = cfg.alfworld_val_port
         run_service = cfg.alfworld_run_service
-        env = dict(env_base)
-        env.update({
-            "ALFWORLD_PORT": str(port),
-            "ALFWORLD_POOL_SIZE": str(cfg.alfworld_pool_size),
-            "ALFWORLD_TRAIN_EVAL": str(cfg.get("alfworld_val_split", "eval_in_distribution")),
-            "ALFWORLD_TASK_TYPES": str(cfg.get("alfworld_task_types", "")),  # "" => all; else the eval-breakdown subset
-            "PARTITION_STRATEGY": "uniform",  # UNPERTURBED (full game set, no client shard)
-            "CLIENT_ID": "0", "CLIENT_NUM": "1",
-        })
-        tag, health_extra = "ALFWorld", "num_games"
+        pool = int(cfg.alfworld_pool_size)
+        def mk_env(port):
+            env = dict(env_base)
+            env.update({
+                "ALFWORLD_PORT": str(port),
+                "ALFWORLD_POOL_SIZE": str((-(-pool // reps) + 2) if reps > 1 else pool),
+                "ALFWORLD_TRAIN_EVAL": str(cfg.get("alfworld_val_split", "eval_in_distribution")),
+                "ALFWORLD_TASK_TYPES": str(cfg.get("alfworld_task_types", "")),  # "" => all; else the eval-breakdown subset
+                "PARTITION_STRATEGY": "uniform",  # UNPERTURBED (full game set, no client shard)
+                "CLIENT_ID": "0", "CLIENT_NUM": "1",
+            })
+            return env
+        tag = "ALFWorld"
     else:
-        return None  # tinyguess runs in-process; no remote val service
+        return []  # tinyguess runs in-process; no remote val service
 
-    log_path = Path(cfg.output_dir) / f"{cfg.env_kind}_val_service.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    lf = open(log_path, "w")
-    log(f"starting {tag} VAL service (UNPERTURBED) on :{port}  (log: {log_path})")
-    proc = subprocess.Popen(["bash", str(run_service)], env=env, stdout=lf, stderr=subprocess.STDOUT)
-    s = {"client_id": "val", "port": port, "proc": proc, "log": log_path, "lf": lf}
-    url = f"http://localhost:{port}/health"
+    services: List[dict] = []
     try:  # mirror the per-client starters: a death/timeout here must not orphan the uvicorn/port
-        for _ in range(int(cfg.service_health_timeout / 3)):
-            if proc.poll() is not None:
-                raise RuntimeError(f"{tag} VAL service DIED; see {log_path}")
-            try:
-                with urllib.request.urlopen(url, timeout=3) as r:
-                    import json as _json
-                    d = _json.loads(r.read())
-                log(f"{tag} VAL service healthy on :{port} ({health_extra}={d.get(health_extra)})")
-                return s
-            except Exception:
-                time.sleep(3)
-        raise RuntimeError(f"{tag} VAL service health timeout; see {log_path}")
+        for j in range(reps):
+            port = base_port + j
+            suffix = f"_r{j}" if reps > 1 else ""
+            log_path = Path(cfg.output_dir) / f"{cfg.env_kind}_val_service{suffix}.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            lf = open(log_path, "w")
+            log(f"starting {tag} VAL service (UNPERTURBED) on :{port}  (log: {log_path})")
+            proc = subprocess.Popen(["bash", str(run_service)], env=mk_env(port),
+                                    stdout=lf, stderr=subprocess.STDOUT)
+            services.append({"client_id": f"val{suffix}", "port": port, "proc": proc,
+                             "log": log_path, "lf": lf})
+        _wait_services_healthy(cfg, services, f"{tag} VAL")
+        return services
     except BaseException:
-        stop_services([s])   # caller hasn't received the handle yet -> clean up here before propagating
+        stop_services(services)   # caller hasn't received the handles yet -> clean up here
         raise
 
 
@@ -1227,16 +1263,19 @@ def run(cfg) -> dict:
         if cfg.env_kind in ("webshop", "alfworld"):
             _base = int(cfg.webshop_base_port if cfg.env_kind == "webshop" else cfg.alfworld_base_port)
             _vp = int(cfg.webshop_val_port if cfg.env_kind == "webshop" else cfg.alfworld_val_port)
-            if _base <= _vp < _base + int(cfg.total_clients):
+            _reps = int(cfg.get(f"{cfg.env_kind}_replicas", 1) or 1)
+            _band = int(cfg.total_clients) * _reps         # per-client band: base + c*reps + j
+            # val band is [val_port, val_port+reps); the two ranges must be disjoint
+            if _base < _vp + _reps and _vp < _base + _band:
                 raise ValueError(
-                    f"{cfg.env_kind}_val_port={_vp} collides with the per-client service band "
-                    f"[{_base}, {_base + int(cfg.total_clients)}); move {cfg.env_kind}_val_port or "
-                    f"{cfg.env_kind}_base_port so the val service and client services use disjoint ports.")
+                    f"{cfg.env_kind}_val_port band [{_vp}, {_vp + _reps}) overlaps the per-client "
+                    f"service band [{_base}, {_base + _band}) (replicas={_reps}); move "
+                    f"{cfg.env_kind}_val_port or {cfg.env_kind}_base_port apart.")
         log(f"eval ON: unperturbed val every test_freq={cfg.test_freq} rounds "
             f"(val_before_train={cfg.val_before_train}, temp={cfg.val_temperature}) -> {cfg.val_env_spec}")
         vs = start_val_service(cfg, env_base)
         if vs:
-            val_services.append(vs)
+            val_services.extend(vs)   # replica-aware: start_val_service returns a LIST of handles
 
     is_ppo = str(cfg.get("adv_estimator", "grpo")).lower() == "gae"
     if is_ppo:

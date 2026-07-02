@@ -1,0 +1,43 @@
+# REPLICA-SHARDED end-to-end A/B (Tier-1): same config as alf_em_worker.yaml (cross_round + worker
+# eval, 2 client x 2 round, 48-game val every round, baseline wall=3509s) + alfworld_replicas=8 for
+# BOTH train + val services. Prediction: total well under 2500s (train steps ~4x130 vs 4x360, evals shrink).
+# ALFWorld eval-mode sweep (worker) — 1.5B, 2 client × 2 round, eval EVERY round (48-game val),
+# MINIMAL training (epochs=1, total_training_steps=1) to isolate eval-mode cost (matches the WebShop
+# sweep methodology). response_length=4096 (trimmed from paper 8192 for tractability; preserves
+# eval/train ratio). Sequential with the other 3 modes. Output -> gitignored runs/alf_em/worker_r8.
+env_kind: alfworld
+env_spec: config/envs/alfworld.yaml
+val_env_spec: /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent/tools/verl08_migration/accel/alfworld_val_48.yaml
+output_dir: /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent/runs/alf_em/worker_r8
+model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+total_clients: 2
+clients_per_round: 2
+total_rounds: 2
+epochs_per_round: 1
+total_training_steps: 1
+base_seed: 42
+val_before_train: true
+val_temperature: 0.4
+test_freq: 1
+save_freq: 100000
+min_goals_per_client: 32
+alfworld_pool_size: 64
+alfworld_replicas: 8
+alfworld_base_port: 42000
+alfworld_val_port: 42100
+alfworld_val_split: eval_in_distribution
+cleanup_checkpoints: false
+partition_strategy: ""
+n_gpus_per_node: 4
+eval_mode: worker
+cross_round: true
+client_overrides:
+  - data.train_batch_size=8
+  - data.max_prompt_length=2048
+  - data.max_response_length=4096
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=8
+  - actor_rollout_ref.rollout.prompt_length=2048
+  - actor_rollout_ref.rollout.response_length=4096
+  - actor_rollout_ref.rollout.max_model_len=6144
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.6

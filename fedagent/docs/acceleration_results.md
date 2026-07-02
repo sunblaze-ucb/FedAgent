@@ -161,3 +161,32 @@ passed: 100-client partition, per-client routing, G=8 memory, full 3-epoch round
   one-client-per-node parallelism (orchestrator's external FedAvg supports it; needs a parallel launcher).
 - **Full 70-round reproduction** — wiring validated, full curves not yet run (≈12–22h/config; 3-seed band +
   ALFWorld + PPO + heterogeneity arms = a multi-node, multi-day campaign).
+
+## 9. Tier-1 — env-service replica sharding + WebShop decomposition (2026-07-01)
+
+Full analysis: `acceleration.md` §9. New knobs: `alfworld_replicas` / `webshop_replicas` (K service
+processes per client, same shard, round-robin sessions; K=1 = legacy).
+
+**ALFWorld (env-bound — `_TW_LOCK` was 73% of a 4-GPU step):**
+
+| level | result |
+|---|---|
+| mechanism (same-node K-sweep, pool 64) | gen **217.5 → 65.8 (K4) → 61.8 (K8)** |
+| control (K=1, pool 8→64) | gen 217.5 ≈ 228 → pool irrelevant, the lock is everything |
+| 4×H100 (K=8) | gen 219→**51.7** (−76%), step 298→**127.6** (−57%); update_actor untouched |
+| 1×H100 (both nodes) | step 534→**350–359** (−33%); K=4 suffices on 8 cores |
+| **end-to-end** (worker cfg + K=8) | **3509 → 2412 s (−31%)**, steps −65%, rc=0, val healthy |
+
+**WebShop (first decomposition — GPU-bound, the mirror image; corrects the "env-latency-bound" inference):**
+
+| | gen | GPU-compute Σ | step |
+|---|---|---|---|
+| 1×H100 | 54.6 (24%) | **165.8 (74%)** | 225.2 |
+| 4×H100 | 44.1 (47%) | 46.9 (50%) | 93.4 |
+
+Per-step 1-GPU penalty **2.41×** (old "1.37×" = 3-step-wall overhead dilution). Levers: pool 16→64
+alone hurts (GIL amplification); pool64+replicas=4 → step **82.2 (−12%)** — garnish, not the lever.
+Post-fix ALFWorld 1-GPU penalty grows 1.79×→**2.81×** → 1-GPU clients dead on both envs.
+
+**Recipes:** ALFWorld 4×H100 `cross_round + eval_mode=worker + alfworld_replicas: 8`; ALFWorld
+1×H100 `alfworld_replicas: 4`; WebShop = GPUs (+ optional replicas −12%).

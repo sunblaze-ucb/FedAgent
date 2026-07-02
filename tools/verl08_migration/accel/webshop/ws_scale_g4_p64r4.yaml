@@ -1,0 +1,39 @@
+# + webshop_replicas=4 on top of pool64: does GIL sharding move WebShop gen further?
+# WebShop timing-decomposition probe (4 GPU, 4xH100 node). Mirrors the ALFWorld
+# alf_scale_g* probes: 1 client, 1 round, ONE optimizer step, eval OFF -> read timing_s/{gen,update_actor,
+# old_log_prob,ref} to answer (a) what fraction of a WebShop step is rollout, (b) is gen flat across GPU
+# count (env-bound like ALFWorld) or does it scale (GPU-bound)? Derived from client_parallel/p3_2gpu_A.yaml
+# (paper settings: G=8, webshop_15, response 512, pool 16, search_return_n 50) with epochs/steps cut to 1.
+env_kind: webshop
+env_spec: config/envs/webshop_15.yaml
+val_env_spec: ""
+output_dir: /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent/runs/ws_scale/g4_p64r4
+model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+total_clients: 1
+clients_per_round: 1
+total_rounds: 1
+epochs_per_round: 1
+base_seed: 42
+n_gpus_per_node: 4
+total_training_steps: 1
+save_freq: 100000
+val_before_train: false
+wait_between_clients: 8
+min_goals_per_client: 100
+webshop_pool_size: 64
+webshop_replicas: 4
+webshop_base_port: 12200
+search_return_n: 50
+cleanup_checkpoints: false
+partition_strategy: ""
+client_overrides:
+  - data.train_batch_size=8
+  - data.max_prompt_length=4096
+  - data.max_response_length=512
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=8
+  - actor_rollout_ref.rollout.prompt_length=4096
+  - actor_rollout_ref.rollout.response_length=512
+  - actor_rollout_ref.rollout.max_model_len=4608
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.6
+  - actor_rollout_ref.actor.checkpoint.save_contents=[model]

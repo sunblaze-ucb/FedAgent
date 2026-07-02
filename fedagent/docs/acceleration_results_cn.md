@@ -161,3 +161,32 @@ per-round 红线，**每个 round** 都评；`client_end_eval` 额外加 per-cli
   一 client 一节点的并行（orchestrator 的外部 FedAvg 支持它；需要一个并行 launcher）。
 - **完整 70-round 复现** —— 接线已验证，完整曲线尚未跑（≈12–22h/config；3-seed band +
   ALFWorld + PPO + 异质性 arm = 一场多节点、多日的 campaign）。
+
+## 9. Tier-1 —— env-service replica 分片 + WebShop 分解（2026-07-01）
+
+完整分析：`acceleration.md` §9。新旋钮：`alfworld_replicas` / `webshop_replicas`（每个 client
+K 个 service 进程，同一 shard，session round-robin；K=1 = legacy）。
+
+**ALFWorld（env-bound —— `_TW_LOCK` 曾占 4-GPU 一步的 73%）：**
+
+| 层级 | 结果 |
+|---|---|
+| 机制（同节点 K 扫描，pool 64） | gen **217.5 → 65.8 (K4) → 61.8 (K8)** |
+| 对照（K=1，pool 8→64） | gen 217.5 ≈ 228 → pool 无关，这把锁就是一切 |
+| 4×H100（K=8） | gen 219→**51.7**（−76%），step 298→**127.6**（−57%）；update_actor 未动 |
+| 1×H100（两个节点） | step 534→**350–359**（−33%）；8 核上 K=4 就够 |
+| **端到端**（worker 配置 + K=8） | **3509 → 2412 s（−31%）**，训练步 −65%，rc=0，val 健康 |
+
+**WebShop（首次分解 —— GPU-bound，恰为镜像；修正"env-latency-bound"的推断）：**
+
+| | gen | GPU-compute Σ | step |
+|---|---|---|---|
+| 1×H100 | 54.6 (24%) | **165.8 (74%)** | 225.2 |
+| 4×H100 | 44.1 (47%) | 46.9 (50%) | 93.4 |
+
+每步 1-GPU 惩罚 **2.41×**（旧的"1.37×"= 3-step 墙钟的开销稀释）。杠杆：仅 pool 16→64
+反而有害（GIL 放大）；pool64+replicas=4 → step **82.2（−12%）** —— 点缀，不是主杠杆。
+修复后 ALFWorld 的 1-GPU 惩罚涨到 1.79×→**2.81×** → 1-GPU client 在两个 env 上都死了。
+
+**配方：** ALFWorld 4×H100 `cross_round + eval_mode=worker + alfworld_replicas: 8`；ALFWorld
+1×H100 `alfworld_replicas: 4`；WebShop = 加卡（+ 可选 replica −12%）。
