@@ -823,6 +823,9 @@ python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/dev/tinygue
 
 ## 9. Tier-1 — env-service replica sharding (2026-07-01, GPU-validated end-to-end)
 
+> Full standalone report (diagnosis, design decisions, complete data, scorecard, lever genealogy):
+> [acceleration_tier1_report_2026-07-01.md](./acceleration_tier1_report_2026-07-01.md).
+
 **The finding that motivated it.** §2.2 measured ALFWorld's `_TW_LOCK` at **86 ms/step** on a
 160-step batch (13.7 s) and filed it as "understood and bounded." At **paper-scale batches that
 qualitative call inverts**: a windowed ALFWorld training step is 64 episodes × ~50 turns ≈ **3200
