@@ -1,0 +1,36 @@
+# PAPER-GEOMETRY 1xH100 probe (2026-07-02): alf_scale_g1_r4n1.yaml re-derived at the TRUE paper
+# caps (windowed prompt 2048 / response cap 512 / max_model_len 2560 -- gen_paper_configs.py:148;
+# the 16384/8192 concat comment in config/envs/alfworld.yaml is STALE). K=4, pool 64 = the 1xH100 recipe arm.
+# Question: do the 1-GPU penalty (2.81x at cap 4096/6144) and the K=4 recipe hold at paper caps?
+# Output -> runs/alf_scale/g1_paper_r4.
+env_kind: alfworld
+env_spec: config/envs/alfworld.yaml
+val_env_spec: ""
+output_dir: /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent/runs/alf_scale/g1_paper_r4
+model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+total_clients: 1
+clients_per_round: 1
+total_rounds: 1
+epochs_per_round: 1
+total_training_steps: 1
+base_seed: 42
+val_before_train: false
+save_freq: 100000
+min_goals_per_client: 8
+alfworld_pool_size: 64
+alfworld_replicas: 4
+alfworld_base_port: 40950
+cleanup_checkpoints: false
+partition_strategy: ""
+n_gpus_per_node: 1
+client_overrides:
+  - data.train_batch_size=8
+  - data.max_prompt_length=2048
+  - data.max_response_length=512
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=8
+  - actor_rollout_ref.rollout.prompt_length=2048
+  - actor_rollout_ref.rollout.response_length=512
+  - actor_rollout_ref.rollout.max_model_len=2560
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.6
+  - actor_rollout_ref.actor.checkpoint.save_contents=[model]

@@ -486,3 +486,51 @@ Ran on TWO allocations simultaneously (4×H100 qgpu3021 + 1×H100/8-core qgpu301
 - **Production recipes:** ALFWorld 4×H100 = `cross_round + eval_mode=worker + alfworld_replicas: 8`;
   ALFWorld 1×H100 = `alfworld_replicas: 4` (−33%); WebShop = GPUs + optional replicas −12%.
 - Configs: `tools/verl08_migration/accel/{alfworld,webshop}/` (`*_r8/r4/r1n1/p64*` probes).
+
+## Acceleration frontier study (2026-07-02)
+
+Answers "can we still accelerate / is more async useful / what does verl 0.8 still offer" —
+full report: [`docs/acceleration_frontier_2026-07-02.md`](docs/acceleration_frontier_2026-07-02.md).
+
+- **Frontier moved to plumbing:** phase-decomposed the 2412 s worker_r8 run — ~800–1000 s is
+  addressable (redundant per-round service restarts ~250 s, cold final-eval subprocess ~330 s,
+  game-walk warm ~270 s → manifest cache, FedAvg+merge ~260 s → direct shard-load). Projects
+  2412 → ~1300–1500 s (cumulative 3509 → ~1400 ≈ 2.5×).
+- **Within-step config surface CLOSED, two refutations:** `use_dynamic_bsz` made BOTH envs slower
+  (ALF step 127.6→141.7 +11 %, WS 82.2→88.9 +8 %; the 218 ms/micro-batch reconciliation shows the
+  GPU term was already FLOP-bound, and shape churn defeats compile/CUDA-graph reuse).
+  `use_fused_kernels` (triton): WS **−6.5 %** (olp −30 %, ref −22 % — bandwidth mechanism real),
+  ALF wash (+2 %). Config-key trap recorded: the knob is `model.fused_kernel_options.impl_backend`.
+- **Async verdict:** trajectory-level async is saturated (the bound is the episode critical path);
+  remaining safe async ≈ 0 (all barriers are data dependencies); verl 0.8's production-ready
+  `one_step_off_policy` would give step→max(gen,GPU) ≈ −35 % but is **off-policy** — sign-off tier.
+- **verl 0.8 audit:** safe list now fully harvested/probed; sign-off tier = one-step-off,
+  rollout-logprob reuse (+IS correction), over-sampling (biased — do not use), LoRA/FP8.
+
+Same-day PM addendum (report §8) — completeness follow-ups:
+
+- **fused equivalence PASSED:** TinyGuess full-loop off/on A/B (`accel/dev/fused_ab_{off,on}.yaml`,
+  arms 1515/1560 s) → final-aggregate actor **max|Δ| = 1.116e-5** ≤ 1e-4 → the WS −6.5 % is
+  **adoptable**, not just measured.
+- **Paper-geometry correction:** real paper ALFWorld = **windowed prompt 2048 / resp 512 /
+  max_model_len 2560** (`gen_paper_configs.py:148`); the 16384/8192 in `config/envs/alfworld.yaml`
+  + `reproducing.md` was the retired concat design (both fixed). Measured: response mean ~100 tok,
+  512-cap clip 0.13 % → the −57 %/−49 % ALFWorld results were at paper geometry all along.
+- **1×H100 @ paper caps** (`alf_scale_g1_paper_r1.yaml`): step **514 s** (gen 212 / olp 52 /
+  ref 105 / update 139) vs 534 s at 4096/6144 caps — cap choice immaterial (env-bound confirmed).
+- **Port-band rule (first live catch):** at 100 clients × K replicas the per-client service band is
+  `[base, base+100×K)` — place `*_val_port` beyond it (ALF 43100, WS 10700). Caught by the Tier-1
+  guard in 21 s on the first real paper-config launch.
+- **ALFWorld paper-config wiring run — first ever (rc=0, total 3719 s):** the REAL
+  `uniform/1.5B/main/grpo/alfworld` config (100-client partition, 2/round, 3 epochs, min_goals 100,
+  140-game valid_seen val) capped at 2 rounds, carrying the adopted stack (cross_round + worker +
+  `alfworld_replicas: 8`, pool 64). Per-unit: round 1 (24-replica service warm + base eval +
+  2 clients × 3 steps + r1 eval + FedAvg/merge) **1766 s**; round 2 (no base eval; includes the
+  redundant service re-warm Tier-2 will remove) **1375 s**; final eval as cold subprocess **578 s**
+  (1766 + 1375 + 578 = 3719 exact). Val moved the right way: success r0 0.0429 → r2 **0.1143**
+  (n=140). **70-round projection ≈ 27 h** (test_freq=5) ≈ 2.2× WebShop's 12 h — fits one node
+  inside a 2-day allocation. Exercised & passed at paper scale: 100-client partition (drew clients
+  81/14 then 4/36), replica port bands, G=8 memory at cap 2560, worker eval on 140 games.
+- **WebShop `paper_ws_wiring_r4.yaml`** (vs the old-stack 707/496/630 baseline): launched with the
+  leftover walltime and reclaimed by the allocation limit as expected — queued for the next 4-card
+  window (config ready, ports fixed).

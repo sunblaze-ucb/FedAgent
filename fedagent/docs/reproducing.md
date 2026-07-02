@@ -64,11 +64,14 @@ CLI overrides). This is **scientific-equivalence** reproduction, not bit-identic
 > [`./heterogeneity.md`](./heterogeneity.md#hardness--beta-skewed-easyhard-mix-over-success-labels).
 
 - **ALFWorld arms** drive episodes at `max_turns: 50` (the original
-  `max_steps=50`) paired with a **widened context window**
-  (`rollout.max_model_len=16384`, `response_length=8192`). This is flagged
-  **GPU-VERIFY** in `config/envs/alfworld.yaml`: confirm no OOM / prompt
-  truncation at 50 turns on your GPUs, and raise `max_model_len` if verbose rooms
-  truncate before `done`.
+  `max_steps=50`) with the **bounded windowed prompt** (default
+  `rollout_mode=windowed`, `history_length=2`): every turn is its own row, so
+  context does not grow with turn count and the paper caps are small —
+  `prompt 2048 / response 512 / max_model_len 2560` (`gen_paper_configs.py`).
+  GPU-verified 2026-07-02: response mean ≈100 tokens, 512-cap clip ratio 0.13 %,
+  no OOM on 4×H100 or 1×H100. (An older widened window `max_model_len=16384,
+  response_length=8192` belonged to the retired full-transcript *concat* design;
+  only opt-in `rollout_mode=concat` runs would need caps of that order.)
 
 ---
 

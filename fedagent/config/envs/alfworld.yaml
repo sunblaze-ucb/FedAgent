@@ -1,17 +1,18 @@
 # ALFWorld env-spec. The agent drives the remote ALFWorld service (conda
 # verl-agent-alfworld) via fedagent.envs.alfworld.AlfworldEnv; the per-client service URL
-# comes from ALFWORLD_SERVICE_URL (set by run_fed). Concat multi-turn via gym_text agent
-# loop (history is the literal chat; per-turn obs carries the current observation +
-# admissible actions). max_turns=50 matches the original ALFWorld max_steps=50; the paper
-# configs pair this with a widened context window (gen_paper_configs sets the ALFWorld
-# client_overrides rollout.max_model_len=16384, response_length=8192), and the agent loop
-# hard-guards against context overflow.
-# GPU-VERIFY: confirm no OOM / prompt truncation at 50 turns; raise max_model_len if episodes
-# truncate before done (50*(action+obs) can exceed 16384 on verbose rooms).
+# comes from ALFWORLD_SERVICE_URL (set by run_fed). Multi-turn via the gym_text agent loop;
+# with the DEFAULT rollout_mode=windowed each turn is its own row built from the BOUNDED
+# windowed prompt (task + last-2 (obs,action) + current obs, history_length=2), so context
+# never grows with turn count. max_turns=50 matches the original ALFWorld max_steps=50; the
+# paper configs pair this with the windowed caps (gen_paper_configs.py sets prompt 2048 /
+# response 512 / max_model_len 2560). GPU-verified 2026-07-02: response mean ~100 tok,
+# 512-cap clip ratio 0.13%, prompt max ~920 tok, no OOM (4xH100 + 1xH100).
+# The widened 16384/8192 window belonged to the RETIRED full-transcript concat design;
+# only opt-in rollout_mode=concat runs would need caps of that order at 50 turns.
 envs:
   - name: ALFWorld
     n_envs: 8
-    max_turns: 50   # original ALFWorld max_steps=50 (see GPU-VERIFY note above)
+    max_turns: 50   # original ALFWorld max_steps=50 (windowed prompt stays bounded; see note above)
     agent_name: gym_text
     config:
       timeout: 180.0
