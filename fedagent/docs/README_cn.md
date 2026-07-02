@@ -13,6 +13,7 @@
 | [features.md](./features.md) | 每项能力 → 其 config key → 其源文件（一张导航图）。 |
 | [heterogeneity.md](./heterogeneity.md) | 两级（task vs environment）异质套件，附每个 arm 的构造数学。 |
 | [reproducing.md](./reproducing.md) | 论文的 176-config 矩阵映射到运行命令；3-seed 复现；baselines。 |
+| [agent_rl_design.md](./agent_rl_design.md) | **Agent-RL 引擎设计** —— rollout（windowed vs concat、逐行异步契约）、三层异步模型及其边界（pool / `_TW_LOCK` / GIL）、HTTP 边界契约（重试、幂等、阻塞 `/create`、副本路由）、env 服务与 trainer 面的接缝、生命周期模式、加速杠杆栈、SLURM 运维模式。 |
 | [acceleration_report.md](./acceleration_report.md) | **加速与验证 —— 完整走读**：每个 lever 与 feature 的深入讲解（持久化 trainer、eval 模式、client-parallel #3、等价性）、各项调查 + 修正，以及如何运行。配套：[acceleration_results.md](./acceleration_results.md)（数字一览）· [acceleration.md](./acceleration.md)（最初的分析与计划）。 |
 | [alfworld_testing.md](./alfworld_testing.md) | **为什么 ALFWorld 该这么测**：env 无关的修复边界（正确性已覆盖）、ALFWorld 更长/更重/更大的 rollout 改变的墙钟经济学，以及 Tier-1/Tier-2 测试计划 —— 两个可能在 ALFWorld 上*翻转*的 WebShop 结论（1-GPU 惩罚、藏 eval）。 |
 | [acceleration_cross_env.md](./acceleration_cross_env.md) | **WebShop vs ALFWorld —— 加速发现并排对比**：一张主表 + *哪些选择 transfer、哪些翻转*的原则（eval-mode 排名翻转；~+38% 1-GPU 惩罚 transfer；ALFWorld rollout 受 env 约束；并发修复与环境无关）。自包含综述。 |
