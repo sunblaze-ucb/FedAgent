@@ -150,6 +150,14 @@ class PersistentFedTaskRunner(TaskRunner):
                 # Gated on the orchestrator's cadence so worker matches inline/parallel/shared.
                 if i == 0 and self._worker_val_dl is not None and self._should_worker_eval(r - 1):
                     self._worker_validate(r - 1)
+                # final_eval_mode=worker (Tier-2c): an eval-only plan carries the FINAL aggregated
+                # model as round T+1's "starting model" -- the worker-eval above just scored it on
+                # the hot engine (label r-1 == T, dump round_T/eval/val_samples); there is nothing
+                # to train, so skip fit()/routing/client-end for this pseudo-spec.
+                if spec.get("eval_only"):
+                    print(f"[persistent] eval-only plan: scored round {r - 1} model on the hot "
+                          f"engine; no fit", flush=True)
+                    continue
                 self._route_service(spec)         # point shared workers at THIS client's env service
                 print(f"[persistent] >>> round {r} client {spec['client']} (idx {i}) fit() -> "
                       f"{spec['out_dir']}", flush=True)
@@ -206,12 +214,28 @@ class PersistentFedTaskRunner(TaskRunner):
         os.environ["FEDAGENT_BASE_SEED"] = str(spec["seed"])
         t._create_dataloader(None, None, None, None)
 
-        # (a)+(c)+(FedProx) reload weights + fresh optimizer/scheduler + drop FedProx anchor
-        actor_local = copy_to_local(spec["model_path"])
-        t.actor_rollout_wg.reload_client_model(actor_local)
+        # (a)+(c)+(FedProx) reload weights + fresh optimizer/scheduler + drop FedProx anchor.
+        # hf_export=final (Tier-2d): model_path is the aggregated FSDP SHARD dir (no per-round HF
+        # merge) -> rebuild the engine from the BASE model (fresh optimizer/scheduler as always),
+        # then overwrite the weights in place from the shards (model-only load).
+        mp = str(spec["model_path"])
+        shard_reload = os.path.isdir(mp) and bool(list(Path(mp).glob("model_world_size_*_rank_*.pt")))
+        if shard_reload:
+            base_local = copy_to_local(spec["base_model"])
+            with open_dict(cfg):
+                cfg.actor_rollout_ref.model.path = spec["base_model"]  # initialize() reads this
+            t.actor_rollout_wg.reload_client_model(base_local, shard_dir=mp)
+        else:
+            actor_local = copy_to_local(mp)
+            t.actor_rollout_wg.reload_client_model(actor_local)
         # PPO/gae: reload the federated critic too (fresh value weights + fresh critic optimizer)
         if getattr(t, "use_critic", False) and spec.get("critic_path"):
-            t.critic_wg.reload_critic_model(copy_to_local(spec["critic_path"]))
+            cp = str(spec["critic_path"])
+            critic_shards = os.path.isdir(cp) and bool(list(Path(cp).glob("model_world_size_*_rank_*.pt")))
+            if critic_shards:
+                t.critic_wg.reload_critic_model(copy_to_local(spec["base_model"]), shard_dir=cp)
+            else:
+                t.critic_wg.reload_critic_model(copy_to_local(cp))
 
         # (d) deterministic driver-side RNG (advantage/uuid) + GPU hygiene (audit #14)
         seed = int(spec["seed"])

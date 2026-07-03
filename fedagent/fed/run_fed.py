@@ -166,6 +166,26 @@ DEFAULTS = {
     "webshop_val_port": 8090,               # shared unperturbed WebShop val service port
     "alfworld_val_port": 8290,              # shared unperturbed ALFWorld val service port
     "alfworld_val_split": "eval_in_distribution",  # ALFWorld val games (274 in-distribution eval set)
+    # --- Tier-2 plumbing knobs (docs/acceleration_tier2_2026-07-02.md). ALL default OFF ==
+    # byte-identical legacy behavior; each is individually equivalence-gated (max|delta|<=1e-4). ---
+    "alfworld_manifest_cache": False,        # cache the 8810-game walk (PRE-shuffle manifest; shuffle/
+                                            #   shard/caps run natively on identical input -> byte-identical)
+    "alfworld_manifest_dir": "",             # cache location ("" => <repo>/runs/alfworld_manifest; persists across runs)
+    "service_scope": "round",                # round (legacy: start/stop per round) | run (keep per-client
+                                            #   fleets warm across rounds; LRU-capped; uniform-shard safe)
+    "service_cache_clients": 4,              # service_scope=run: max distinct clients' fleets kept warm
+    "final_eval_mode": "subprocess",         # subprocess (legacy: cold vLLM evals model_T after the worker
+                                            #   stops) | worker (eval-only plan on the HOT engine before
+                                            #   teardown; needs cross_round + eval_mode=worker)
+    "hf_export": "every_round",              # every_round (legacy) | final (skip per-round model_merger; the
+                                            #   worker reloads the aggregated FSDP shards directly; HF is
+                                            #   produced only for the final model)
+    "parallel_clients": 1,                   # #3 lanes: 2 => the round's clients train CONCURRENTLY on
+                                            #   disjoint GPU halves (small-model win; needs cross_round)
+    "one_step_off": False,                   # ADDITIONAL OPTION -- verl experimental one_step_off_policy:
+                                            #   generation runs one step ahead on a GPU split. OFF-POLICY
+                                            #   (breaks the paper-reproduction bar); requires explicit
+                                            #   scientific sign-off. Timing-probe support only.
 }
 
 
@@ -326,24 +346,39 @@ def _wait_signal(path: Path, proc: BgProc, what: str, poll_s: float = 2.0,
             raise RuntimeError(f"timed out ({timeout:.0f}s) waiting for {what}")
 
 
-def stop_persistent_cross_round(xstate: Optional[dict]) -> None:
-    """End the long-lived cross-round worker: touch `stop`, wait for a clean exit, else terminate.
-    Idempotent; safe to call in a finally even if nothing was launched."""
-    if not xstate or xstate.get("proc") is None:
+def _stop_one_xround(proc, xdir, tag: str) -> None:
+    """Stop one long-lived cross-round worker (STOP file -> wait -> terminate -> kill)."""
+    if proc is None or not proc.alive():
         return
-    proc, xdir = xstate["proc"], xstate["xdir"]
-    if proc.alive():
-        (xdir / "stop").write_text("stop")
-        log("cross-round: sent STOP to the long-lived worker; waiting for exit")
+    (xdir / "stop").write_text("stop")
+    log(f"cross-round: sent STOP to {tag}; waiting for exit")
+    try:
+        log(f"cross-round: {tag} exited rc={proc.wait(timeout=180)}")
+    except Exception:
+        log(f"[warn] cross-round {tag} did not exit in 180s; terminating")
+        proc.proc.terminate()
         try:
-            log(f"cross-round: worker exited rc={proc.wait(timeout=180)}")
+            proc.wait(timeout=30)
         except Exception:
-            log("[warn] cross-round worker did not exit in 180s; terminating")
-            proc.proc.terminate()
-            try:
-                proc.wait(timeout=30)
-            except Exception:
-                proc.proc.kill()
+            proc.proc.kill()
+
+
+def stop_persistent_cross_round(xstate: Optional[dict]) -> None:
+    """End the long-lived cross-round worker(s): touch `stop`, wait for a clean exit, else
+    terminate. Handles both the single worker and the parallel_clients>1 lane fleet.
+    Idempotent; safe to call in a finally even if nothing was launched."""
+    if not xstate:
+        return
+    lanes = xstate.get("lanes")
+    if lanes:
+        for i, ln in enumerate(lanes):
+            _stop_one_xround(ln.get("proc"), ln.get("xdir"), f"lane-{i} worker")
+            ln["proc"] = None
+        xstate["proc"] = None
+        return
+    if xstate.get("proc") is None:
+        return
+    _stop_one_xround(xstate["proc"], xstate["xdir"], "the long-lived worker")
     xstate["proc"] = None
 
 
@@ -492,6 +527,21 @@ def client_service_url(cfg, client_id: int) -> Optional[str]:
     return None
 
 
+def alfworld_manifest_env(cfg, split: str) -> dict:
+    """Tier-2a (opt-in): env-var bridge for the ALFWorld game-manifest cache. The service's
+    AlfredTWEnv walk (os.walk + 2 JSON reads x ~8810 games on GPFS) is identical for every
+    service process; with the cache, the first completed walk persists the PRE-shuffle list and
+    every later service start loads it in seconds (engine consumes it inside collect_game_files;
+    shuffle/sharding/caps run natively -> byte-identical downstream). One file per split; the
+    engine self-validates via a (data_path, task_types) key, so a stale/foreign file degrades to
+    the full walk, never to wrong data."""
+    if not cfg.get("alfworld_manifest_cache", False):
+        return {}
+    d = Path(str(cfg.get("alfworld_manifest_dir") or "") or (REPO_ROOT / "runs" / "alfworld_manifest"))
+    d.mkdir(parents=True, exist_ok=True)
+    return {"ALFWORLD_MANIFEST_CACHE": str(d / f"manifest_{split}.json")}
+
+
 def start_alfworld_services(cfg, env_base: dict, client_ids: Optional[List[int]] = None,
                             wait: bool = True) -> List[dict]:
     """Launch ONE ALFWorld remote service per client in ``client_ids`` (Design A: one service
@@ -530,6 +580,7 @@ def start_alfworld_services(cfg, env_base: dict, client_ids: Optional[List[int]]
                     "SIZE_STD": str(cfg.get("size_std", 1.0)),
                     "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
                     "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
+                    **alfworld_manifest_env(cfg, str(cfg.get("alfworld_train_eval", "train"))),
                 })
                 suffix = f"_r{j}" if reps > 1 else ""
                 log_path = Path(cfg.output_dir) / f"alfworld_service_client{c}{suffix}.log"
@@ -639,6 +690,7 @@ def start_val_service(cfg, env_base: dict) -> List[dict]:
                 "ALFWORLD_TASK_TYPES": str(cfg.get("alfworld_task_types", "")),  # "" => all; else the eval-breakdown subset
                 "PARTITION_STRATEGY": "uniform",  # UNPERTURBED (full game set, no client shard)
                 "CLIENT_ID": "0", "CLIENT_NUM": "1",
+                **alfworld_manifest_env(cfg, str(cfg.get("alfworld_val_split", "eval_in_distribution"))),
             })
             return env
         tag = "ALFWorld"
@@ -870,8 +922,12 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
     ``critic_model_path`` (base model on round 1, previous round's aggregated critic after),
     and its checkpoint dir is returned for FedAvg alongside the actor."""
     ckpt_root = Path(cfg.output_dir) / f"round_{round_num}" / f"client_{client_id}" / "checkpoints"
+    # one_step_off (ADDITIONAL OPTION, off-policy -- see DEFAULTS): swap in the experimental
+    # entry; the GPU split (trainer.n_gpus_per_node vs rollout.n_gpus_per_node) comes from
+    # client_overrides. Subprocess path only (gated in run()).
+    entry = "fedagent.main_one_step_off" if cfg.get("one_step_off", False) else "fedagent.main_ppo_fed"
     cmd = [
-        sys.executable, "-m", "fedagent.main_ppo_fed",
+        sys.executable, "-m", entry,
         f"data.train_files={cfg.env_spec}",
         f"data.val_files={cfg.env_spec}",
         f"data.custom_cls.path={cfg.custom_cls_path}",
@@ -965,6 +1021,168 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
 PERSISTENT_MAIN = "fedagent.fed.persistent_main"
 
 
+def _persistent_cmd_env(cfg, plan: List[dict], plan_path: Path, model_path: str,
+                        critic_model_path: Optional[str], round_num: int, env_base: dict,
+                        n_gpus: int, worker_eval: bool, lane: Optional[int] = None):
+    """Build the persistent worker's launch cmd + env. Shared by the classic single worker
+    (lane=None) and the parallel_clients lanes (#3: lane l on a 1/P GPU slice). Lane-specific
+    isolation (CUDA_VISIBLE_DEVICES / RAY_TMPDIR / xround dir) is applied by the caller;
+    everything that must merely be lane-UNIQUE (weight-transfer socket id, service-URL file)
+    is derived here from the lane id."""
+    cmd = [
+        sys.executable, "-m", PERSISTENT_MAIN,
+        f"data.train_files={cfg.env_spec}",
+        f"data.val_files={cfg.env_spec}",
+        f"data.custom_cls.path={cfg.custom_cls_path}",
+        f"actor_rollout_ref.model.path={model_path}",
+        "+actor_rollout_ref.model.override_config.attn_implementation=sdpa",
+        f"actor_rollout_ref.rollout.agent.agent_loop_config_path={cfg.agent_config_path}",
+        f"trainer.default_local_dir={plan[0]['out_dir']}",   # the plan overrides this per client
+        f"trainer.n_gpus_per_node={n_gpus}",
+        f"trainer.total_epochs={cfg.epochs_per_round}",
+        f"trainer.save_freq={cfg.save_freq}",
+        "trainer.val_before_train=false",
+        "trainer.resume_mode=disable",
+        "trainer.project_name=fedagent_fed",
+        f"trainer.experiment_name=round{round_num}_persistent"
+        + (f"_lane{lane}" if lane is not None else ""),
+    ]
+    if int(cfg.total_training_steps) > 0:
+        cmd.append(f"trainer.total_training_steps={cfg.total_training_steps}")
+    else:
+        cmd.append("trainer.total_training_steps=null")
+    cmd += [str(o) for o in (cfg.client_overrides or [])]
+    inject_rollout_mode(cmd, cfg)
+    if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
+        cmd += ["algorithm.adv_estimator=gae"]
+        if critic_model_path:
+            cmd += [f"critic.model.path={critic_model_path}"]
+
+    env = dict(env_base)
+    _lt = f"-l{lane}" if lane is not None else ""
+    env["FEDAGENT_PERSISTENT"] = "1"             # sitecustomize -> arm the reload patch on workers
+    env["VERL_RAY_JOB_ID"] = f"{_RUN_TAG}-persist{_lt}"  # disjoint weight-xfer socket per worker
+    env["FEDAGENT_PERSISTENT_PLAN"] = str(plan_path)
+    if worker_eval and str(cfg.get("eval_mode", "inline")).lower() == "worker" and cfg.get("val_env_spec"):
+        # eval_mode=worker: the worker evals each round's starting model on its HOT engine (no
+        # second vLLM). It dumps round_<k>/eval/val_samples; the orchestrator reads them + evals
+        # the FINAL model once after the worker stops (see run()'s worker-eval collection).
+        # Lanes: only lane 0 carries the eval duty (one global point per round).
+        env["FEDAGENT_WORKER_EVAL"] = str(cfg.val_env_spec)
+        env["FEDAGENT_WORKER_EVAL_DIR"] = str(cfg.output_dir)
+        env["FEDAGENT_WORKER_EVAL_URL"] = val_service_url(cfg)
+        env["FEDAGENT_WORKER_EVAL_TEMP"] = str(cfg.val_temperature)
+        env["FEDAGENT_WORKER_EVAL_VBT"] = "1" if cfg.val_before_train else "0"
+        env["FEDAGENT_WORKER_CLIENT_END_EVAL"] = "1" if cfg.get("client_end_eval", False) else "0"
+    if cfg.env_kind in ("webshop", "alfworld"):
+        # per-client routing: each worker rewrites ITS OWN url file before each fit(); the shared
+        # agent-loop workers read it per episode. One file per lane -- a shared file would
+        # cross-route concurrent lanes.
+        env["FEDAGENT_SERVICE_URL_FILE"] = str(
+            Path(cfg.output_dir) / ("current_service_url" + (f"_lane{lane}" if lane is not None else "")))
+        env.pop("WEBSHOP_SERVICE_URL", None)
+        env.pop("ALFWORLD_SERVICE_URL", None)
+    if cfg.get("fedprox_mu", 0) and cfg.fedprox_mu > 0:
+        env["FEDPROX_MU"] = str(cfg.fedprox_mu)  # per-client anchor reset handled by reload_client_model
+    return cmd, env
+
+
+def _run_round_lanes(cfg, round_num: int, selected: List[int], model_path: str, env_base: dict,
+                     critic_model_path: Optional[str], xstate: dict, P: int) -> dict:
+    """#3 x cross_round (parallel_clients=P): train the round's clients CONCURRENTLY, one
+    long-lived worker per lane on a disjoint 1/P GPU slice (lane l -> GPUs [l*G/P,(l+1)*G/P),
+    clients selected[l::P]). Rationale: 4-GPU FSDP is sub-linear for small models (1.5B: 4-GPU
+    only 1.30x a 2-GPU), so 2 concurrent 2-GPU clients beat sequential 4-GPU ones (measured
+    -35%). Science-safe: FedAvg is order-independent and per-client seeds derive from
+    (round, client), not wall-clock order. Isolation = the #3 concurrency fixes (per-lane
+    CUDA_VISIBLE_DEVICES + RAY_TMPDIR + VERL_RAY_JOB_ID + service-URL file). Lane 0 carries the
+    worker-eval duty and doubles as xstate's primary for the hot final eval / stop paths."""
+    G = int(cfg.n_gpus_per_node)
+    if G % P != 0:
+        raise ValueError(f"parallel_clients={P} must divide n_gpus_per_node={G}")
+    per = G // P
+    round_dir = Path(cfg.output_dir) / f"round_{round_num}"
+    round_dir.mkdir(parents=True, exist_ok=True)
+    base_model = cfg.model_path or discover_model()
+    lane_ids = [l for l in range(P) if selected[l::P]]   # drop empty lanes (clients_per_round < P)
+    plans = {}
+    for l in lane_ids:
+        plan = [{
+            "client": c,
+            "model_path": str(model_path),
+            "critic_path": str(critic_model_path) if critic_model_path else None,
+            "seed": int(cfg.base_seed + round_num * 100 + c),
+            "out_dir": str(round_dir / f"client_{c}" / "checkpoints"),
+            "exp": f"round{round_num}_client{c}",
+            "service_url": client_service_url(cfg, c),
+            "base_model": str(base_model),
+        } for c in selected[l::P]]
+        pp = round_dir / f"persistent_plan_lane{l}.json"
+        pp.write_text(json.dumps(plan, indent=2))
+        plans[l] = (plan, pp)
+
+    lanes = xstate.get("lanes")
+    if lanes:
+        for i, l in enumerate(lane_ids):
+            ln = lanes[i]
+            (ln["xdir"] / f"plan_round_{round_num}.json").write_text(json.dumps(plans[l][0], indent=2))
+            (ln["xdir"] / f"go_{round_num}").write_text("go")
+        log(f"lanes: published round {round_num} plans "
+            f"({[(l, selected[l::P]) for l in lane_ids]}); awaiting {len(lane_ids)} worker(s)")
+        for i, l in enumerate(lane_ids):
+            _wait_signal(lanes[i]["xdir"] / f"done_{round_num}", lanes[i]["proc"],
+                         f"round {round_num} lane {l} done")
+    else:
+        lanes = []
+        for l in lane_ids:
+            plan, pp = plans[l]
+            cmd, env = _persistent_cmd_env(cfg, plan, pp, model_path, critic_model_path,
+                                           round_num, env_base, n_gpus=per,
+                                           worker_eval=(l == lane_ids[0]), lane=l)
+            gpus = ",".join(str(g) for g in range(l * per, (l + 1) * per))
+            env["CUDA_VISIBLE_DEVICES"] = gpus
+            rtmp = f"/tmp/ray_fedlane{l}_{_RUN_TAG}"
+            os.makedirs(rtmp, exist_ok=True)
+            env["RAY_TMPDIR"] = rtmp
+            xdir = Path(cfg.output_dir) / f"_xround_lane{l}"
+            xdir.mkdir(parents=True, exist_ok=True)
+            for stale in [*xdir.glob("go_*"), *xdir.glob("done_*"), xdir / "stop"]:
+                stale.unlink(missing_ok=True)
+            env["FEDAGENT_CROSS_ROUND"] = "1"
+            env["FEDAGENT_XROUND_DIR"] = str(xdir)
+            env["FEDAGENT_XROUND_START_ROUND"] = str(round_num)
+            log_path = round_dir / f"persistent_training_lane{l}.log"
+            log(f"lane {l}: launching long-lived worker on GPU(s) [{gpus}] "
+                f"(clients {selected[l::P]}, {per} GPUs)")
+            proc = BgProc(cmd, env, log_path, tag=f"xround-l{l}")
+            lanes.append({"lane": l, "proc": proc, "xdir": xdir, "log": log_path})
+        xstate["lanes"] = lanes
+        # lane 0 doubles as the primary handle for the shared paths (hot final eval, liveness)
+        xstate["proc"], xstate["xdir"], xstate["log"] = \
+            lanes[0]["proc"], lanes[0]["xdir"], lanes[0]["log"]
+        for i, l in enumerate(lane_ids):
+            _wait_signal(lanes[i]["xdir"] / f"done_{round_num}", lanes[i]["proc"],
+                         f"round {round_num} lane {l} done")
+
+    results = {}
+    for c in selected:
+        ckpt_root = round_dir / f"client_{c}" / "checkpoints"
+        actor = latest_actor_dir(ckpt_root)
+        if actor is None:
+            raise RuntimeError(f"lanes round {round_num} client {c}: no checkpoint under {ckpt_root}")
+        results[c] = (actor, critic_dir_for(actor))
+        log(f"lanes round {round_num} client {c} OK -> {actor}")
+    try:
+        from fedagent.fed.metrics_logger import parse_training_log, summarize, write_metrics_json
+        for i, l in enumerate(lane_ids):
+            if lanes[i].get("proc") is not None:
+                lanes[i]["proc"].flush()
+            write_metrics_json(lanes[i]["log"], round_dir / f"json_logs_lane{l}")
+    except Exception as e:
+        log(f"[warn] lane metrics parse r{round_num}: {e}")
+    return results
+
+
 def run_round_persistent(cfg, round_num: int, selected: List[int], model_path: str,
                          env_base: dict, critic_model_path: Optional[str] = None,
                          xstate: Optional[dict] = None) -> dict:
@@ -986,7 +1204,12 @@ def run_round_persistent(cfg, round_num: int, selected: List[int], model_path: s
     base_seed+round*100+client). IN-PROCESS envs only: webshop/alfworld would need per-client
     service-URL routing to the shared rollout workers (the persistent process can't give each
     in-process client a distinct WEBSHOP_SERVICE_URL via process env), tracked as a follow-up."""
+    if int(cfg.get("parallel_clients", 1) or 1) > 1:
+        # #3 lanes: the round's clients train concurrently on disjoint GPU slices
+        return _run_round_lanes(cfg, round_num, selected, model_path, env_base,
+                                critic_model_path, xstate, int(cfg.parallel_clients))
     round_dir = Path(cfg.output_dir) / f"round_{round_num}"
+    base_model = cfg.model_path or discover_model()   # constant all run; shard reload rebuilds from it
     plan = [{
         "client": c,
         "model_path": str(model_path),
@@ -997,6 +1220,9 @@ def run_round_persistent(cfg, round_num: int, selected: List[int], model_path: s
         # per-client env-service URL (webshop/alfworld); None for in-process tinyguess. The worker
         # rewrites FEDAGENT_SERVICE_URL_FILE with this before each client's fit() (see _route_service).
         "service_url": client_service_url(cfg, c),
+        # hf_export=final (Tier-2d): when model_path is an aggregated FSDP shard dir, the worker
+        # rebuilds the engine from THIS base and then loads the shards over it (model-only).
+        "base_model": str(base_model),
     } for c in selected]
     plan_path = round_dir / "persistent_plan.json"
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1017,64 +1243,9 @@ def run_round_persistent(cfg, round_num: int, selected: List[int], model_path: s
         _wait_signal(xdir / f"done_{round_num}", xstate["proc"], f"round {round_num} done")
     else:
         # --- launch (per-round path, or the FIRST round of a cross-round run) --------------------
-        cmd = [
-            sys.executable, "-m", PERSISTENT_MAIN,
-            f"data.train_files={cfg.env_spec}",
-            f"data.val_files={cfg.env_spec}",
-            f"data.custom_cls.path={cfg.custom_cls_path}",
-            f"actor_rollout_ref.model.path={model_path}",
-            "+actor_rollout_ref.model.override_config.attn_implementation=sdpa",
-            f"actor_rollout_ref.rollout.agent.agent_loop_config_path={cfg.agent_config_path}",
-            f"trainer.default_local_dir={plan[0]['out_dir']}",   # the plan overrides this per client
-            f"trainer.n_gpus_per_node={cfg.n_gpus_per_node}",
-            f"trainer.total_epochs={cfg.epochs_per_round}",
-            f"trainer.save_freq={cfg.save_freq}",
-            "trainer.val_before_train=false",
-            "trainer.resume_mode=disable",
-            "trainer.project_name=fedagent_fed",
-            f"trainer.experiment_name=round{round_num}_persistent",
-        ]
-        if int(cfg.total_training_steps) > 0:
-            cmd.append(f"trainer.total_training_steps={cfg.total_training_steps}")
-        else:
-            cmd.append("trainer.total_training_steps=null")
-        cmd += [str(o) for o in (cfg.client_overrides or [])]
-        inject_rollout_mode(cmd, cfg)
-        if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
-            cmd += ["algorithm.adv_estimator=gae"]
-            if critic_model_path:
-                cmd += [f"critic.model.path={critic_model_path}"]
-
-        env = dict(env_base)
-        env["FEDAGENT_PERSISTENT"] = "1"             # sitecustomize -> arm the reload patch on workers
-        env["VERL_RAY_JOB_ID"] = f"{_RUN_TAG}-persist"  # disjoint weight-xfer socket (long-lived worker)
-        env["FEDAGENT_PERSISTENT_PLAN"] = str(plan_path)
-        if str(cfg.get("eval_mode", "inline")).lower() == "worker" and cfg.get("val_env_spec"):
-            # eval_mode=worker: the worker evals each round's starting model on its HOT engine (no
-            # second vLLM). It dumps round_<k>/eval/val_samples; the orchestrator reads them + evals
-            # the FINAL model once after the worker stops (see run()'s worker-eval collection).
-            env["FEDAGENT_WORKER_EVAL"] = str(cfg.val_env_spec)
-            env["FEDAGENT_WORKER_EVAL_DIR"] = str(cfg.output_dir)
-            env["FEDAGENT_WORKER_EVAL_URL"] = val_service_url(cfg)
-            env["FEDAGENT_WORKER_EVAL_TEMP"] = str(cfg.val_temperature)
-            # the worker evals the per-round GLOBAL model EVERY round (paper red line, server-aggregated);
-            # only the round-0 BASE point is gated by val_before_train -- matching the orchestrator's
-            # run_eval. test_freq is verl's WITHIN-job step cadence (client-end circles), NOT this global
-            # eval, so it is NOT a cadence gate here. The FINAL round is evaled by the orchestrator after
-            # the worker stops, so the worker only needs 0..T-1.
-            env["FEDAGENT_WORKER_EVAL_VBT"] = "1" if cfg.val_before_train else "0"
-            # client-end circles on the hot engine (after each client's fit); collected from the
-            # per-client dumps below after the worker stops.
-            env["FEDAGENT_WORKER_CLIENT_END_EVAL"] = "1" if cfg.get("client_end_eval", False) else "0"
-        if cfg.env_kind in ("webshop", "alfworld"):
-            # per-client routing: the worker rewrites this file with each client's service URL before
-            # its fit(); the shared agent-loop workers read it (resolve_service_url) per episode. Drop
-            # any single launch-env URL so the file is authoritative within the one shared process.
-            env["FEDAGENT_SERVICE_URL_FILE"] = str(Path(cfg.output_dir) / "current_service_url")
-            env.pop("WEBSHOP_SERVICE_URL", None)
-            env.pop("ALFWORLD_SERVICE_URL", None)
-        if cfg.get("fedprox_mu", 0) and cfg.fedprox_mu > 0:
-            env["FEDPROX_MU"] = str(cfg.fedprox_mu)  # per-client anchor reset handled by reload_client_model
+        cmd, env = _persistent_cmd_env(cfg, plan, plan_path, model_path, critic_model_path,
+                                       round_num, env_base, n_gpus=int(cfg.n_gpus_per_node),
+                                       worker_eval=True)
 
         if cross:
             # ONE long-lived process for the WHOLE run, driven by signal files in <out>/_xround.
@@ -1195,18 +1366,27 @@ def merge_to_hf(cfg, round_num: int, agg_dir: Path, env_base: dict,
     return hf_dir
 
 
-def cleanup_round_checkpoints(cfg, round_num: int):
+def cleanup_round_checkpoints(cfg, round_num: int, keep_aggregated: bool = False,
+                              purge_prev_aggregated: bool = False):
     """Disk hygiene: once a round's shards are merged to HF, the heavy FSDP checkpoints
     (per-client + the aggregated actor) are consumed -- only round r's aggregated/hf is
     needed for r+1. Delete those shard dirs (KEEP every training.log + the HF) so peak
     disk stays ~one round instead of growing to ~40GB×rounds (an 8-round run was 367GB and
-    filled the compute node's /tmp). Gated by cfg.cleanup_checkpoints (default on)."""
+    filled the compute node's /tmp). Gated by cfg.cleanup_checkpoints (default on).
+
+    hf_export=final (Tier-2d): round r's AGGREGATED shards are consumed at round r+1's reload,
+    not at merge time -- pass keep_aggregated=True to spare them this round and
+    purge_prev_aggregated=True to delete round r-1's (now consumed) aggregated shards instead."""
     import shutil
 
     if not cfg.get("cleanup_checkpoints", True):
         return
     rdir = Path(cfg.output_dir) / f"round_{round_num}"
-    targets = list(rdir.glob("client_*/checkpoints")) + [rdir / "aggregated" / "checkpoints"]
+    targets = list(rdir.glob("client_*/checkpoints"))
+    if not keep_aggregated:
+        targets.append(rdir / "aggregated" / "checkpoints")
+    if purge_prev_aggregated and round_num >= 2:
+        targets.append(Path(cfg.output_dir) / f"round_{round_num - 1}" / "aggregated" / "checkpoints")
     freed = 0
     for t in targets:
         if t.is_dir():
@@ -1321,6 +1501,65 @@ def run(cfg) -> dict:
             cfg.cross_round = False
             cfg.persistent = True
     use_persistent = cfg.get("persistent", False) or cfg.get("cross_round", False)
+    # --- Tier-2 knob resolution (all default off = legacy) --------------------------------
+    hf_export = str(cfg.get("hf_export", "every_round")).lower()
+    if hf_export not in ("every_round", "final"):
+        raise ValueError(f"hf_export must be every_round|final, got {hf_export!r}")
+    if hf_export == "final":
+        if not use_persistent:
+            raise ValueError("hf_export=final requires persistent/cross_round: the worker reloads "
+                             "aggregated FSDP shards in-process; the subprocess path needs an HF dir.")
+        if do_eval and eval_mode != "worker":
+            raise ValueError("hf_export=final: inline/parallel/shared eval loads the aggregated model "
+                             "from an HF dir each round; use eval_mode=worker (hot engine) or disable eval.")
+        log("hf_export=final (Tier-2d): per-round model_merger SKIPPED -- the worker reloads the "
+            "aggregated FSDP shards directly; HF is produced only for the final model.")
+    service_scope = str(cfg.get("service_scope", "round")).lower()
+    if service_scope not in ("round", "run"):
+        raise ValueError(f"service_scope must be round|run, got {service_scope!r}")
+    if service_scope == "run" and cfg.env_kind not in ("webshop", "alfworld"):
+        service_scope = "round"   # in-process envs have no services to persist
+    if service_scope == "run":
+        log(f"service_scope=run (Tier-2b): per-client env-service fleets stay WARM across rounds "
+            f"(LRU cap {cfg.get('service_cache_clients', 4)} clients); uniform-shard services are "
+            f"round-independent, so reuse is byte-identical.")
+        if cfg.get("prewarm_next_round_services", False):
+            log("[warn] prewarm_next_round_services is redundant under service_scope=run; ignoring it.")
+    final_eval_mode = str(cfg.get("final_eval_mode", "subprocess")).lower()
+    if final_eval_mode not in ("subprocess", "worker"):
+        raise ValueError(f"final_eval_mode must be subprocess|worker, got {final_eval_mode!r}")
+    if final_eval_mode == "worker" and not (cfg.get("cross_round", False) and eval_mode == "worker"):
+        log("[warn] final_eval_mode=worker needs cross_round + eval_mode=worker; falling back to "
+            "the subprocess final eval.")
+        final_eval_mode = "subprocess"
+    if final_eval_mode == "worker":
+        log("final_eval_mode=worker (Tier-2c): model_T is scored on the worker's HOT engine via an "
+            "eval-only plan before teardown (no cold final-eval subprocess).")
+    P_lanes = int(cfg.get("parallel_clients", 1) or 1)
+    if P_lanes > 1:
+        if not cfg.get("cross_round", False):
+            raise ValueError("parallel_clients>1 requires cross_round=true (long-lived lane workers).")
+        if int(cfg.n_gpus_per_node) % P_lanes != 0:
+            raise ValueError(f"parallel_clients={P_lanes} must divide n_gpus_per_node={cfg.n_gpus_per_node}.")
+        if do_eval and eval_mode != "worker":
+            raise ValueError("parallel_clients>1 supports eval OFF or eval_mode=worker (lane 0 evals); "
+                             "inline/parallel/shared eval would contend for the lane GPUs.")
+        if cfg.get("client_end_eval", False):
+            raise ValueError("parallel_clients>1 + client_end_eval is not supported yet.")
+        log(f"parallel_clients={P_lanes} (#3 lanes): each round's clients train CONCURRENTLY on "
+            f"{int(cfg.n_gpus_per_node) // P_lanes}-GPU lanes (sub-linear FSDP scaling makes the "
+            f"split a net win for small models; measured −35% on 1.5B WebShop).")
+    if cfg.get("one_step_off", False):
+        if use_persistent:
+            raise ValueError("one_step_off=true runs on the SUBPROCESS client path only "
+                             "(persistent/cross_round integration not wired); set persistent=false "
+                             "and cross_round=false.")
+        if P_lanes > 1:
+            raise ValueError("one_step_off + parallel_clients>1 is not supported.")
+        log("[warn] one_step_off=true: verl experimental one_step_off_policy is OFF-POLICY (one-step"
+            " stale rollouts) -- OUTSIDE the paper-reproduction equivalence bar. Timing-probe use "
+            "only; requires explicit scientific sign-off before any adoption. Supply the GPU split "
+            "via client_overrides (e.g. trainer.n_gpus_per_node=3 rollout.n_gpus_per_node=1).")
     if use_persistent:
         if cfg.env_kind in ("webshop", "alfworld"):
             # per-client routing (FEDAGENT_SERVICE_URL_FILE, see run_round_persistent +
@@ -1348,6 +1587,8 @@ def run(cfg) -> dict:
             + (f" (pinned client {lid} of {cfg.total_clients})" if mode == "local" else ""))
     xstate: dict = {}   # lever #4 cross_round: holds the long-lived worker's BgProc + control dir
     pending_eval: Optional[dict] = None   # eval_mode=parallel: the in-flight async eval handle
+    svc_registry: dict = {}   # service_scope=run (Tier-2b): client_id -> warm service fleet
+    svc_lru: List[int] = []   # least-recently-used order for the fleet cache eviction
 
     def run_eval(model_path: str, rnum: int) -> None:
         """Dispatch one global-model eval by eval_mode and fold the result into val_history.
@@ -1399,7 +1640,40 @@ def run(cfg) -> dict:
             round_services: List[dict] = []
             client_actors, client_critics = [], []
             try:
-                if pending_prewarm:
+                if service_scope == "run" and cfg.env_kind in ("webshop", "alfworld"):
+                    # Tier-2b: reuse warm per-client fleets across rounds; start only the missing
+                    # ones; never tear down in this round's finally (round_services stays []).
+                    _tag = "WebShop" if cfg.env_kind == "webshop" else "ALFWorld"
+                    reused = [c for c in selected if c in svc_registry]
+                    for c in list(reused):
+                        try:
+                            _wait_services_healthy(cfg, svc_registry[c], _tag)
+                        except Exception as e:
+                            log(f"[warn] round {r}: warm services for client {c} unhealthy ({e}); "
+                                f"restarting fresh")
+                            stop_services(svc_registry.pop(c))
+                            reused.remove(c)
+                    if reused:
+                        log(f"round {r}: reusing WARM service fleet(s) for client(s) {reused} "
+                            f"(service_scope=run)")
+                    for c in selected:
+                        if c not in svc_registry:
+                            svc_registry[c] = (
+                                start_webshop_services(cfg, env_base, client_ids=[c])
+                                if cfg.env_kind == "webshop"
+                                else start_alfworld_services(cfg, env_base, client_ids=[c]))
+                        if c in svc_lru:
+                            svc_lru.remove(c)
+                        svc_lru.append(c)
+                    cap = max(int(cfg.get("service_cache_clients", 4) or 4), len(selected))
+                    while len(svc_registry) > cap:
+                        victim = next((c for c in svc_lru if c not in selected), None)
+                        if victim is None:
+                            break
+                        svc_lru.remove(victim)
+                        log(f"service cache: evicting client {victim}'s fleet (LRU, cap={cap})")
+                        stop_services(svc_registry.pop(victim))
+                elif pending_prewarm:
                     round_services, pending_prewarm = pending_prewarm, []
                     try:
                         _wait_services_healthy(
@@ -1411,7 +1685,7 @@ def run(cfg) -> dict:
                         log(f"[warn] round {r}: prewarmed services unhealthy ({e}); starting fresh")
                         stop_services(round_services)
                         round_services = []
-                if not round_services:
+                if service_scope == "round" and not round_services:
                     if cfg.env_kind == "webshop":
                         round_services = start_webshop_services(cfg, env_base, client_ids=selected)
                     elif cfg.env_kind == "alfworld":
@@ -1436,14 +1710,23 @@ def run(cfg) -> dict:
                         if c != selected[-1] and cfg.wait_between_clients > 0:
                             time.sleep(cfg.wait_between_clients)
                 # lever #2: launch next round's services now -> warmup overlaps FedAvg/merge/eval
-                pending_prewarm = prewarm_next_round_services(cfg, env_base, r)
+                # (redundant under service_scope=run: fleets persist anyway)
+                if service_scope == "round":
+                    pending_prewarm = prewarm_next_round_services(cfg, env_base, r)
             finally:
                 stop_services(round_services)   # free this round's services before aggregation
+                                                # (service_scope=run: round_services is [] -> no-op)
 
+            last_round = (r == int(cfg.total_rounds))
             agg_actor = fedavg(cfg, r, client_actors, env_base, kind="actor")
-            hf_dir = merge_to_hf(cfg, r, agg_actor, env_base, kind="actor")
+            # hf_export=final (Tier-2d): the merger's shards->HF->reload round trip is pure I/O on
+            # the training path; the persistent worker consumes the aggregated SHARDS directly and
+            # only the FINAL model is exported to HF (the user-facing artifact).
+            hf_dir = None
+            if hf_export == "every_round" or last_round:
+                hf_dir = merge_to_hf(cfg, r, agg_actor, env_base, kind="actor")
 
-            critic_hf = None
+            agg_critic, critic_hf = None, None
             if is_ppo:
                 if len(client_critics) != len(selected):
                     raise RuntimeError(
@@ -1451,7 +1734,8 @@ def run(cfg) -> dict:
                         f"{len(selected)} clients produced a critic checkpoint; cannot FedAvg "
                         f"the value model (check critic.checkpoint.save_contents includes 'model')")
                 agg_critic = fedavg(cfg, r, client_critics, env_base, kind="critic")
-                critic_hf = merge_to_hf(cfg, r, agg_critic, env_base, kind="critic")
+                if hf_export == "every_round" or last_round:
+                    critic_hf = merge_to_hf(cfg, r, agg_critic, env_base, kind="critic")
 
             # client-end eval (paper per-client "circle" marks, §7.4): score EACH client's post-training
             # model on the unperturbed val service. MUST run before cleanup (it reads the client shards
@@ -1465,21 +1749,28 @@ def run(cfg) -> dict:
                     if cm:
                         client_history.append({"round": r, "client": int(c), **cm})
 
-            cleanup_round_checkpoints(cfg, r)  # free consumed FSDP shards (keep HF + logs)
+            # hf_export=final: round r's aggregated shards feed round r+1's reload -> keep them one
+            # extra round (purge r-1's, now consumed). every_round: legacy behavior unchanged.
+            cleanup_round_checkpoints(cfg, r,
+                                      keep_aggregated=(hf_export == "final" and not last_round),
+                                      purge_prev_aggregated=(hf_export == "final"))
 
             history.append({
                 "round": r, "clients": selected,
                 "started_from": current_model,
                 "client_actors": [str(a) for a in client_actors],
                 "aggregated_actor": str(agg_actor),
-                "aggregated_hf": str(hf_dir),
+                "aggregated_hf": str(hf_dir) if hf_dir is not None else "(deferred: hf_export=final)",
                 **({"started_critic_from": current_critic,
                     "client_critics": [str(a) for a in client_critics],
-                    "aggregated_critic_hf": str(critic_hf)} if is_ppo else {}),
+                    "aggregated_critic_hf": str(critic_hf) if critic_hf is not None
+                     else "(deferred: hf_export=final)"} if is_ppo else {}),
             })
-            current_model = str(hf_dir)   # <-- the loop closes here: next round trains from this
-            if critic_hf is not None:
-                current_critic = str(critic_hf)   # ...and the federated value model carries forward
+            # the loop closes here: next round trains from the aggregated model -- the HF dir
+            # (legacy) or, under hf_export=final, the aggregated FSDP shard dir (worker reloads it)
+            current_model = str(hf_dir) if hf_dir is not None else str(agg_actor)
+            if is_ppo:
+                current_critic = str(critic_hf) if critic_hf is not None else str(agg_critic)
 
             # score the aggregated GLOBAL model on the unperturbed val set EVERY round -- the paper's
             # per-round red line (server-aggregated), one point per round (val_before_train semantics).
@@ -1497,20 +1788,42 @@ def run(cfg) -> dict:
             if prev and prev[1]:
                 val_history.append({"round": prev[0],
                                     "model": "base" if prev[0] == 0 else "aggregated", **prev[1]})
+        # final_eval_mode=worker (Tier-2c): score model_T on the worker's HOT engine BEFORE teardown
+        # via an eval-only plan (round T+1's "starting model" is the final aggregate; the worker
+        # dumps round_T/eval/val_samples and skips fit). Saves the whole cold final-eval subprocess.
+        hot_final_done = False
+        if (final_eval_mode == "worker" and do_eval and eval_mode == "worker"
+                and xstate.get("proc") is not None and xstate["proc"].alive()):
+            try:
+                T = int(cfg.total_rounds)
+                xdir = xstate["xdir"]
+                fe_spec = [{"client": -1, "model_path": str(current_model), "critic_path": None,
+                            "seed": int(cfg.base_seed),
+                            "out_dir": str(Path(cfg.output_dir) / f"round_{T}" / "final_eval_scratch"),
+                            "exp": "final_eval", "service_url": None, "eval_only": True,
+                            "base_model": str(base_model)}]
+                (xdir / f"plan_round_{T + 1}.json").write_text(json.dumps(fe_spec, indent=2))
+                (xdir / f"go_{T + 1}").write_text("go")
+                log(f"final-eval (hot engine): published eval-only plan for model_T={current_model}")
+                _wait_signal(xdir / f"done_{T + 1}", xstate["proc"], "final hot eval")
+                hot_final_done = True
+            except Exception as e:
+                log(f"[warn] hot final eval failed ({e}); falling back to the subprocess final eval")
         stop_persistent_cross_round(xstate)  # lever #4 cross_round: end the long-lived worker
-        # eval_mode=worker: the worker dumped round_0..T-1 val_samples on its hot engine (no cold-start);
-        # fold them in, then eval the FINAL model_T ONCE on the now-free GPUs (worker stopped above) --
-        # the val service is still up (torn down below).
+        # eval_mode=worker: the worker dumped round_0..T-1 val_samples on its hot engine (no cold-start)
+        # -- plus round_T when the hot final eval ran. Fold them in; only WITHOUT the hot final eval
+        # is model_T scored by a (cold) subprocess on the now-free GPUs. Val service still up here.
         if eval_mode == "worker" and do_eval:
-            for k in range(0, int(cfg.total_rounds)):
+            for k in range(0, int(cfg.total_rounds) + (1 if hot_final_done else 0)):
                 d = Path(cfg.output_dir) / (f"round_{k}" if k > 0 else "round_0") / "eval" / "val_samples"
                 mk = summarize_val_dump(d)
                 if mk:
                     val_history.append({"round": k, "model": "base" if k == 0 else "aggregated", **mk})
                     log(f"worker-eval round {k}: success={mk['success_rate']} reward={mk['reward_mean']}")
-            mfin = eval_global(cfg, current_model, int(cfg.total_rounds), env_base, val_url)
-            if mfin:
-                val_history.append({"round": int(cfg.total_rounds), "model": "aggregated", **mfin})
+            if not hot_final_done:
+                mfin = eval_global(cfg, current_model, int(cfg.total_rounds), env_base, val_url)
+                if mfin:
+                    val_history.append({"round": int(cfg.total_rounds), "model": "aggregated", **mfin})
             # client-end circles (worker mode): the hot-engine worker dumped each client's post-training
             # model eval to round_<r>/client_<c>/eval after its fit(); fold them into client_history just
             # like the orchestrator path does for the non-worker modes.
@@ -1527,6 +1840,9 @@ def run(cfg) -> dict:
                             log(f"client-end eval r{k} c{c}: success={cm['success_rate']} "
                                 f"reward={cm['reward_mean']}")
         stop_services(pending_prewarm)   # lever #2: any un-adopted prewarmed services (loop end/error)
+        for _c, _fleet in list(svc_registry.items()):   # service_scope=run: warm fleets end with the run
+            stop_services(_fleet)
+        svc_registry.clear()
         stop_services(val_services)      # round services are torn down per-round; only val remains
 
     summary = {

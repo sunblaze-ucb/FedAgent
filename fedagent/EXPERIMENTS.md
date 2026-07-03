@@ -534,3 +534,39 @@ Same-day PM addendum (report §8) — completeness follow-ups:
 - **WebShop `paper_ws_wiring_r4.yaml`** (vs the old-stack 707/496/630 baseline): launched with the
   leftover walltime and reclaimed by the allocation limit as expected — queued for the next 4-card
   window (config ready, ports fixed).
+
+Same-day evening entry — Tier-2 optional knobs: implementation, validation, optimal combos
+(doc: `docs/acceleration_tier2_2026-07-02.md` + `_cn`):
+
+- **All remaining levers shipped as optional knobs, default OFF (= byte-identical legacy):**
+  `alfworld_manifest_cache` (+`alfworld_manifest_dir`), `service_scope: run`
+  (+`service_cache_clients`), `final_eval_mode: worker`, `hf_export: final`,
+  `parallel_clients: N` (#3 lanes), `one_step_off` (ADDITIONAL OPTION, off-policy). Composition
+  gates enforced at startup; every knob equivalence-gated.
+- **Reproducibility floor measured (new):** a same-config ALFWorld replicate (the accidentally
+  inert pre-fix cache arm) differs by **max|Δ| = 9.293e-5** — the GPU-nondeterminism floor sits
+  just under the 1e-4 bar. Every knob arm landed AT or BELOW it: cache 9.199e-5 (wall −18 %),
+  scope 9.090e-5 (−16 %), feval 9.241e-5 (−11 %), all-four 8.752e-5 (**−24 %**); TinyGuess rig:
+  hf_export **8.825e-6** (shard-direct-load ≡ merge path), lanes **1.144e-5** via the round-2 HF
+  exports (`compare_hf_models.py`, NEW — ws2-vs-ws4 shards can't be diffed directly).
+- **sys.path shadowing bug found & fixed** (latent, independent): the conda env's editable
+  verl-0.3.1 `.pth` put the ORIGINAL verl-agent repo ahead of the *appended* vendored engine
+  (namespace-package race) — ALFWorld services had always imported the un-vendored engine.
+  `service/server.py` now `sys.path.insert(0, _ENGINE)`. WebShop unaffected.
+- **WS r4 wiring re-run landed: 2802 s** (490/764/905/643). Steady-state insight: hot-engine
+  steps ~50 s (gen ~10 s) ≈ 3× cheaper than cold single-step probes (82/36) — cold-probe
+  arithmetic is systematically pessimistic; replicas ≈ WASH at WS paper config (probe −12 %
+  didn't survive).
+- **Optimal combos measured on the REAL paper configs (2 rounds):** ALFWorld combo
+  (r8 + 4 Tier-2) **3202 s vs 3719** (−13.9 %; steady round **762 vs 1125 = −32 %**, hot final
+  eval 389 vs 578); WebShop combo (fused + 3 Tier-2) **2309 s vs 2802** (−17.6 %; steady round
+  **402 vs 905**, hot eval 326 vs 643). **Lanes = wash on BOTH envs** (3136/2255 totals; the
+  1.5B fit is GPU-bound so 2×2-GPU ≈ sequential 4-GPU, and the 2-GPU hot eval gives back the
+  overlap) — NOT adopted; small-model probe's −35 % joins replicas in the didn't-survive bin.
+- **70-round projections** (same formula both stacks, test_freq=5): ALFWorld 29.3 h → **16.7 h
+  (−43 %)**; WebShop 20.4 h → **9.4 h (−54 %)**. Recommended recipes: cross_round + worker eval
+  + scope=run + feval=worker + hf_export=final, plus manifest cache (ALF) / fused (WS).
+- **one_step_off wiring hardened:** hydra forbids `hydra.searchpath` outside the primary config
+  → `fedagent_ppo.yaml` split into `fedagent_ppo_body.yaml` (leaves, no hydra block) + thin
+  primary; entry points layer the body (compose-tested identical). Upstream `validate_config`
+  requires train-world-size | real_train_batch_size (64) → GPU split 2+2, not 3+1.

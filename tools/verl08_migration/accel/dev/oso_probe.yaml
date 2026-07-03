@@ -1,0 +1,40 @@
+# one_step_off TIMING PROBE (ADDITIONAL OPTION -- OFF-POLICY, sign-off tier; see run_fed
+# DEFAULTS). WebShop paper per-step geometry (GPU-bound = the favorable case), 1 client x
+# 1 round x 3 steps, eval off, SUBPROCESS path. GPU split: 2 train + 2 gen -- upstream's
+# validate_config requires real_train_batch_size (8x8=64) divisible by the TRAIN world size,
+# which rules out the 3+1 split (64 % 3 != 0). Compare steady-state step wall vs the serial
+# ws_scale_g4 (93.4s): expect ~max(gen, train).
+env_kind: webshop
+env_spec: config/envs/webshop_15.yaml
+val_env_spec: ""
+output_dir: /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent/runs/oso/probe
+model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+one_step_off: true
+total_clients: 1
+clients_per_round: 1
+total_rounds: 1
+epochs_per_round: 3
+base_seed: 42
+n_gpus_per_node: 4
+total_training_steps: 3
+save_freq: 100000
+val_before_train: false
+min_goals_per_client: 100
+webshop_pool_size: 16
+webshop_base_port: 12100
+search_return_n: 50
+cleanup_checkpoints: false
+partition_strategy: ""
+client_overrides:
+  - data.train_batch_size=8
+  - data.max_prompt_length=4096
+  - data.max_response_length=512
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=8
+  - actor_rollout_ref.rollout.prompt_length=4096
+  - actor_rollout_ref.rollout.response_length=512
+  - actor_rollout_ref.rollout.max_model_len=4608
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.6
+  - actor_rollout_ref.actor.checkpoint.save_contents=[model]
+  - trainer.n_gpus_per_node=2
+  - rollout.n_gpus_per_node=2

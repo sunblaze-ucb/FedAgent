@@ -19,6 +19,7 @@
 | [acceleration_cross_env.md](./acceleration_cross_env.md) | **WebShop vs ALFWorld —— 加速发现并排对比**：一张主表 + *哪些选择 transfer、哪些翻转*的原则（eval-mode 排名翻转；~+38% 1-GPU 惩罚 transfer；ALFWorld rollout 受 env 约束；并发修复与环境无关）。自包含综述。 |
 | [acceleration_tier1_report_2026-07-01.md](./acceleration_tier1_report_2026-07-01.md) | **深度验证报告（2026-07-01）** —— env 服务**副本分片**（`*_replicas`）：诊断（86 ms × 3200 步 = `_TW_LOCK` 地板）、设计决策、四层验证链（机制 → 控制 → 组件 → 端到端：ALFWorld step −57%、整跑 −31%）、WebShop 首次分解（GPU-bound 镜像，−12%）、含失误的预测记分卡、以及与既有杠杆栈的组合关系。 |
 | [acceleration_frontier_2026-07-02.md](./acceleration_frontier_2026-07-02.md) | **前沿研究（2026-07-02）** —— 还能加速吗（能：~800–1000 s 可寻址管道，相位分解）、更多异步有用吗（on-policy 等价 bar 内已饱和；one-step-off 存在但 off-policy）、verl 0.8 还有什么（审计 + 两个探针证伪：dyn-bsz 更慢、fused-kernels = WebShop 点缀）。 |
+| [acceleration_tier2_2026-07-02.md](./acceleration_tier2_2026-07-02.md) | **Tier-2 可选旋钮（2026-07-02）** —— 剩余全部杠杆做成默认关的配置旋钮（清单缓存、`service_scope: run`、热终评、`hf_export: final`、lanes、`one_step_off`），逐一等价门控（全部落在实测 9.3e-5 同配置噪声底之下/持平）；最优组合在真实 paper config 上实测：ALFWorld 稳态轮 −32%、WebShop −56%；70 轮投影 **29.3 → 16.7 h / 20.4 → 9.4 h**；lanes 两环境打平；sys.path 遮蔽修复。 |
 | [extending.md](./extending.md) | 扩展点：新增 dataset/env、异质策略、RL 算法或聚合规则。 |
 | [migration.md](./migration.md) · [migration_report.md](./migration_report.md) | **迁移** —— `migration.md` 是浓缩的保真记录（相对 verl-agent-0.3.1 fork 改了什么 + 科学攸关的对齐项）；`migration_report.md` 是**完整的工程走读**（路线决策、依赖鏖战，以及 checkpoint / agent-loop / env-service / windowed 的深入剖析）。 |
 

@@ -52,7 +52,14 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # verl-agent dependency remains; AlfredTWEnv itself needs only textworld/alfworld).
 _ENGINE = os.path.abspath(os.path.join(_HERE, "..", "engine"))
 if _ENGINE not in sys.path:
-    sys.path.append(_ENGINE)
+    # INSERT AT THE FRONT, not append: the verl-agent-alfworld conda env carries an EDITABLE
+    # verl-0.3.1 install whose .pth puts the ORIGINAL verl-agent repo on sys.path at startup --
+    # `agent_system` is a namespace package, so submodule resolution follows path order and an
+    # appended engine dir silently LOSES to the old repo (the service would run the un-vendored
+    # engine; caught 2026-07-02 when the vendored manifest-cache patch never fired). Prepending
+    # makes the vendored engine authoritative; any submodule absent from the vendored tree still
+    # falls through to the old repo via the namespace merge.
+    sys.path.insert(0, _ENGINE)
 
 _ALF_PKG = os.path.join(_ENGINE, "agent_system", "environments", "env_package", "alfworld")
 

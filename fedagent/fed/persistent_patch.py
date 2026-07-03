@@ -40,24 +40,53 @@ def _apply_persistent_patch() -> bool:
         if hasattr(eng, "_fedprox_w_t"):
             del eng._fedprox_w_t  # re-anchor FedProx to this client's aggregated model
 
+    def _load_model_shards(eng, shard_dir):
+        """Tier-2d (hf_export=final): model-only load of the AGGREGATED FSDP shard checkpoint
+        into the freshly initialize()d engine -- skipping the per-round model_merger HF round
+        trip entirely. The aggregated dir carries ONLY weight shards (save_contents=[model]);
+        the optimizer/LR scheduler keep the fresh state initialize() just built, which is
+        exactly what the HF-merge path produced (fresh Adam + schedule at step 0). Rank r loads
+        model_world_size_W_rank_r.pt via the engine's own FSDPCheckpointManager (the resume
+        path), temporarily narrowed to load_contents=['model'] so the missing optimizer/extra
+        files are never requested."""
+        cm = eng.checkpoint_manager
+        saved = cm.checkpoint_load_contents
+        cm.checkpoint_load_contents = ["model"]
+        try:
+            eng.load_checkpoint(local_path=shard_dir, hdfs_path=None, del_local_after_load=False)
+        finally:
+            cm.checkpoint_load_contents = saved
+
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
-    def reload_client_model(self, model_local_path: str):
+    def reload_client_model(self, model_local_path: str, shard_dir: str = None):
         """Hot-swap the live actor (+ref) engines to a new aggregated model + rebuild them.
 
         Exactly what a fresh subprocess gets for free: new weights from model_local_path,
         a fresh optimizer (zero Adam moments), a fresh LR scheduler at step 0, and no stale
         FedProx anchor. Same-architecture clients -> hf_config/tokenizer stay valid; only the
-        weight source (local_path) changes."""
+        weight source (local_path) changes.
+
+        ``shard_dir`` (Tier-2d, hf_export=final): model_local_path is the BASE model (constant
+        all run -- rebuilds module/optimizer/scheduler), then the aggregated FSDP shards from
+        shard_dir overwrite the weights in place (model-only). Net weights == the HF-merge path,
+        without the merger."""
         _reset_engine(self.actor.engine, model_local_path)
+        if shard_dir:
+            _load_model_shards(self.actor.engine, shard_dir)
         if getattr(self, "ref", None) is not None:
             _reset_engine(self.ref.engine, model_local_path)  # ref forward_only: weights only
+            if shard_dir:
+                _load_model_shards(self.ref.engine, shard_dir)
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
-    def reload_critic_model(self, model_local_path: str):
+    def reload_critic_model(self, model_local_path: str, shard_dir: str = None):
         """Critic (PPO/gae) counterpart. The critic is a plain TrainingWorker with self.engine
         (no CriticWorker class in verl 0.8); rebuild the value engine = fresh value weights +
-        fresh critic optimizer/scheduler."""
+        fresh critic optimizer/scheduler. ``shard_dir``: as in reload_client_model (aggregated
+        critic shards over a base-initialized value engine)."""
         _reset_engine(self.engine, model_local_path)
+        if shard_dir:
+            _load_model_shards(self.engine, shard_dir)
 
     ActorRolloutRefWorker.reload_client_model = reload_client_model
     TrainingWorker.reload_critic_model = reload_critic_model

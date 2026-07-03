@@ -1,0 +1,89 @@
+# FedAgent verl-0.8 overlay BODY (shared, non-primary).
+#
+# All FedAgent leaf overrides on verl's STOCK `ppo_trainer` base live here. This file
+# deliberately carries NO `hydra:` block: hydra only allows a `hydra.searchpath` override
+# in the PRIMARY config, so each entry-point config (fedagent_ppo.yaml for the paper path,
+# fedagent_one_step_off.yaml for the experimental off-policy track) includes this body and
+# declares the searchpath itself. Layer new entry points the same way.
+#
+# We override only the leaves FedAgent needs; machine/run-specific paths (model, env-spec,
+# package configs, output dir) and the one struct-additive key
+# (model.override_config.attn_implementation, passed with `+`) are supplied on the CLI by
+# scripts/run_smoke.sh / fed/run_fed.py.
+defaults:
+  - ppo_trainer
+  - _self_
+
+algorithm:
+  adv_estimator: grpo
+  use_kl_in_reward: false
+
+data:
+  train_batch_size: 8
+  val_batch_size: 8
+  max_prompt_length: 512
+  max_response_length: 512
+  custom_cls:
+    name: AgenticDataset
+    # path: <abs path to fedagent/data/agentic_dataset.py>   (set on CLI)
+
+actor_rollout_ref:
+  actor:
+    optim:
+      lr: 1e-6
+    ppo_mini_batch_size: 8
+    ppo_micro_batch_size_per_gpu: 4
+    # Paper/original GRPO+PPO actor objective (config/uniform/.../grpo: use_kl_loss=true,
+    # kl_loss_coef=0.01, low_var_kl; entropy bonus 0.001). verl 0.8 defaults differ
+    # (use_kl_loss off, kl_loss_coef 0.001, entropy 0), so set them here in the base so
+    # EVERY arm (GRPO smokes/paper + PPO) inherits the correct actor loss.
+    use_kl_loss: true
+    kl_loss_coef: 0.01
+    kl_loss_type: low_var_kl
+    entropy_coeff: 0.001
+    fsdp_config:
+      param_offload: false
+      optimizer_offload: false
+  rollout:
+    name: vllm
+    mode: async
+    multi_turn:
+      enable: true
+    n: 4
+    prompt_length: 512
+    response_length: 512
+    gpu_memory_utilization: 0.5
+    tensor_model_parallel_size: 1
+    log_prob_micro_batch_size_per_gpu: 4
+    agent:
+      default_agent_loop: gym_text
+      # agent_loop_config_path: <abs path to fedagent/config/agent.yaml>   (set on CLI)
+  ref:
+    log_prob_micro_batch_size_per_gpu: 4
+    fsdp_config:
+      param_offload: true
+
+critic:
+  # Inert under GRPO (adv_estimator=grpo => critic disabled; this block is never read, so the
+  # paper path is byte-unchanged). Only activates under adv_estimator=gae (PPO), where verl
+  # requires the value model's micro-batch to be set explicitly. Mirror the actor's batch
+  # sizes; critic uses the conventional higher value-head lr (1e-5 vs actor 1e-6).
+  optim:
+    lr: 1e-5
+  ppo_mini_batch_size: 8
+  ppo_micro_batch_size_per_gpu: 4
+
+reward_model:
+  enable: false
+
+trainer:
+  n_gpus_per_node: 2
+  nnodes: 1
+  total_epochs: 1
+  total_training_steps: null   # null => verl uses len(dataloader)*total_epochs (full E epochs/round). run_fed overrides with a >0 cap for smokes; a stale >0 here would silently cap EVERY paper run (paper configs pass total_training_steps=0 => run_fed emits null).
+  save_freq: 1
+  test_freq: -1
+  val_before_train: false
+  logger: [console]
+  project_name: fedagent_phase1
+  experiment_name: tinyguess_pkg

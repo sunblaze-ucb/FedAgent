@@ -1,0 +1,47 @@
+# FedAgent + verl experimental one_step_off_policy (ADDITIONAL OPTION -- run_fed key
+# `one_step_off: true`; subprocess path only).
+#
+# >>> OFF-POLICY: generation runs ONE STEP AHEAD of training on a dedicated GPU split, so the
+# >>> batch that updates the policy was sampled from the PREVIOUS step's weights. This is
+# >>> OUTSIDE the paper-reproduction equivalence bar (3-seed noise) by construction. Use as a
+# >>> TIMING PROBE / new-experiments track only -- adoption needs explicit scientific sign-off.
+#
+# Layers the experimental deltas (verl/experimental/one_step_off_policy/config/
+# one_step_off_ppo_trainer.yaml) on top of fedagent_ppo_body (which layers verl's stock
+# ppo_trainer). We include the BODY, not fedagent_ppo itself: hydra permits the
+# hydra.searchpath override only in the primary config, so each entry declares its own.
+# The GPU split is supplied per run via overrides, e.g. 4xH100:
+#   trainer.n_gpus_per_node=3 rollout.n_gpus_per_node=1
+defaults:
+  - fedagent_ppo_body
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:VERL_CFG}
+
+# rollout resource isolation (the generation GPU split; training keeps trainer.n_gpus_per_node)
+rollout:
+  nnodes: 1
+  n_gpus_per_node: 1
+
+actor_rollout_ref:
+  # OneStepOffRayTrainer asserts the DISAGGREGATED layout (separate gen/train worker groups);
+  # upstream sets this on the CLI in its shell examples, we pin it here.
+  hybrid_engine: False
+  rollout:
+    # experimental-trainer requirements (verbatim from upstream's one_step_off_ppo_trainer.yaml):
+    # weight sync between the train and gen worker groups needs the cache engine kept alive...
+    free_cache_engine: False
+    # ...and the stale-batch correction needs the rollout log-probs materialized.
+    calculate_log_probs: True
+    checkpoint_engine:
+      backend: "nccl"
+    # disaggregated weight sync (upstream shell examples): rollout engines boot from
+    # safetensors and receive updates via layered FSDP summon.
+    load_format: safetensors
+    layered_summon: True
+
+algorithm:
+  rollout_correction:
+    bypass_mode: True

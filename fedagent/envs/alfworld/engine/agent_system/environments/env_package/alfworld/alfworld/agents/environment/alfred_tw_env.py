@@ -172,7 +172,29 @@ class AlfredTWEnv(object):
                 task_types.append(TASK_TYPES[tt_id])
 
         count = 0
-        for root, dirs, files in tqdm(list(os.walk(data_path, topdown=False))):
+        # --- fedagent manifest cache (opt-in via ALFWORLD_MANIFEST_CACHE; run_fed key
+        # alfworld_manifest_cache). The walk below (os.walk + 2 JSON reads x ~8810 games on
+        # GPFS) produces the same list for every service process of a run, so cache its
+        # PRE-shuffle PRE-partition output keyed by (data_path, task_types). Shuffle /
+        # federated sharding / caps below still run natively on identical input ->
+        # byte-identical downstream. Written atomically after a full walk by whichever
+        # process finishes first (concurrent writers produce identical content).
+        _mcache = os.environ.get("ALFWORLD_MANIFEST_CACHE", "")
+        _mkey = f"{os.path.abspath(data_path)}|{sorted(task_types)}"
+        if _mcache and os.path.isfile(_mcache):
+            try:
+                with open(_mcache) as _mf:
+                    _m = json.load(_mf)
+                if _m.get("key") == _mkey:
+                    self.game_files = list(_m["game_files"])
+                    print(f"[manifest-cache] HIT {_mcache} ({len(self.game_files)} games)", flush=True)
+                else:
+                    print(f"[manifest-cache] key mismatch -> full walk ({_m.get('key')!r} != {_mkey!r})",
+                          flush=True)
+            except Exception as _e:
+                print(f"[manifest-cache] unreadable ({_e}) -> full walk", flush=True)
+        _walk_dirs = [] if self.game_files else list(os.walk(data_path, topdown=False))
+        for root, dirs, files in tqdm(_walk_dirs):
             if 'traj_data.json' in files:
                 count += 1
 
@@ -212,6 +234,18 @@ class AlfredTWEnv(object):
 
                 # Add to game file list
                 self.game_files.append(game_file_path)
+
+        # fedagent manifest cache: persist a completed walk (atomic tmp+rename; see above)
+        if _mcache and _walk_dirs:
+            try:
+                os.makedirs(os.path.dirname(_mcache) or ".", exist_ok=True)
+                _tmp = f"{_mcache}.tmp.{os.getpid()}"
+                with open(_tmp, "w") as _mf:
+                    json.dump({"key": _mkey, "game_files": self.game_files}, _mf)
+                os.replace(_tmp, _mcache)
+                print(f"[manifest-cache] WROTE {_mcache} ({len(self.game_files)} games)", flush=True)
+            except Exception as _e:
+                print(f"[manifest-cache] write failed ({_e}); continuing without cache", flush=True)
 
         # print(f"Overall we have {len(self.game_files)} games in split={self.train_eval}")
         original_num_games = len(self.game_files)
