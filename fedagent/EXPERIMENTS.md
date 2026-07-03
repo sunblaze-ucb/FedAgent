@@ -578,3 +578,9 @@ Same-day evening entry — Tier-2 optional knobs: implementation, validation, op
   -23..-31 %, but the 3-step client-round re-pays the pipeline prime every round: 253 vs 280 s
   ~= -10 % realized. The round-truncation argument is now measured; stays an unadopted
   ADDITIONAL OPTION (off-policy).
+
+Capstone (2026-07-03): the DEFINITIVE self-contained acceleration record written --
+`docs/acceleration_final_2026-07-03.md` + `_cn`: final recipe, three-baseline accounting
+(subprocess ~41/32 h -> wiring 29.3/20.4 h -> final 16.7/9.4 h = x2.5 ALFWorld / x3.5
+WebShop), the four bottleneck families, the 8-station journey incl. all dead ends, and the
+measurement discipline (noise floor, paper-config survivorship, steady-vs-cold-probe).
