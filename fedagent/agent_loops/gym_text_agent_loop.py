@@ -93,6 +93,12 @@ class GymTextAgentLoop(AgentLoopBase):
             cur_ids = list(prompt_ids)
             response_ids: List[int] = []
             response_mask: List[int] = []
+            # Per-token rollout log-probs, kept aligned with response_ids (0.0 on obs tokens,
+            # like verl's tool_agent_loop). Only emitted when the server returns them
+            # (rollout.calculate_log_probs=true) -- consumers: one_step_off / rollout_correction.
+            # lp_ok goes False on the first segment without log-probs -> emit None (legacy shape).
+            response_logprobs: List[float] = []
+            lp_ok = True
             env_rewards: List[float] = []
             info: Dict[str, Any] = {}   # last-step info; init so the overflow-guard early-break is safe
             success = False
@@ -112,6 +118,10 @@ class GymTextAgentLoop(AgentLoopBase):
                 gen = out.token_ids
                 response_ids += gen
                 response_mask += [1] * len(gen)  # 1 = model-generated -> trained on
+                if lp_ok and out.log_probs is not None and len(out.log_probs) == len(gen):
+                    response_logprobs += out.log_probs
+                else:
+                    lp_ok = False
                 cur_ids = cur_ids + gen
                 turns += 1
 
@@ -132,6 +142,8 @@ class GymTextAgentLoop(AgentLoopBase):
                 obs_tokens = new_ids[len(cur_ids):] if len(new_ids) > len(cur_ids) else []
                 response_ids += obs_tokens
                 response_mask += [0] * len(obs_tokens)  # 0 = observation -> masked out of loss
+                if lp_ok:
+                    response_logprobs += [0.0] * len(obs_tokens)
                 cur_ids = new_ids
         finally:
             # always release the env (e.g. return a pooled remote WebShop session),
@@ -151,6 +163,8 @@ class GymTextAgentLoop(AgentLoopBase):
             prompt_ids=prompt_ids[-self.prompt_length:],
             response_ids=response_ids[: self.response_length],
             response_mask=response_mask[: self.response_length],
+            response_logprobs=(response_logprobs[: self.response_length]
+                               if lp_ok and response_logprobs else None),
             num_turns=turns,
             # episode reward minus the invalid-action penalty (coef * #invalid actions)
             reward_score=float(sum(env_rewards)) - self._invalid_penalty * n_invalid,

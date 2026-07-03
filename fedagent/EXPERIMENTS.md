@@ -570,3 +570,11 @@ Same-day evening entry — Tier-2 optional knobs: implementation, validation, op
   → `fedagent_ppo.yaml` split into `fedagent_ppo_body.yaml` (leaves, no hydra block) + thin
   primary; entry points layer the body (compose-tested identical). Upstream `validate_config`
   requires train-world-size | real_train_batch_size (64) → GPU split 2+2, not 3+1.
+- **oso probe COMPLETED (next-day close-out):** layer 5 = both agent loops now emit per-token
+  `response_logprobs` (mirrors tool_agent_loop; obs tokens 0.0 in concat; None when
+  calculate_log_probs=false -> legacy byte-identical). Probe rc=0 (683 s): step walls
+  116.2 -> 64.9 -> 71.7 s; steps 2-3 show gen ~= 0 (71/64 s generate_async fully hidden under
+  training) = max(gen, train) as advertised; vs serial 4-GPU 93.4 s/step the steady step is
+  -23..-31 %, but the 3-step client-round re-pays the pipeline prime every round: 253 vs 280 s
+  ~= -10 % realized. The round-truncation argument is now measured; stays an unadopted
+  ADDITIONAL OPTION (off-policy).

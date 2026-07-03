@@ -155,19 +155,27 @@ batch t 训练的同时生成 batch t+1——步墙钟 `gen + train → max(gen,
 2. **FedAgent 的轮结构截断收益**：每客户端轮只有 3 个 optimizer 步，流水线在每个轮边界
    排空，稳态 −35 % 永远无法完整兑现。
 
-**探针现状——接线已剥四层，剩一个真实缺口。** 在 FedAgent 下立起这个实验性 trainer 依次
-暴露：(1) hydra searchpath 规则（→ 上文 `fedagent_ppo_body` 拆分）；(2) 上游
-`validate_config` 要求训练 world size 整除 real_train_batch_size（64）→ GPU 切分 **2+2**
-而非 3+1；(3) `OneStepOffRayTrainer` 断言分离式布局 → `hybrid_engine: False`（+
-`load_format: safetensors`、`layered_summon: True`），上游只在 shell 示例里设置；(4) 上游在
-自己的 `main()`（而非 task runner）里把顶层 `rollout:` 资源块拷进
-`actor_rollout_ref.rollout` → 已在 `fedagent.main_one_step_off` 镜像。四项均已入库修复。
-剩下的缺口是真实管道而非配置：切分跑起来后，trainer 拒收批——
-`bypass_mode=True requires rollout_log_probs in batch`。上游基础 agent loop 把 vLLM 服务器
-的逐 token `response_logprobs` 拼进批（`agent_loop.py:944`）；我们的 windowed `gym_text`
-loop 尚未收集/输出它。把 log-prob 捕获穿过 windowed 多轮流是拿到计时数字的前置——与探针
-一并延后（这条管道同时会解锁主路径上 verl 的 rollout-correction 算法族，更值得从容做而
-非今晚赶）。
+**接线记录——共剥五层，全部入库修复。** 在 FedAgent 下立起这个实验性 trainer 依次暴露：
+(1) hydra searchpath 规则（→ 上文 `fedagent_ppo_body` 拆分）；(2) 上游 `validate_config`
+要求训练 world size 整除 real_train_batch_size（64）→ GPU 切分 **2+2** 而非 3+1；(3)
+`OneStepOffRayTrainer` 断言分离式布局 → `hybrid_engine: False`（+ `load_format:
+safetensors`、`layered_summon: True`），上游只在 shell 示例里设置；(4) 上游在自己的
+`main()`（而非 task runner）里把顶层 `rollout:` 资源块拷进 `actor_rollout_ref.rollout` →
+已在 `fedagent.main_one_step_off` 镜像；(5) `bypass_mode=True` 要求批里携带逐 token
+`rollout_log_probs`——上游基础 runner 从 `AgentLoopOutput.response_logprobs` 穿线
+（`agent_loop.py:944`），因此 **FedAgent 两个 loop 现在都输出它**（镜像
+`tool_agent_loop`：逐生成段累加服务器返回的 `log_probs`；concat 模式在 obs token 上补
+`0.0`；服务器未开 log-probs（`calculate_log_probs=false`）时为 `None` → 旧路径逐字节不
+变）。这条管道同时解锁了主路径上 verl 的 rollout-correction 算法族。
+
+**探针结果（WebShop paper 几何，1 客户端 × 1 轮 × 3 步，2 训练 + 2 生成 GPU；总计
+683 s）：** 步墙钟 **116.2 → 64.9 → 71.7 s**。step 1 付出阻塞的灌管生成
+（`timing_s/gen` 44.4 s）；step 2–3 的 `gen ≈ 0`——下一批的生成（`generate_async`
+71.2 / 64.3 s）完全藏在训练背后，步墙钟正是宣传的 `max(gen, train)`，且 2+2 切分下两侧
+几乎平衡。对照串行 4 卡参考（`ws_scale_g4`，93.4 s/步），稳态步 **−23…−31 %**——但
+FedAgent 每客户端轮只有 3 步，每轮都要重付灌管：116+65+72 = 253 s vs 3×93.4 = 280 s ≈
+**实得 −10 %**。上文"轮结构截断收益"的论断就此成为实测事实——连同离策略 bar，一起把它
+留在不采纳的 Additional option 位置。
 
 ## 6. 出处与顺带发现
 

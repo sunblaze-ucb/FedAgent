@@ -67,10 +67,16 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
                 success = bool(info.get("success", success))
                 turn_invalid.append(0.0 if info.get("is_action_valid", True) else 1.0)
                 resp = action_ids[: self.response_length]
+                # rollout log-probs (present iff rollout.calculate_log_probs=true), sliced with
+                # resp; the response here is the action only, so no obs padding is needed.
+                resp_lp = (out.log_probs[: len(resp)]
+                           if out.log_probs is not None and len(out.log_probs) == len(action_ids)
+                           else None)
                 outputs.append(AgentLoopOutput(
                     prompt_ids=prompt_ids[-self.prompt_length:],
                     response_ids=resp,
                     response_mask=[1] * len(resp),     # response is the action only (no obs tokens)
+                    response_logprobs=resp_lp,
                     num_turns=1,
                     reward_score=0.0,                  # set below: episode return broadcast
                     metrics={},

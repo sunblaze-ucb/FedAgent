@@ -167,22 +167,32 @@ resolved leaves are unchanged.
 2. **FedAgent's round structure truncates the win**: with 3 optimizer steps per client-round, the
    pipeline drains at every round boundary, so the steady-state −35 % is never fully realized.
 
-**Probe status — wiring 4/5 layers deep, one real gap left.** Standing the experimental
-trainer up under FedAgent surfaced, in order: (1) the hydra searchpath rule (→ the
+**Wiring record — five layers deep, all fixed in-repo.** Standing the experimental trainer
+up under FedAgent surfaced, in order: (1) the hydra searchpath rule (→ the
 `fedagent_ppo_body` split above); (2) upstream `validate_config` requires
 train-world-size | real_train_batch_size (64) → GPU split **2+2**, not 3+1; (3)
 `OneStepOffRayTrainer` asserts the disaggregated layout → `hybrid_engine: False` (+
 `load_format: safetensors`, `layered_summon: True`), which upstream only sets in its shell
 examples; (4) upstream copies the top-level `rollout:` resource block into
 `actor_rollout_ref.rollout` in its own `main()`, not in the task runner → mirrored in
-`fedagent.main_one_step_off`. All four are fixed in-repo. The remaining gap is real plumbing,
-not config: with the split running, the trainer rejects the batch —
-`bypass_mode=True requires rollout_log_probs in batch`. Upstream's base agent loop
-concatenates per-token `response_logprobs` from the vLLM server into the batch
-(`agent_loop.py:944`); our windowed `gym_text` loop does not yet collect/emit them. Wiring
-log-prob capture through the windowed multi-turn stream is the prerequisite for the timing
-number — deferred with the probe (it would also unlock verl's rollout-correction algorithms
-on the main path, a separate reason to do it carefully rather than tonight).
+`fedagent.main_one_step_off`; (5) `bypass_mode=True` requires per-token
+`rollout_log_probs` in the batch — upstream's base runner threads them from
+`AgentLoopOutput.response_logprobs` (`agent_loop.py:944`), so **both FedAgent loops now
+emit them** (mirroring `tool_agent_loop`: accumulate the server's `log_probs` per generated
+segment; concat mode pads `0.0` on obs tokens; `None` whenever the server wasn't asked for
+log-probs, i.e. `calculate_log_probs=false` → the legacy path is byte-identical). This
+plumbing also unlocks verl's rollout-correction family on the main path.
+
+**Probe result (WebShop paper geometry, 1 client × 1 round × 3 steps, 2 train + 2 gen
+GPUs; total 683 s):** step walls **116.2 → 64.9 → 71.7 s**. Step 1 pays the blocking
+pipeline-prime generation (`timing_s/gen` 44.4 s); steps 2–3 show `gen ≈ 0` — the next
+batch's generation (`generate_async` 71.2 / 64.3 s) runs entirely hidden under training,
+i.e. the step wall is `max(gen, train)` exactly as advertised, and at 2+2 the two sides
+are nearly balanced. Against the serial 4-GPU reference (`ws_scale_g4`, 93.4 s/step) the
+steady-state step is **−23…−31 %** — but a FedAgent client-round is only 3 steps, so the
+round pays the prime every time: 116+65+72 = 253 s vs 3×93.4 = 280 s ≈ **−10 % realized**.
+The "round structure truncates the win" argument above is now a measured fact, which —
+together with the off-policy bar — keeps this an unadopted ADDITIONAL OPTION.
 
 ## 6. Provenance & incidental findings
 
