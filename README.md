@@ -58,9 +58,9 @@ the full construction.
 
 ## Key Features
 
-- **Federated PPO and GRPO trainers** — drop-in federated counterparts of the
+- **Federated PPO and GRPO trainers**: drop-in federated counterparts of the
   verl-agent trainers; swap one config to go from single-client to federated
-- **Two-level heterogeneity suite** — task-level (Preference / Coverage /
+- **Two-level heterogeneity suite**: task-level (Preference / Coverage /
   Hardness) and environment-level (5 WebShop transition variants), the first
   systematic decomposition for agent FL
 - **FedAvg aggregation** with FSDP-sharded model support, pluggable for custom
