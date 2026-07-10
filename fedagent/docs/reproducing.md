@@ -207,7 +207,10 @@ under the deterministic partition.
 > `FEDAGENT_BASE_SEED = base_seed + round*100 + client_id` re-draws each client's
 > goals every round), so a 1-round baseline would repeat one goal draw. Keeping
 > **70 rounds** reproduces the same goal coverage at the same 210-epoch budget;
-> the per-round FedAvg of one client/shard is a no-op. See
+> the per-round FedAvg of one client/shard is a no-op. Note these baselines
+> thereby also restart Adam state and re-anchor the KL reference each round, and
+> replay each round's goal draw across its 3 epochs — unlike the original single
+> 210-epoch run (see migration.md § Residual differences). See
 > [`../fed/README.md`](../fed/README.md#baseline-modes).
 
 ### Run
@@ -521,11 +524,15 @@ Each run writes everything under the config's `output_dir`:
   val set is the per-round point: since every client of the round starts from the
   *same* aggregate, this single eval equals the expectation of the paper's
   per-client `val_before_train`(step-0) average — same curve, a fraction of the
-  rollout cost. `test_freq: 5` is **not** this global eval — it is verl's
-  *within-job* step cadence (with `epochs_per_round` steps/round it only fires
-  `is_last_step`, the per-client "client-end" marks). The curve lands in
-  `federated_summary.json` (`val_curve`) and the round-`r` eval dumps live in
-  `round_<r>/eval/`.
+  rollout cost. `test_freq: 5` is **inert** on this stack (client jobs pin
+  `trainer.test_freq=-1`; it is kept only for name-parity with the legacy
+  configs). The figures' per-client **circle marks** are NOT produced by
+  default: set `client_end_eval: true` (adds `clients_per_round` unperturbed-val
+  evals per round and writes `client_curve` into `federated_summary.json`).
+  Decide **before** launching — per-client checkpoints are cleaned up each
+  round, so circles cannot be recomputed from a finished run. The aggregated
+  curve lands in `federated_summary.json` (`val_curve`) and the round-`r` eval
+  dumps live in `round_<r>/eval/`.
 
 `tools/verl08_migration/summarize_fed_run.py` post-processes a run directory.
 

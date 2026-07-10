@@ -103,8 +103,8 @@ python -m fedagent.fed.run_fed --config \
 联邦协议已烘焙进 `paper/` 配置并与论文一致：
 **N = 100** 个 client（`total_clients`）、每轮采样 **M = 2** 个（`clients_per_round`）、
 **T = 70** 轮（`total_rounds`）、**E = 3** 个本地 epoch（`epochs_per_round`）。每一轮都从上一轮
-合并后的 FedAvg 模型出发训练所选 client，再重新聚合，并（每 `test_freq` 轮）在共享的未扰动
-val set 上为全局模型打分。
+合并后的 FedAvg 模型出发训练所选 client，再重新聚合，并在共享的未扰动
+val set 上为全局模型打分（**每轮**都评；`test_freq` 在本栈上是惰性的）。
 
 ---
 
@@ -476,9 +476,12 @@ GPU 上运行；见 [`./running.md`](./running.md)。
   `val_before_train: true` 把 base 模型加为 round-0 点、`val_temperature: 0.4`。对该轮聚合模型在
   共享 val set 上评一次即为该轮的 per-round 点：因为该轮每个 client 都从*同一个*聚合模型出发，
   这单次 eval 等于论文 per-client `val_before_train`(step-0) average 的期望 —— 同一条曲线，只花
-  一小部分 rollout 成本。`test_freq: 5` **不是**这个全局 eval —— 它是 verl 的 *job 内部* step
-  cadence（在 `epochs_per_round` 步/轮时只触发 `is_last_step`，即 per-client 的 "client-end"
-  标记）。曲线落在 `federated_summary.json`（`val_curve`），而 round-`r` 的 eval dump 位于
+  一小部分 rollout 成本。`test_freq: 5` 在本栈上是**惰性的**（client job 固定
+  `trainer.test_freq=-1`；保留只为与 legacy 配置名字对齐）。论文图里的 per-client **circle
+  标记**默认**不会**产生：需设 `client_end_eval: true`（每轮多 `clients_per_round` 次未扰动
+  val 评估，并把 `client_curve` 写进 `federated_summary.json`）。要在启动**之前**决定 ——
+  per-client checkpoint 每轮都会被清理，跑完后无法补算 circle。聚合曲线落在
+  `federated_summary.json`（`val_curve`），而 round-`r` 的 eval dump 位于
   `round_<r>/eval/`。
 
 `tools/verl08_migration/summarize_fed_run.py` 对一个 run 目录做后处理。

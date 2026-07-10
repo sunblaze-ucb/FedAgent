@@ -30,7 +30,7 @@ Your current observation is: {current_observation}
 Your admissible actions of the current situation are: [{admissible_actions}].
 
 Now it's your turn to take an action.
-You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags.
+You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags. 
 Once you've finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
 """
 
@@ -41,22 +41,21 @@ You are now at step {current_step} and your current observation is: {current_obs
 Your admissible actions of the current situation are: [{admissible_actions}].
 
 Now it's your turn to take an action.
-You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags.
+You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags. 
 Once you've finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
 """
-
 # --------------------- WebShop --------------------- #
 WEBSHOP_TEMPLATE_NO_HIS = """
-You are an expert autonomous agent operating in the WebShop e‑commerce environment.
+You are an expert autonomous agent operating in the WebShop e‑commerce environment. 
 Your task is to: {task_description}.
 Your current observation is: {current_observation}.
-Your admissible actions of the current situation are:
+Your admissible actions of the current situation are: 
 [
 {available_actions}
 ].
 
 Now it's your turn to take one action for the current step.
-You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think> </think> tags.
+You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think> </think> tags. 
 Once you've finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
 """
 
@@ -65,16 +64,15 @@ You are an expert autonomous agent operating in the WebShop e‑commerce environ
 Your task is to: {task_description}.
 Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history}
 You are now at step {current_step} and your current observation is: {current_observation}.
-Your admissible actions of the current situation are:
+Your admissible actions of the current situation are: 
 [
 {available_actions}
 ].
 
 Now it's your turn to take one action for the current step.
-You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think> </think> tags.
+You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think> </think> tags. 
 Once you've finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
 """
-
 
 def _action_history(memory: List[Dict[str, str]], history_length: int) -> tuple[str, int]:
     """Format the last ``history_length`` (obs, action) pairs exactly like env_manager.

@@ -166,7 +166,11 @@ class GymTextAgentLoop(AgentLoopBase):
             response_logprobs=(response_logprobs[: self.response_length]
                                if lp_ok and response_logprobs else None),
             num_turns=turns,
-            # episode reward minus the invalid-action penalty (coef * #invalid actions)
+            # episode reward minus the invalid-action penalty (coef * #invalid actions).
+            # Known concat-mode caveat: stock verl does not pass `validate` into run() kwargs,
+            # so this penalty also lands on VAL rows' reward_score (legacy val was unpenalized).
+            # The paper metric (traj_success below) is penalty-independent, and the paper-default
+            # windowed mode gates the penalty on validate correctly (windowed_agent_loop.py).
             reward_score=float(sum(env_rewards)) - self._invalid_penalty * n_invalid,
             metrics=metrics,
             extra_fields={

@@ -117,6 +117,18 @@ if PARTITION_STRATEGY in ("catalog_split", "task_disjoint"):
     print(f"[webshop-service] {PARTITION_STRATEGY} client {CLIENT_ID}/{CLIENT_NUM}: "
           f"|catalog|={len(CATALOG_ASINS) if CATALOG_ASINS is not None else 'FULL'} "
           f"|goal_idxs|={len(CLIENT_GOAL_IDXS)}", flush=True)
+elif PARTITION_STRATEGY == "uniform":
+    # The paper's HOMOGENEOUS task partition (uniform / decentralized families): each
+    # federated client trains on a CONTIGUOUS >=MIN_GOALS_PER_CLIENT-goal shard of the
+    # seed-42-shuffled train pool (verl-agent envs.py 'uniform') — "uniform" means
+    # uniformly SHARDED, not unsharded. Index-based but sized from the env's real goal
+    # count, so DEFERRED like the task strategies. client_num=1 (centralized/standalone)
+    # degrades to the full train pool. FULL catalog, env unperturbed.
+    _DEFERRED_TASK_PARTITION = "uniform"
+    CATALOG_ASINS = None
+    print(f"[webshop-service] uniform client {CLIENT_ID}/{CLIENT_NUM}: contiguous goal shard "
+          f"DEFERRED to runtime (>= MIN_GOALS_PER_CLIENT goals of goals[{VAL_SIZE}:]; FULL catalog)",
+          flush=True)
 elif PARTITION_STRATEGY in ("preference", "coverage", "hardness"):
     # TASK-level heterogeneity (Preference omega / Coverage xi / Hardness xi'), FULL catalog
     # (env unperturbed). DEFERRED to _lifespan: these select goals by CONTENT (category / size /
@@ -130,8 +142,10 @@ elif PARTITION_STRATEGY in ("preference", "coverage", "hardness"):
 elif PARTITION_STRATEGY in ("bm25_field_subset", "bm25_reweight", "lookalike", "rank_wrapper"):
     # ENV-level (transition-level) heterogeneity, paper Variants 2-5: perturb the
     # search/ranking dynamics (a distinct hidden P_i) via env_kwargs merged into
-    # gym.make. The task/goal split stays UNIFORM (no goal_idxs) -- a clean
+    # gym.make. The task axis stays the UNIFORM per-client shard (verl-agent envs.py
+    # applied the same contiguous slice on these arms, :520-535) -- a clean
     # transition-kernel shift with the task distribution held fixed.
+    _DEFERRED_TASK_PARTITION = "uniform"
     from fedagent.hetero.webshop_env_variants import (
         bm25_variant_for_client,
         lookalike_injection_for_client,
@@ -152,15 +166,16 @@ elif PARTITION_STRATEGY in ("bm25_field_subset", "bm25_reweight", "lookalike", "
         ENV_VARIANT_KWARGS = rank_wrapper_for_client(CLIENT_ID, CLIENT_NUM, **_N)
     CATALOG_ASINS = None  # variants perturb dynamics, not the catalog filter
     print(f"[webshop-service] {PARTITION_STRATEGY} client {CLIENT_ID}/{CLIENT_NUM}: "
-          f"env_variant_keys={list(ENV_VARIANT_KWARGS)} (UNIFORM goals, FULL catalog)", flush=True)
+          f"env_variant_keys={list(ENV_VARIANT_KWARGS)} (uniform goal shard deferred, FULL catalog)", flush=True)
 elif PARTITION_STRATEGY:  # non-empty but unrecognized -> FAIL FAST (was: silent homogeneous run).
     # A typo (e.g. legacy 'bm25_reweighting' vs new 'bm25_reweight', or 'distractor_disjoint')
     # would otherwise fall through every branch -> CLIENT_GOAL_IDXS/CATALOG_ASINS stay None ->
     # /reset draws uniformly from the full pool/catalog, silently running a HOMOGENEOUS arm.
     raise ValueError(
         f"[webshop-service] unknown PARTITION_STRATEGY={PARTITION_STRATEGY!r}; expected one of "
-        "catalog_split, task_disjoint, preference, coverage, hardness, bm25_field_subset, "
-        "bm25_reweight, lookalike, rank_wrapper (or '' for the uniform/centralized baseline)."
+        "uniform, catalog_split, task_disjoint, preference, coverage, hardness, "
+        "bm25_field_subset, bm25_reweight, lookalike, rank_wrapper "
+        "(or '' for an unsharded service, e.g. the shared val service)."
     )
 
 _pool: asyncio.Queue = None
@@ -228,13 +243,19 @@ def _compute_task_partition(server_goals):
     """Compute CLIENT_GOAL_IDXS for a DEFERRED task-level strategy from the env's real goals.
 
     Mirrors verl-agent envs.py: partition env.server.goals (the seed-42 shuffled list) so the
-    served goal at index i carries the category/size/hardness the partition selected. Only
-    reached for preference/coverage/hardness (catalog_split/variants are computed at import).
+    served goal at index i carries the category/size/hardness the partition selected. Reached
+    for uniform (incl. the env variants' task axis) and preference/coverage/hardness
+    (catalog_split's slice is computed at import).
     """
     global CLIENT_GOAL_IDXS
     strat = _DEFERRED_TASK_PARTITION
     min_goals = int(os.environ.get("MIN_GOALS_PER_CLIENT", "100"))
-    if strat == "preference":
+    if strat == "uniform":
+        from fedagent.hetero.webshop_uniform import uniform_for_client
+        CLIENT_GOAL_IDXS = uniform_for_client(
+            CLIENT_ID, CLIENT_NUM,
+            min_goals_per_client=min_goals, env_goals=server_goals, val_size=VAL_SIZE)
+    elif strat == "preference":
         from fedagent.hetero.webshop_task import preference_for_client
         CLIENT_GOAL_IDXS = preference_for_client(
             CLIENT_ID, CLIENT_NUM, omega=float(os.environ.get("OMEGA", "0.5")),

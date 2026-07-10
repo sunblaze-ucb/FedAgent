@@ -86,7 +86,7 @@ top-K is read by the underlying engine (see the last section).
 | `WEBSHOP_POOL_SIZE` | Number of pre-warmed `WebAgentTextEnv` in the pool (must be ≥ gen batch). | `4` |
 | `WEBSHOP_NUM_GOALS` | Size of the full goal pool (uniform-sampling bound). | `6910` |
 | `WEBSHOP_SEARCH_RETURN_N` | BM25 top-K (read by the WebShop engine, not `server.py`). | `50` engine / `200` runner |
-| `PARTITION_STRATEGY` | Heterogeneity strategy (see table below); empty ⇒ uniform/unperturbed. | `""` |
+| `PARTITION_STRATEGY` | Partition/heterogeneity strategy (see table below). `uniform` ⇒ the paper's contiguous ≥`MIN_GOALS_PER_CLIENT`-goal shard per client (run_fed maps `""` configs to it for train services); empty ⇒ unsharded (the shared val service). | `""` |
 | `CLIENT_ID` | This client's id (selects its shard / variant). | `0` |
 | `CLIENT_NUM` | Total clients (partition denominator). | `1` |
 | `ENV_DIV` | Catalog-Split heterogeneity strength (`catalog_split`/`task_disjoint`). | `0.7` |
@@ -137,17 +137,19 @@ goals* by calling [`../../../hetero/`](../../../hetero/):
 strategies (`preference`/`coverage`/`hardness`) are **deferred** to the lifespan
 handler (`_compute_task_partition`) and computed from `env.server.goals` once the
 pool is warm, so the goal served at index *i* really carries the
-category/size/hardness the partition selected. Env-variant strategies leave the
-goal split uniform and inject their `env_kwargs` (`bm25_in_memory_config`,
-`extra_products`, `search_engine_variant`) into every `gym.make` (deep-copied per
-env, since the engine mutates product dicts in place).
+category/size/hardness the partition selected. Env-variant strategies keep the
+task axis on the same uniform per-client shard (deferred like the task
+strategies, matching the original's envs.py) and inject their `env_kwargs`
+(`bm25_in_memory_config`, `extra_products`, `search_engine_variant`) into every
+`gym.make` (deep-copied per env, since the engine mutates product dicts in
+place).
 
 **Goal selection per reset.** `/reset` maps its `seed` to a session id:
 `val` ⇒ `seed % VAL_SIZE`; a partitioned client ⇒
 `CLIENT_GOAL_IDXS[Random(seed).randrange(len)]` (full seed entropy so the
 round-threaded base seed varies goals across rounds rather than collapsing onto
-the first few); otherwise the uniform train pool `VAL_SIZE + seed % (NUM_GOALS −
-VAL_SIZE)`.
+the first few); otherwise (unsharded service, e.g. val or standalone) the full train pool
+`VAL_SIZE + seed % (NUM_GOALS − VAL_SIZE)`.
 
 **Reward shape (sparse).** `/step` mirrors verl-agent's `envs.py` exactly: the
 env's graded score in `[0,1]` is returned only as `task_score` (diagnostic),

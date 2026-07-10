@@ -107,7 +107,7 @@ The mode is derived from the config (no separate flag) in `run()`:
 | Mode | Selected when | Behavior |
 |---|---|---|
 | **federated** | `total_clients > 1` and `local_client_id < 0` (default) | FedAvg across the selected clients each round. |
-| **centralized** | `total_clients == 1` | One model on the pooled data; FedAvg of a single client is the identity, so the loop is just `total_rounds × epochs_per_round` of continued central training. |
+| **centralized** | `total_clients == 1` | One model on the pooled data; FedAvg of a single client is the identity, so the loop is just `total_rounds × epochs_per_round` of continued central training (per-round fresh optimizer/KL-anchor — see migration.md § Residual differences). |
 | **local** | `local_client_id = k >= 0` | The paper's *Local Agent Training*: pin client `k` (its slice of the `total_clients`-way partition) every round and train it alone, no federation. |
 
 `participating_client_ids` / `select_clients` honor `local_client_id` by pinning that one

@@ -121,6 +121,21 @@ rather than the fork's re-rendered template (equivalent information); the invali
 penalty is applied in the agent-loop, not the trainer; goal sampling uses a different (still
 reproducible) RNG, so per-seed trajectories are not bit-identical to 0.3.1.
 
+**Baseline dynamics (the renamed rd-70_ep-3 centralized/local configs):** each round is a
+fresh subprocess started from the merged HF weights (`save_contents=[model]`,
+`resume_mode=disable`), so the T=70×E=3 baselines inherit the federated arms' per-round
+semantics — Adam moments re-initialize every 3 epochs, the `use_kl_loss` reference re-anchors
+to each round's starting model (the original 1×210 baselines kept one optimizer and a fixed
+base-model KL anchor), and the E epochs within a round replay that round's goal draw (the
+original re-drew goals every epoch: 210 draws vs 70 here). Compute- and dynamics-matched to
+the federated arms, but the legacy paper baseline numbers are not exactly re-derivable on
+this stack — use the paper-reproduce branch for that.
+
+**Seed-replication axis:** the 3-seed arms vary `base_seed` (42/21/84 — client selection +
+per-round goal draws); the original varied `SHUFFLE_SEED` (a reshuffle of the train pool
+under fixed selection). Both are valid seed-noise axes over a fixed val split; they are not
+the same randomness source (documented in `gen_paper_configs.py`).
+
 **GPU-pending verification:** PPO (`gae`) critic federation and the decentralized ablations
 are config-parse + code-audited but not yet smoke-run end-to-end; the larger backbones
 (Qwen2.5-3B/7B, Llama-3.2-3B) and the full 70-round budget have not been exercised on this

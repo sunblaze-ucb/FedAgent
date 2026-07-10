@@ -107,8 +107,8 @@ class PersistentFedTaskRunner(TaskRunner):
         self._worker_eval_dir = os.environ.get("FEDAGENT_WORKER_EVAL_DIR")
         self._worker_eval_url = os.environ.get("FEDAGENT_WORKER_EVAL_URL")
         # eval cadence: the per-round GLOBAL eval (paper red line, server-aggregated model) runs EVERY
-        # round; only the round-0 BASE point is gated by val_before_train. test_freq is verl's WITHIN-job
-        # step cadence (client-end circle marks), NOT this global eval -- so it does NOT gate here.
+        # round; only the round-0 BASE point is gated by val_before_train. cfg.test_freq is inert in this
+        # stack (client jobs pin trainer.test_freq=-1); per-client circle marks need client_end_eval.
         self._worker_vbt = os.environ.get("FEDAGENT_WORKER_EVAL_VBT", "1") == "1"
         # client-end circles: eval EACH client's post-training model on the hot engine after its fit().
         self._worker_client_end_eval = os.environ.get("FEDAGENT_WORKER_CLIENT_END_EVAL", "0") == "1"
@@ -261,8 +261,8 @@ class PersistentFedTaskRunner(TaskRunner):
 
     def _should_worker_eval(self, eval_round: int) -> bool:
         """The per-round GLOBAL eval (paper red line, server-aggregated model) runs EVERY round; only
-        the round-0 BASE point is gated by val_before_train. test_freq is verl's WITHIN-job step cadence
-        (client-end circle marks), NOT this global eval -- so don't gate on it. The worker evals the
+        the round-0 BASE point is gated by val_before_train. test_freq is inert in this stack (client
+        jobs pin trainer.test_freq=-1) -- don't gate on it. The worker evals the
         STARTING model of each round (round r-1 at round r), covering 0..T-1; the FINAL round is evaled
         by the orchestrator after the worker stops."""
         return self._worker_vbt if eval_round == 0 else True

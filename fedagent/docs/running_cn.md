@@ -184,8 +184,9 @@ python -m fedagent.fed.run_fed --config <...> --fedprox-mu 0.1
 | Key | 效果 | 默认值 |
 |---|---|---|
 | `val_env_spec` | 未扰动的 val env-spec；`""` → 不 eval | `""` |
-| `test_freq` | verl 的**作业内**步频（每个 client 的 circle 标记），**并非**全局 eval 的门控 —— 聚合后的全局模型**每轮**都打分 | `5` |
+| `test_freq` | **惰性**（client job 固定 `trainer.test_freq=-1`；保留只为与 legacy 配置名字对齐）—— 聚合后的全局模型无论如何**每轮**都打分 | `5` |
 | `val_before_train` | 在 round 1 之前也 eval 一次**基础**模型（round-0 那个点） | `true` |
+| `client_end_eval` | 每轮再对**每个被选 client** 训练后的模型做未扰动 val → 论文图的 per-client "circle" 标记（summary 里的 `client_curve`）；每轮多 M 次评估 | `false` |
 | `val_temperature` | val 采样温度（`val_kwargs.temperature`） | `0.4` |
 
 round → success/reward 曲线写入 `federated_summary.json`（`val_curve`）。一次失败的 eval 会记一条

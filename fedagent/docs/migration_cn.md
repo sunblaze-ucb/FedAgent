@@ -118,6 +118,18 @@ baseline 用 T=70 × E=3（=210 epochs）**，而非原版的 1 round × 210 epo
 agent-loop 里，而非 trainer；goal sampling 用了一个不同（仍可复现）的 RNG，所以
 每个 seed 的 trajectory 与 0.3.1 不是逐 bit 一致。
 
+**Baseline 动力学（改名后的 rd-70_ep-3 centralized/local 配置）：** 每一轮都是从 merge 后的
+HF 权重启动的全新子进程（`save_contents=[model]`、`resume_mode=disable`），所以 T=70×E=3 的
+baseline 继承了联邦 arm 的每轮语义 —— Adam 动量每 3 个 epoch 重新初始化、`use_kl_loss` 的
+参考策略重新锚定到每轮的起始模型（原版 1×210 的 baseline 用同一个 optimizer 和固定的
+base-model KL 锚），且一轮内的 E 个 epoch 重放该轮的 goal 抽取（原版每个 epoch 重新抽取：
+210 次 vs 这里 70 次）。与联邦 arm 在算力与动力学上对齐，但 legacy 论文的 baseline 数字
+在本栈上无法逐点重推 —— 需要时请用 paper-reproduce 分支。
+
+**Seed 复现轴：** 3-seed arm 变化的是 `base_seed`（42/21/84 —— client 选择 + 每轮 goal 抽取）；
+原版变化的是 `SHUFFLE_SEED`（在固定选择下重洗训练池）。两者都是 val split 固定下合法的
+seed 噪声轴，但不是同一个随机源（在 `gen_paper_configs.py` 中有记录）。
+
 **GPU 待验证：** PPO（`gae`）critic 联邦与 decentralized ablation 已
 config-parse + 代码审计，但尚未端到端 smoke-run；更大的 backbone（Qwen2.5-3B/7B、
 Llama-3.2-3B）与完整 70 轮预算尚未在本栈上运行。GRPO 联邦路径在两个环境上都**已**

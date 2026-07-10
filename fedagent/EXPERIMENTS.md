@@ -608,3 +608,41 @@ PPO minibatch adjudicated against both trainers' sources):
   2026-07-02 dispatches on the unified names and raises `Invalid partition strategy` otherwise
   → those arms crashed at service startup. Names now pass through unchanged (kwargs plumbing
   was already keyed on the unified names and is untouched).
+
+### Round-2 additions (same audit, 2026-07-09)
+
+Adversarial verification of the round-1 findings (7 of 12 refuted, incl. the critic-minibatch
+claim — the fork's critic multiplier interpolates the asserted-`==1` actor `rollout.n`, so the
+shipped critic mini=8 was already faithful) plus a dedicated verl-agent-fork parity sweep
+surfaced three more items, all fixed:
+
+- **WebShop uniform per-client goal shard restored (the audit's biggest catch).** The original
+  gave every federated WebShop client a CONTIGUOUS >=min_goals shard of the seed-42-shuffled
+  train pool (envs.py `uniform`, also the task axis of env Variants 2-5); the overlay's
+  service had no `uniform` branch and run_fed sent `""` -> every uniform/decentralized/variant
+  arm trained on the FULL 6410-goal pool and `min_goals_per_client` was a no-op (the
+  `samples_change` ablation was inert). Now: `fedagent/hetero/webshop_uniform.py` (verbatim
+  `uniform_partition` math; 984-case differential test vs the original fn = 0 mismatches),
+  deferred-computed in the service like the task strategies, `run_fed` maps `""` ->
+  `uniform` for train services (symmetric with ALFWorld; the shared val service keeps its
+  explicit unsharded `""`). Centralized (`client_num=1`) degrades to the full train pool =
+  unchanged. ALFWorld was already faithful.
+- **Prompt templates restored to byte-verbatim.** All four templates in
+  `envs/legacy_prompts.py` had trailing spaces stripped vs the 0.3.1 originals (a few tokens'
+  tokenization drift per turn); re-spliced from the original sources, byte-compare = identical.
+- **test_freq truthfulness.** `cfg.test_freq` is INERT on this stack (client jobs pin
+  `trainer.test_freq=-1`; the aggregated model is evaled EVERY round). Comments/log/docs that
+  attributed the figures' per-client circle marks to it are corrected: circles come ONLY from
+  `client_end_eval: true`, now emitted (default false) in every paper config for
+  discoverability — decide BEFORE launching, per-client checkpoints are cleaned each round.
+- Also recorded: the renamed T=70xE=3 baselines' per-round Adam/KL-anchor resets + within-round
+  goal replay are now disclosed in migration.md § Residual differences (docs-only; the change
+  direction — baselines matching the federated arms' dynamics — stands); the 3-seed axis is
+  base_seed, not the original SHUFFLE_SEED (documented); the shipped hardness labels were
+  BYTE-VERIFIED against the paper author's original artifacts
+  (`/gpfs/projects/p33168/canyu/federated_agent{,_1}/inference_results/`, identical MD5s);
+  concat-mode (opt-in) applies the invalid-action penalty to val reward_score (stock verl
+  passes no `validate` into run(); paper metric traj_success unaffected; windowed default
+  gates correctly — noted in-code). Known limitations kept as roadmap items: no round-level
+  rerun-resume (running.md corrected accordingly), no in-run Ray/GPU crash hygiene between
+  clients, summary written at run end only.

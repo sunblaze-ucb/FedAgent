@@ -146,7 +146,8 @@ DEFAULTS = {
     "local_client_id": -1,                   # >=0 => Local baseline: train only this client of total_clients
     # --- unperturbed global-model validation/eval (paper: test_freq=5, val_before_train, temp 0.4) ---
     "val_env_spec": "",                      # "" => NO eval (back-compat); else the UNPERTURBED val env-spec
-    "test_freq": 5,                          # verl WITHIN-job step cadence (client-end marks); NOT the global eval gate
+    "test_freq": 5,                          # INERT here (client jobs pin trainer.test_freq=-1; the global eval runs
+                                            #   EVERY round) -- kept only for name-parity with the legacy configs
     "val_before_train": True,               # eval the base model before round 1 (the round-0 red-line point)
     "client_end_eval": False,               # also eval EACH client's post-training model on the unperturbed val
                                             #   service -> the paper's per-client "circle" marks; costs +C evals/round
@@ -453,7 +454,10 @@ def start_webshop_services(cfg, env_base: dict, client_ids: Optional[List[int]] 
                     "WEBSHOP_PORT": str(port),
                     "WEBSHOP_POOL_SIZE": str(per_pool),
                     "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 200)),
-                    "PARTITION_STRATEGY": cfg.partition_strategy or "",
+                    # "" (uniform/decentralized/baseline families) maps to the original's
+                    # 'uniform' per-client goal SHARD, same as the ALFWorld default below —
+                    # NOT the full pool (the val service stays unsharded via its explicit "").
+                    "PARTITION_STRATEGY": cfg.partition_strategy or "uniform",
                     "CLIENT_ID": str(c),
                     "CLIENT_NUM": str(cfg.total_clients),
                     "ENV_DIV": str(cfg.env_div),
@@ -1451,8 +1455,9 @@ def run(cfg) -> dict:
                     f"{cfg.env_kind}_val_port band [{_vp}, {_vp + _reps}) overlaps the per-client "
                     f"service band [{_base}, {_base + _band}) (replicas={_reps}); move "
                     f"{cfg.env_kind}_val_port or {cfg.env_kind}_base_port apart.")
-        log(f"eval ON: unperturbed val every test_freq={cfg.test_freq} rounds "
-            f"(val_before_train={cfg.val_before_train}, temp={cfg.val_temperature}) -> {cfg.val_env_spec}")
+        log(f"eval ON: unperturbed val of the aggregated model EVERY round "
+            f"(val_before_train={cfg.val_before_train}, temp={cfg.val_temperature}, "
+            f"client_end_eval={cfg.client_end_eval}) -> {cfg.val_env_spec}")
         vs = start_val_service(cfg, env_base)
         if vs:
             val_services.extend(vs)   # replica-aware: start_val_service returns a LIST of handles
@@ -1774,8 +1779,8 @@ def run(cfg) -> dict:
 
             # score the aggregated GLOBAL model on the unperturbed val set EVERY round -- the paper's
             # per-round red line (server-aggregated), one point per round (val_before_train semantics).
-            # test_freq is verl's WITHIN-job step cadence (client-end circle marks): with epochs_per_round
-            # steps/round it only fires is_last_step, NOT this global eval -- so it does NOT gate here.
+            # cfg.test_freq does NOT gate here (it is inert: client jobs pin trainer.test_freq=-1); the
+            # figures' per-client circle marks come from client_end_eval=true, not from any verl cadence.
             # eval_mode=parallel: this LAUNCHES eval(model_r) on the eval GPUs and returns immediately,
             # so the next round's training (on the train GPUs) overlaps it.
             if do_eval:
