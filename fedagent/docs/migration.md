@@ -21,7 +21,7 @@ verification status. The running experiment log is [`../EXPERIMENTS.md`](../EXPE
 
 > **The one verl exception.** "No fork" remains the principle, with a single deliberate 2-line patch
 > (the FSDP→vLLM weight-transfer socket, captured under `tools/verl08_migration/patches/` so it stays
-> reproducible without forking; see [acceleration.md](./acceleration.md) §7.7). It hardens concurrent
+> reproducible without forking; see [archive acceleration.md §7.7](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md)). It hardens concurrent
 > same-node verl jobs and is needed only for client-parallel / eval-parallel runs — still no maintained fork.
 
 ## Environment fidelity: the engines are reused, not reimplemented

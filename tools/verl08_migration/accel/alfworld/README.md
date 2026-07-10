@@ -5,6 +5,9 @@ The ALFWorld acceleration-economics probes. Full rationale + results:
 (Qwen2.5-1.5B-Instruct), `response_length=4096`, ALFWorld service in conda env `verl-agent-alfworld`.
 Output → gitignored `runs/`.
 
+> `§` citations in the table below refer to the [full archived acceleration analysis](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md);
+> main's [`fedagent/docs/acceleration.md`](../../../../fedagent/docs/acceleration.md) is the how-&-why summary.
+
 | config(s) | experiment | result |
 |---|---|---|
 | `alf_smoke.yaml` | de-risk: 0.5B, 1 client/round, eval off — confirm service (8810-game load ~3 min) + federated loop close end-to-end | GREEN (rc=0) |

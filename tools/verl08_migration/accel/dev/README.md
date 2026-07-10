@@ -2,8 +2,11 @@
 
 Small-model (mostly TinyGuess) A/B smokes that validated the **persistent-trainer (#4)**, **cross-round
 persistence**, and **PPO critic-reload** paths produce equivalent results to the subprocess-per-(client,
-round) baseline. Analysis: [`acceleration.md`](../../../../fedagent/docs/acceleration.md) §7.1 / §7.2.
+round) baseline. Analysis: [archive acceleration.md §7.1 / §7.2](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md).
 Output → gitignored.
+
+> `§` citations in the table below refer to the [full archived acceleration analysis](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md);
+> main's [`fedagent/docs/acceleration.md`](../../../../fedagent/docs/acceleration.md) is the how-&-why summary.
 
 | config(s) | experiment | doc |
 |---|---|---|

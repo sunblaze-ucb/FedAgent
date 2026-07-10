@@ -1,7 +1,7 @@
 # Acceleration & env benchmarks — configs, drivers, helpers
 
 Reproducibility artifacts behind the acceleration + ALFWorld workstreams
-([`fedagent/docs/acceleration.md`](../../../fedagent/docs/acceleration.md),
+([summary: `fedagent/docs/acceleration.md`](../../../fedagent/docs/acceleration.md); [full archived analysis](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md),
 [`acceleration_results.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_results.md),
 [`alfworld_testing.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/alfworld_testing.md) — both on the migrate/verl-0.8.0 branch). These are **one-off experiment
 scaffolding**, not maintained APIs — kept in-repo (out of the retired, gitignored `_scratch/`) so the

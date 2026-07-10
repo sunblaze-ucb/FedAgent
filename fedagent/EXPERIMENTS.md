@@ -408,7 +408,7 @@ python tools/verl08_migration/summarize_fed_run.py A=/tmp/...scaled_env B=/tmp/.
 
 ## Acceleration + concurrency-fix round (2026-06-29)
 
-Full analysis in [`docs/acceleration.md`](docs/acceleration.md) / [`_results`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_results.md) /
+Full analysis in [`docs/acceleration.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md) / [`_results`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_results.md) /
 [`_report`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_report.md). Configs/drivers preserved under
 `tools/verl08_migration/{accel,poc}/` (moved out of the gitignored 1.3 TB `_scratch/`).
 
@@ -465,7 +465,7 @@ staleness** liveness (never self-matching `pgrep`). Banked to memory.
 ## Tier-1 env-service replica sharding + WebShop decomposition (2026-07-01)
 
 Ran on TWO allocations simultaneously (4×H100 qgpu3021 + 1×H100/8-core qgpu3010). Full analysis:
-[`docs/acceleration.md`](docs/acceleration.md) §9; cross-env synthesis updated in
+[`docs/acceleration.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md) §9; cross-env synthesis updated in
 [`docs/acceleration_cross_env.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_cross_env.md).
 
 - **Implemented `alfworld_replicas`/`webshop_replicas`** (env-service replica sharding): K identical

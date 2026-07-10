@@ -229,7 +229,7 @@ own `n_gpus_per_node / P` GPU slice (2 clients × 2 GPUs on the 4-GPU recipe):
 - **When it pays:** small models, or lanes on separate GPU pools. On one 4-GPU node at the
   1.5B paper config it is **−35 % vs the plain subprocess baseline**, but a **wash on top of
   the recommended acceleration stack** (`cross_round` + worker eval + Tier-2) — see
-  `acceleration.md` §Lever #3 / §10.3 and prefer the §10.4 recipe there.
+  [acceleration.md](./acceleration.md) (full analysis: [archive §Lever #3 / §10.3](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md)).
 - Per-lane isolation (env-service ports, Ray tmpdirs, the FSDP→vLLM weight-transfer socket
   via `VERL_RAY_JOB_ID`) is handled automatically.
 

@@ -352,7 +352,8 @@ so verl's per-worker `CUDA_VISIBLE_DEVICES` isolation is preserved.
 ### Rollout, lifecycle & acceleration
 
 Every knob defaults to the legacy behavior; the acceleration set is byte-equivalence-gated
-(measured deltas, composition gates and the recommended combos: `acceleration.md` §7/§9/§10;
+(the recipe + why each knob works: [acceleration.md](./acceleration.md); full measured
+analysis: [archive §7/§9/§10](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md);
 runtime behavior: `running.md`).
 
 | Key | Type | Default | Meaning |

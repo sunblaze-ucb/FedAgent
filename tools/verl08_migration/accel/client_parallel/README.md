@@ -2,7 +2,7 @@
 
 Lever #3 — "parallel clients within a round": run `clients_per_round` clients concurrently on disjoint
 GPU sets on one node. `A`/`B` = the two concurrent client jobs. Analysis:
-[`acceleration.md`](../../../../fedagent/docs/acceleration.md) §Lever #3 / §7.7. Eval spec for the worker
+[archive acceleration.md §Lever #3 / §7.7](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md). Eval spec for the worker
 variants: `../p3_eval_2gpu.yaml` (top-level, referenced by absolute path). Output → gitignored.
 
 | config(s) | experiment | result | doc |

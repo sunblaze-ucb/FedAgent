@@ -15,7 +15,7 @@ overview in [`../README.md`](../README.md), then:
 | [reproducing.md](./reproducing.md) | The paper's 176-config matrix mapped to run commands; 3-seed replication; baselines. |
 | [extending.md](./extending.md) | Extension points: a new dataset/env, heterogeneity strategy, RL algorithm, or aggregation rule. |
 | [migration.md](./migration.md) | **Migration** — the condensed fidelity record: what changed from the verl-agent-0.3.1 fork, the science-critical alignments, and the verification status. |
-| [acceleration.md](./acceleration.md) | The acceleration analysis: bottleneck decomposition, the lever stack, and the measured recipes. |
+| [acceleration.md](./acceleration.md) | **How to accelerate & why**: the final recipe, why each lever works, the equivalence bar. (Full measured analysis: [archive](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md).) |
 
 > **Engineering archive.** The full documentation set — Chinese twins of every doc, the dated
 > acceleration/validation reports (tier-1/tier-2/frontier/final), the complete migration
