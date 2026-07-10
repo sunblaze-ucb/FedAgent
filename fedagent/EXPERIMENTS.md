@@ -408,8 +408,8 @@ python tools/verl08_migration/summarize_fed_run.py A=/tmp/...scaled_env B=/tmp/.
 
 ## Acceleration + concurrency-fix round (2026-06-29)
 
-Full analysis in [`docs/acceleration.md`](docs/acceleration.md) / [`_results`](docs/acceleration_results.md) /
-[`_report`](docs/acceleration_report.md). Configs/drivers preserved under
+Full analysis in [`docs/acceleration.md`](docs/acceleration.md) / [`_results`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_results.md) /
+[`_report`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_report.md). Configs/drivers preserved under
 `tools/verl08_migration/{accel,poc}/` (moved out of the gitignored 1.3 TB `_scratch/`).
 
 **GPU-validated timings (1.5B, 15-turn WebShop, paper settings, 4×H100):**
@@ -433,7 +433,7 @@ earlier FedAvg-29500 rendezvous fix. Commits `f4cb8ca` / `aa145f5`.
 
 ## ALFWorld acceleration economics (2026-06-30)
 
-Resolves the two falsifiable predictions in [`docs/alfworld_testing.md`](docs/alfworld_testing.md) §6.
+Resolves the two falsifiable predictions in [`docs/alfworld_testing.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/alfworld_testing.md) §6.
 Configs: `tools/verl08_migration/accel/alfworld/` (reorganized accel/ into env subfolders + per-folder
 READMEs this round). **Setup:** 1.5B, 4×H100 (qgpu3021), `response_length=4096`, in-loop val n=48
 (`valid_seen` subset), sweep methodology = minimal training (`epochs=1, total_training_steps=1`/round).
@@ -466,7 +466,7 @@ staleness** liveness (never self-matching `pgrep`). Banked to memory.
 
 Ran on TWO allocations simultaneously (4×H100 qgpu3021 + 1×H100/8-core qgpu3010). Full analysis:
 [`docs/acceleration.md`](docs/acceleration.md) §9; cross-env synthesis updated in
-[`docs/acceleration_cross_env.md`](docs/acceleration_cross_env.md).
+[`docs/acceleration_cross_env.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_cross_env.md).
 
 - **Implemented `alfworld_replicas`/`webshop_replicas`** (env-service replica sharding): K identical
   service processes per client over the same shard, sessions round-robin client-side
@@ -490,7 +490,7 @@ Ran on TWO allocations simultaneously (4×H100 qgpu3021 + 1×H100/8-core qgpu301
 ## Acceleration frontier study (2026-07-02)
 
 Answers "can we still accelerate / is more async useful / what does verl 0.8 still offer" —
-full report: [`docs/acceleration_frontier_2026-07-02.md`](docs/acceleration_frontier_2026-07-02.md).
+full report: [`docs/acceleration_frontier_2026-07-02.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_frontier_2026-07-02.md).
 
 - **Frontier moved to plumbing:** phase-decomposed the 2412 s worker_r8 run — ~800–1000 s is
   addressable (redundant per-round service restarts ~250 s, cold final-eval subprocess ~330 s,
@@ -536,7 +536,7 @@ Same-day PM addendum (report §8) — completeness follow-ups:
   window (config ready, ports fixed).
 
 Same-day evening entry — Tier-2 optional knobs: implementation, validation, optimal combos
-(doc: `docs/acceleration_tier2_2026-07-02.md` + `_cn`):
+(doc: [`acceleration_tier2_2026-07-02.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_tier2_2026-07-02.md) + `_cn`, archive branch):
 
 - **All remaining levers shipped as optional knobs, default OFF (= byte-identical legacy):**
   `alfworld_manifest_cache` (+`alfworld_manifest_dir`), `service_scope: run`
@@ -580,7 +580,7 @@ Same-day evening entry — Tier-2 optional knobs: implementation, validation, op
   ADDITIONAL OPTION (off-policy).
 
 Capstone (2026-07-03): the DEFINITIVE self-contained acceleration record written --
-`docs/acceleration_final_2026-07-03.md` + `_cn`: final recipe, three-baseline accounting
+[`acceleration_final_2026-07-03.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_final_2026-07-03.md) + `_cn` (archive branch): final recipe, three-baseline accounting
 (subprocess ~41/32 h -> wiring 29.3/20.4 h -> final 16.7/9.4 h = x2.5 ALFWorld / x3.5
 WebShop), the four bottleneck families, the 8-station journey incl. all dead ends, and the
 measurement discipline (noise floor, paper-config survivorship, steady-vs-cold-probe).

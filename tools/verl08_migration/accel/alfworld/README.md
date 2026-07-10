@@ -14,10 +14,17 @@ Output → gitignored `runs/`.
 | `alf_scale_g{4,1}_r8.yaml`, `alf_scale_g1_r{1,4,8}n1.yaml` | **Tier-1 replica sharding** (`alfworld_replicas`) — K-sweep + pool control + 4/1-GPU components (incl. the 1×H100/8-core node) | gen **217.5→65.8→61.8** (K1/4/8); pool irrelevant (control 217.5); 4-GPU step **298→127.6** (−57%); 1-GPU 534→350–359 (−33%, K=4 enough on 8 cores) |
 | `alf_em_worker_r8.yaml` | **end-to-end A/B**: the worker baseline config + `alfworld_replicas: 8` (train+val services) | **3509 → 2412 s (−31%)**, steps −65%, val healthy |
 | `alfworld_val_48.yaml` | 48-of-140 `valid_seen` val spec used by the eval-mode sweep (big enough to surface "shared throttles", small enough for a 4-mode sweep) | — |
+| `alf_scale_g4_r8{dyn,fused}.yaml` | **Tier-2 within-step probes** on the K=8 4-GPU base: `use_dynamic_bsz` / fused kernels | dyn **+11%** (step 127.6→141.7 — refuted, FLOP-bound); fused wash (+2%) — acceleration.md §10.2 |
+| `alf_scale_g1_paper_r{1,4}.yaml` | **1×H100 at the real paper caps** (2048/512/2560), K=1 / K=4 (`../run_g1_paper_stack.sh`) | r1: step **514 s** (gen 212/olp 52/ref 105/upd 139) vs 534 s at 4096-caps — cap choice immaterial (env-bound); EXPERIMENTS.md 2026-07-02 |
+| `alf_t2_{base,cache,scope,feval,all}.yaml` | **Tier-2 knob arms on the real config**: same-config replicate + manifest cache + `service_scope: run` + `final_eval_mode: worker` + all-four (`../run_t2_stack.sh`) | replicate = noise floor **9.293e-5**; walls **−18/−16/−11/−24%**, every arm ≤ floor — acceleration.md §10.1 |
+| `paper_alf_wiring_r8.yaml` | **first full paper-config run** (uniform/1.5B/grpo, 100-client partition, 2 rounds, adopted stack) | rc=0, **3719 s** (1766 + 1375 + 578 cold final eval); val 0.0429→**0.1143** (n=140) |
+| `paper_alf_combo{,_lanes}.yaml` | **the final recipe** (r8 + 4×Tier-2) ± `parallel_clients: 2` | combo **3202 s** (steady round **762 s** vs 1125; hot final eval 389); lanes 3136 s = **wash** → not adopted; 70-round **16.7 h** — acceleration.md §10.4 |
 
 **Drivers** (in `runs/` — gitignored, transient): `run_alf_evalmode.sh` (committed, in `../`) ran the
 sweep; `run_rerun.sh` / `run_alf_scale.sh` / `run_alf_conc.sh` ran the scaling + concurrency + the
-durable rerun. Full-task offline per-task-type eval: `tools/verl08_migration/eval_alfworld_by_tasktype.py`.
+durable rerun; `../run_t2_stack.sh`, `../run_g1_paper_stack.sh`, `../run_paper2r_stack.sh` (committed)
+ran the Tier-2 arms, the 1-GPU paper probes and the wiring/combo stack. Full-task offline
+per-task-type eval: `tools/verl08_migration/eval_alfworld_by_tasktype.py`.
 
 > **Key cross-env finding.** ALFWorld *flips* the WebShop eval-mode ranking (`parallel<worker<inline<shared`):
 > worker overtakes parallel (cross-round cold-start amortization pays off on a heavy eval) and inline

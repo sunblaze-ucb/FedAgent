@@ -140,10 +140,12 @@ client → data assignment deterministic. The full construction and paper mappin
 ## 5. Aggregation
 
 Server-side combination each round is **FedAvg** (a weighted parameter mean of the
-clients' FSDP shards). verl 0.8 saves per-rank `ShardedTensor` shards that cannot be
-loaded single-process, so the aggregator runs under a matched-world-size process group
+clients' FSDP shards). The aggregator runs under a matched-world-size process group
 (`torchrun --nproc_per_node = save-time world_size`): each rank averages its own rank
-shard across clients in place. **FedProx** keeps each client near the round's global
+shard across clients in place and writes it back byte-structurally identical to a verl
+save. (Real verl-0.8 checkpoints hold `DTensor` params that would also load
+single-process — matched-PG write-back is kept for structural identity and wrap-layout
+safety, not out of necessity; see extending.md "The shape (and why)".) **FedProx** keeps each client near the round's global
 model by adding a `μ·(w − w_t)` term to the actor gradient on every optimizer step —
 it changes the **client** update; the server still aggregates by FedAvg.
 

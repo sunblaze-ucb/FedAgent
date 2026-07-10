@@ -79,7 +79,16 @@ git -C /path/to/verl apply /path/to/fedagent/tools/verl08_migration/patches/verl
   `--no-build-isolation`) after `torch` is installed.
 - **Do not** `pip install --force-reinstall` without `--no-deps`: it cascades into
   a bare `torch` dependency and can pull a mismatched CUDA build that breaks the
-  env.
+  env. The known-good torch for this stack is **2.8.0+cu128** (vLLM 0.11.0's pin;
+  alongside sglang 0.5.2 + flashinfer 0.3.1).
+- **CUDA-13-era `nvidia-*-cu13` pip packages clobber the cu12 `.so`s** — they share
+  the `nvidia/<lib>/lib/` namespace and last-installed wins, so torch ends up
+  loading NCCL 2.29 on a CUDA-12.8 driver and FSDP param-broadcast dies with
+  `ncclUnhandledCudaError`. Fix: uninstall the cu13 orphans and
+  `--force-reinstall --no-deps` the torch trio (recovery script preserved at
+  `tools/verl08_migration/archived_diagnostics/_fix_nvidia_stack.sh`).
+- **Pin `numpy==2.2.6`** in this env: sglang pulls numpy 2.4, which breaks vLLM's
+  numba (needs ≤2.2).
 
 No FedAgent install step is needed: the driver and the per-client entry add the
 repo root to `PYTHONPATH` themselves and import `verl` from the active env

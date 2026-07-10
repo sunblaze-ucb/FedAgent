@@ -325,8 +325,9 @@ is the identity, so the loop is `T*E` epochs of centralized training); **Local**
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `val_env_spec` | path | `""` | `""` => **no eval**; else the UNPERTURBED val env-spec. |
-| `test_freq` | int | `5` | Eval the aggregated global model every K rounds (+ the final round). |
-| `val_before_train` | bool | `True` | Also eval the base model before round 1 (the round-0 point). |
+| `test_freq` | int | `5` | **Inert on this stack** (client jobs pin `trainer.test_freq=-1`; the aggregated model is evaled **every round** regardless) — kept for legacy config name-parity. |
+| `val_before_train` | bool | `True` | Also eval the base model before round 1 (the round-0 point). One central eval — clients never validate locally. |
+| `client_end_eval` | bool | `False` | Also eval **each selected client's** post-training model per round → the figures' per-client circle marks (`client_curve` in the summary); +M evals/round. All `config/paper/**` ship `true`. |
 | `val_temperature` | float | `0.4` | Val sampling temperature (paper `val_kwargs.temperature=0.4`). |
 | `webshop_val_port` | int | `8090` | Shared unperturbed WebShop val service port. |
 | `alfworld_val_port` | int | `8290` | Shared unperturbed ALFWorld val service port. |
@@ -347,6 +348,29 @@ the run — it is measurement, not the loop.
 `FEDPROX_MU`, which `sitecustomize.py` reads at interpreter startup to patch
 `FSDPEngine.optimizer_step` with the proximal term — chosen over a Ray `runtime_env` hook
 so verl's per-worker `CUDA_VISIBLE_DEVICES` isolation is preserved.
+
+### Rollout, lifecycle & acceleration
+
+Every knob defaults to the legacy behavior; the acceleration set is byte-equivalence-gated
+(measured deltas, composition gates and the recommended combos: `acceleration.md` §7/§9/§10;
+runtime behavior: `running.md`).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `rollout_mode` | str | `windowed` | `windowed` (paper-faithful per-turn window, `WindowedAgentLoopManager`) \| `concat` (stock 1-sample/episode). |
+| `windowed_history_length` | int | `2` | `FEDAGENT_HISTORY_LENGTH` for windowed (paper = 2); concat uses 0. |
+| `resume` | bool | `True` | Rerun with the same `--output-dir` ⇒ continue after the last completed round (`--fresh` disables; see running.md § Resume). |
+| `cleanup_checkpoints` | bool | `True` | Delete consumed FSDP shards after each merge (disk hygiene; keeps logs + HF). |
+| `persistent` / `cross_round` | bool | `False` | Lever #4: one trainer/vLLM per round / for the whole run (biggest single-node win). |
+| `eval_mode` | str | `inline` | `inline` \| `parallel` (spare GPUs) \| `shared` \| `worker` (hot-engine eval; needs persistent/cross_round). |
+| `final_eval_mode` | str | `subprocess` | `worker` scores model_T on the hot engine before teardown (needs cross_round + worker eval). |
+| `hf_export` | str | `every_round` | `final` skips the per-round merge (shard-direct reload; disables round-level resume anchors). |
+| `service_scope` | str | `round` | `run` keeps per-client env-service fleets warm across rounds (LRU `service_cache_clients`, default 4). |
+| `alfworld_replicas` / `webshop_replicas` | int | `1` | Tier-1 lock/GIL sharding: K service processes per client (ALFWorld's big lever; WebShop ≈ wash). |
+| `alfworld_manifest_cache` (+`_dir`) | bool | `False` | Cache the pre-shuffle game walk (self-validating; degrades to the full walk on mismatch). |
+| `prewarm_next_round_services` | bool | `False` | Lever #2: launch round r+1's services during round r (ignored under `service_scope: run`). |
+| `parallel_clients` | int | `1` | #3 lanes: the round's clients train concurrently on GPU slices — multi-node lever; wash at 1.5B single-node (§10.3). |
+| `one_step_off` | bool | `False` | ADDITIONAL OPTION, **off-policy** (verl `one_step_off_policy`); subprocess path only. Not used for paper runs. |
 
 ---
 

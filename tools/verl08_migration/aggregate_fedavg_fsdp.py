@@ -1,15 +1,18 @@
 #!/usr/bin/env python
 """Generalized matched-PG FedAvg for verl-0.8 FSDP checkpoints (the Phase 6 aggregator core).
 
-verl 0.8 FSDP1 saves per-rank shards as torch ShardedTensor, which CANNOT be loaded
-single-process. So FedAvg runs under a MATCHED-world-size process group (torchrun
+FedAvg runs under a MATCHED-world-size process group (torchrun
 --nproc_per_node = the save-time world_size): each rank loads its OWN rank shard from
-every client, (weighted-)averages the LOCAL tensors IN PLACE, and torch.saves the dict
-back. The output is byte-structurally identical to a verl checkpoint (same ShardedTensor
-objects, only local values changed), so the next round loads it with verl's own FSDP
-wrap unchanged. (Do NOT reconstruct/re-wrap a model to re-save: verl's transformer
-auto-wrap policy shards params differently than a whole-model wrap, so loading verl
-shards into a basic-wrap model fails `assert type(tensor) is ShardedTensor`.)
+every client, (weighted-)averages the LOCAL tensors IN PLACE (_get_local handles
+DTensor / ShardedTensor / plain), and torch.saves the dict back. The output is
+byte-structurally identical to a verl checkpoint (same tensor objects, only local
+values changed), so the next round loads it with verl's own FSDP wrap unchanged.
+Note: real verl-0.8 training checkpoints hold DTensor params that DO load
+single-process (the "ShardedTensor cannot load single-process" belief came from a
+synthetic spike's own save path) -- matched-PG write-back is kept for structural
+identity, and because the re-wrap trap is real: verl's transformer auto-wrap policy
+shards params differently than a whole-model wrap, so loading verl shards into a
+basic-wrap model fails `assert type(tensor) is ShardedTensor`. Do NOT re-wrap.
 
 Generalized from tools/verl08_migration/phase0a_ckpt_roundtrip.py (FedAvg-exact + resume
 validated). core/ will shell out to this (replacing utils/model_aggregation's single-

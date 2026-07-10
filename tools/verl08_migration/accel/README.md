@@ -32,8 +32,11 @@ Each subfolder has its own `README.md` mapping its configs → the result they p
 
 ## Drivers (`run_*.sh`)
 
-Entry points, run from the repo root. The **live** ALFWorld drivers (`run_alf_evalmode.sh`) reference
-configs at their new subfolder paths (`accel/alfworld/…`). The **historical WebShop/#3 drivers**
+Entry points, run from the repo root. The **live** drivers reference configs at their subfolder
+paths (`accel/<env>/…`): `run_alf_evalmode.sh` (ALFWorld eval-mode sweep), `run_t2_stack.sh`
+(Tier-2 knob arms + the final combos), `run_g1_paper_stack.sh` (1×H100 paper-geometry probes),
+`run_ws_r4.sh` (WebShop paper wiring), `run_paper2r_stack.sh` (2-round paper wiring/combo stack),
+`run_oso_probe.sh` (`one_step_off` probe). The **historical WebShop/#3 drivers**
 (`run_p3.sh`, `run_evalmode.sh`, `run_complete.sh`, `run_2x1gpu.sh`, `run_paper_*.sh`, `run_worker3.sh`,
 `run_ws_smoke.sh`, `run_xround_*.sh`, …) were authored against the **retired `_scratch/accel/` base** for
 both config input and (gitignored) output, and are kept **for provenance** — to re-run one, resolve its

@@ -434,13 +434,20 @@ cmd = [
 
 ### The shape (and why)
 
-verl 0.8 FSDP1 saves per-rank shards as `torch` `ShardedTensor`, which **cannot** be
-loaded single-process. So FedAvg runs under a **matched-world-size process group**
+FedAvg runs under a **matched-world-size process group**
 (`torchrun --nproc_per_node == the save-time world_size`): each rank loads *its own*
-rank shard from every client, (weighted-)averages the **local** tensors in place, and
-`torch.save`s the dict back. The output is byte-structurally identical to a verl
-checkpoint (same `ShardedTensor` objects, only local values changed), so the next round
-loads it with verl's own FSDP wrap unchanged.
+rank shard from every client, (weighted-)averages the **local** tensors in place
+(`_get_local` handles `DTensor` / `ShardedTensor` / plain), and `torch.save`s the dict
+back. The output is byte-structurally identical to a verl checkpoint (same tensor
+objects, only local values changed), so the next round loads it with verl's own FSDP
+wrap unchanged.
+
+Why write-back rather than a single-process load: on **real** verl-0.8 training
+checkpoints the params are `DTensor` and *do* load single-process — the earlier
+"`ShardedTensor` cannot be loaded single-process" belief was an artifact of a synthetic
+spike's own save path, not of verl's. Matched-PG write-back is kept because structural
+identity makes the result provably round-trippable and sidesteps the re-wrap trap
+below, which *is* real.
 
 ```python
 # the averaging core (aggregate_fedavg_fsdp.py)

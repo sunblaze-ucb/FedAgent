@@ -69,6 +69,14 @@ These were verified during migration audits and fixed where they diverged (see
   doing 8× extra rollout vs legacy — legacy already did 512/step.)
 - **Sparse reward + invalid-action penalty** — `{0,10}` with a `0.1 × n_invalid` penalty
   (the penalty moved from the trainer actor to the agent-loop; same total per episode).
+  Within the episode the placement is **per-turn**: −0.1 lands at the turns whose own action
+  was invalid, broadcast on top of the base episode return (`windowed_agent_loop.py`) — not a
+  uniform per-episode subtraction.
+- **GRPO advantage estimator = stock verl 0.8 `grpo`.** The paper's fork did **not**
+  per-trajectory-dedup its groups: the fork's `seen_pairs` dedup is gated on a flag whose
+  default disables it, so group mean/std run over **all per-turn samples** — exactly what
+  stock `grpo` computes. No custom estimator is needed; `grpo_traj` (per-trajectory grouping,
+  see `agent_loops/windowed_manager.py`) is an opt-in, non-paper option.
 - **Task-heterogeneity partitions the real shuffled `server.goals` at runtime** (not an
   offline reconstruction) — so each client's shard matches the original.
 - **Round-threaded data seed** — `FEDAGENT_BASE_SEED = base_seed + round*100 + client`, and
@@ -119,7 +127,10 @@ single round would repeat the same goals. Same total epochs; correct goal covera
 **Benign plumbing (no MDP effect):** the multi-turn history is verl 0.8's native concat-chat
 rather than the fork's re-rendered template (equivalent information); the invalid-action
 penalty is applied in the agent-loop, not the trainer; goal sampling uses a different (still
-reproducible) RNG, so per-seed trajectories are not bit-identical to 0.3.1.
+reproducible) RNG, so per-seed trajectories are not bit-identical to 0.3.1. Round re-entry
+passes through `verl.model_merger`, which casts to **bf16** — every round boundary truncates
+the fp32-aggregated weights (within the equivalence bar; if drift ever shows over long
+horizons, switch re-entry to a model-only `resume_from_path` load, which skips the HF merge).
 
 **Baseline dynamics (the renamed rd-70_ep-3 centralized/local configs):** each round is a
 fresh subprocess started from the merged HF weights (`save_contents=[model]`,

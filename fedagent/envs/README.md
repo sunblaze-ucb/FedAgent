@@ -118,8 +118,20 @@ Every method POSTs JSON keyed by `session_id`:
 | --- | --- | --- |
 | `system_prompt()` | *(local; returns the static `WEBSHOP_SYSTEM` / `ALFWORLD_SYSTEM` text)* | — |
 | `reset(seed)` | `/create {session_id}` then `/reset {session_id, seed}` | `obs`; WebShop: `available_actions`, `goal_id`; ALFWorld: `admissible_commands` |
-| `step(action_str)` | `/step {session_id, text}` | `obs`, `reward`, `done`, `success`, `is_action_valid`; actions as above (WebShop also `task_score`) |
+| `step(action_str)` | `/step {session_id, text, step_id}` | `obs`, `reward`, `done`, `success`, `is_action_valid`; actions as above (WebShop also `task_score`) |
 | `close()` | `/close {session_id}` then closes the client | — |
+
+**Reliability contract (exactly-once against mutable env state).** Under load, a plain
+retry can replay a `/step` out of order and corrupt the episode. The clients therefore
+send an idempotency key: `step_id` starts at 0 per episode (`reset` restarts it on both
+sides), the server applies each id **exactly once** and replays the cached response on a
+duplicate, and the client increments only **after** a success — so the in-flight id is the
+only one that can ever be re-sent. Retries (bounded backoff + jitter) fire on **transport
+errors only**; HTTP 4xx/5xx surface loudly instead of being retried. `/create` blocks with
+the read-timeout disabled (no timeout → no re-send → no duplicate session borrow), and the
+server serializes each session behind a per-session `asyncio.Lock`. Full details in the
+docstrings: [`webshop/webshop_env.py`](webshop/webshop_env.py) `step()` and
+[`alfworld/alfworld_env.py`](alfworld/alfworld_env.py) `step()`.
 
 `step` returns `({"obs_str": ...}, float(reward), bool(done), info)` with
 `info = {"success": ..., "is_action_valid": ...}` (WebShop also forwards `goal_id` when the

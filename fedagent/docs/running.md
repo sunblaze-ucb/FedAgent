@@ -178,7 +178,7 @@ strip `FEDPROX_MU`, so validation never enables the term. A ready pair is
   its **fixed** shard every round (covering the shard over `T` rounds) while staying distinct
   from other clients.
 
-Three-seed replication is just the same config three times with `--base-seed 42 / 21 / 13`
+Three-seed replication is just the same config three times with `--base-seed 42 / 21 / 84`
 (use distinct `--output-dir` and, for concurrent WebShop runs, `--port-base`).
 
 ## Validation / eval

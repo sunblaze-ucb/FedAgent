@@ -329,6 +329,11 @@ to sequential (FedAvg is order-free; the per-client env seed is `base_seed + rou
 (`run_fed.py:877`), *client-indexed, not order-dependent*). Splitting 4 GPUs → 2+2 changes FSDP
 `world_size` → shard layout (aggregator reads `world_size_of` dynamically; same global batch ⇒ same numerics).
 
+> **⚠️ 2026-07-02 update (§10.3):** at the FINAL stack (cross_round + worker eval + Tier-2), lanes
+> measure a **wash on both envs** — the −35 % below was vs the subprocess *sequential* baseline;
+> once #4 removes the cold-starts, lanes have nothing left to hide. #3 stays the multi-node lever;
+> it is not in the single-node recipe (§10.4).
+
 **GPU-validated on ONE node (2 client × 2 GPU, 1.5B, paper settings) — and it's ~35% faster, not a wash.**
 Two independent verl/Ray/vLLM jobs **coexist** on the 4-GPU node: engines load on disjoint pairs
 (6519 MiB ×4), no Ray-port / GPU / `/dev/shm` collision — isolation is just per-job `CUDA_VISIBLE_DEVICES`
@@ -395,6 +400,10 @@ overlaps it onto spare GPUs. Pure measurement ⇒ **zero numerical risk.**
 | **single 4-GPU node** (default) | **#2** (free, zero-risk) | **#4** (only thing that touches the 88%); **#3 for *small* models** (2×2 = −35% on 1.5B, GPU-validated §Lever #3) | #1 (needs spare GPU); #3 on *large* models (4-GPU scaling ≈2× ⇒ wash) |
 | **≥2 nodes / 8 GPUs** | #2 + **#3** (huge, bit-equivalent) | #1 free on spare alloc; #4 still ultimate GPU-hour win | — |
 
+> **2026-07-02 update:** with the §10 stack in place, the single-node "do first" is the §10.4
+> recipe; single-node #3 lanes are a **wash** there (§10.3). This table's #3-for-small-models
+> advice applies only to the pre-§10, subprocess-baseline world (or to multi-node).
+
 ---
 
 ## 4. Scientific-equivalence summary (the project bar)
@@ -403,7 +412,13 @@ overlaps it onto spare GPUs. Pure measurement ⇒ **zero numerical risk.**
 | #2 env prewarm | none (pure scheduling) | ✅ safe |
 | #1 eval ∥ train | none (measurement) | ✅ safe |
 | #3 parallel clients | none (FedAvg order-free, client-indexed seed) | ✅ safe; single-node 2×2 GPU-validated (−35% on 1.5B) + **two** concurrency bugs fixed: FedAvg rendezvous-port (`--standalone`) and FSDP→vLLM weight-transfer socket (`VERL_RAY_JOB_ID`) — §Lever #3 / §7.7 |
-| #4 persistent trainer | **none measured**: smoke max\|Δ\|≈1e-6, full-loop max\|Δ\|=1.13e-5; high IF resets missed | ✅ validated (§7) incl. full-loop + PPO critic reload; confirm at larger step counts |
+| #4 persistent trainer | **none measured**: smoke max\|Δ\|≈1e-6, full-loop max\|Δ\|=1.13e-5; real-env cross-round-vs-subprocess A/B: WebShop **GRPO actor 9.8e-6**, **PPO actor 1.16e-5** | ✅ validated (§7) incl. full-loop, PPO critic reload + real-env A/Bs (note below); every Tier-2 knob equivalence-gated on the real config (§10) |
+
+> **Reading a PPO critic A/B:** the critic's value head (`score.weight`, shape `(1, hidden)`) is
+> freshly random-initialized per run and not reproduced across arms — the real-env PPO A/B shows
+> backbone ~1e-4 but value-head max\|Δ\| = **5.92e-2**, and that is **harmless** (advantage
+> normalization washes it out of the policy gradient). Don't read a large `score.weight` delta
+> from `compare_fsdp_checkpoints.py` as divergence.
 
 ---
 
@@ -653,10 +668,13 @@ The new `rollout_mode=windowed` default crashed on the stock `agent.yaml`
   federated loop end-to-end (4 steps, FedAvg + merge, `FEDERATED LOOP CLOSED` rc=0, no `AttributeError`).
 
 ### 7.6 Remaining (ranked)
-1. **Larger-step / real-env equivalence A/B** — equivalence is verified at 2 steps on TinyGuess
-   (max\|Δ\|=1.13e-5); confirm at more steps and on a real-env persistent A/B.
-2. **Paper configs:** regenerated to the windowed `response_length=512` budget (176 files, §8.1); a
-   real paper-scale (1.5B) persistent run is the final integration check.
+1. **Larger-step / real-env equivalence A/B — ✅ DONE.** Real-env cross-round vs subprocess on
+   WebShop: GRPO actor max\|Δ\| = **9.8e-6**, PPO actor **1.16e-5** (EQUIVALENT; the PPO critic
+   value-head 5.92e-2 is unreproduced random init, harmless — §4 note). Every Tier-2 knob was
+   additionally equivalence-gated on the real ALFWorld paper config (§10.1).
+2. **Paper configs — ✅ DONE:** regenerated to the windowed `response_length=512` budget (176
+   files, §8.1); the real paper-scale (1.5B) persistent integration runs landed 07-02 (ALFWorld
+   wiring 3719 s, WebShop 2802 s → §10.4 combos 3202/2309 s).
 3. **vLLM sampler-RNG / /dev/shm teardown** at long horizons (benign teardown noise — `DataLoader
    worker killed` / `resource_tracker KeyError` at exit, rc still 0; watch + add
    `aggressive_empty_cache` / `SamplingParams.seed` if it ever bites). *(To quiet the `DataLoader
@@ -702,6 +720,11 @@ single-node fast path; the 1-GPU split is not a default.** The investigation's l
 > first `timing_s` decomposition shows the opposite: WebShop is **GPU-compute-bound** (74 % of a
 > 1-GPU step) and the **per-step** 1-GPU penalty is **2.41×** — the verdict above (don't starve
 > training to 1 GPU) gets *stronger*. It is ALFWorld whose rollout is env-bound (§9).
+
+> **⚠️ 2026-07-02 correction (§10.3/§10.4):** "#3 + worker eval is the recommended single-node
+> fast path" is itself superseded — at the final stack, cross_round + worker eval + Tier-2
+> (§10.4) beats every lane layout, and adding lanes on top measures a wash on both envs. The
+> *don't-starve-training-to-1-GPU* verdict stands.
 
 ---
 
@@ -901,3 +924,103 @@ python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/alfworld/al
 python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/webshop/ws_scale_g4.yaml       # + g1, g1b
 python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/webshop/ws_scale_g4_p64r4.yaml # + g4_p64
 ```
+
+---
+
+## 10. Tier-2 knobs, frontier close-out & the final recipe (2026-07-02/03, GPU-validated)
+
+Digest of the post-Tier-1 work. The full dated reports live on the archive branch:
+[acceleration_tier2_2026-07-02.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_tier2_2026-07-02.md),
+[acceleration_frontier_2026-07-02.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_frontier_2026-07-02.md),
+[acceleration_final_2026-07-03.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_final_2026-07-03.md),
+[acceleration_cross_env.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_cross_env.md);
+raw log-level entries in `fedagent/EXPERIMENTS.md` (2026-07-02/03).
+
+### 10.1 The knobs (all optional, default OFF = byte-identical legacy)
+
+| knob | what it removes | wall effect (real ALFWorld paper config unless noted) | equivalence max\|Δ\| vs OFF |
+|---|---|---|---|
+| `alfworld_manifest_cache` (+ `alfworld_manifest_dir`) | the ~270 s/round game-walk warm | **−18 %** | 9.199e-5 |
+| `service_scope: run` (+ `service_cache_clients`, LRU, default 4) | redundant per-round service restarts (~250 s) | **−16 %** | 9.090e-5 |
+| `final_eval_mode: worker` | the cold final-eval subprocess (~330–580 s) | **−11 %** | 9.241e-5 |
+| `hf_export: final` | per-round FedAvg-merge-to-HF (~260 s) | (measured inside all-four) | 8.825e-6 (TinyGuess: shard-direct-load ≡ merge path) |
+| **all four** | — | **−24 %** | 8.752e-5 |
+| `use_fused_kernels` (`model.fused_kernel_options.impl_backend=triton`) | logprob/entropy memory traffic | WebShop **−6.5 %** (olp −30 %, ref −22 %); ALFWorld wash (+2 %) | 1.116e-5 (TinyGuess full-loop A/B) |
+| `parallel_clients: N` (#3 lanes) | — | **wash on both envs at the 1.5B paper config** (§10.3) | 1.144e-5 (round-2 HF exports, `compare_hf_models.py`) |
+| `one_step_off` (**off-policy** — sign-off tier) | gen hidden under training | steady step −23…−31 %, but the 3-step client round re-pays the pipeline prime → **−10 % realized**; unadopted ADDITIONAL OPTION | n/a (off-policy by design) |
+
+**Measurement bar:** a same-config ALFWorld replicate differs by **max\|Δ\| = 9.293e-5** — the
+GPU-nondeterminism floor sits just under the 1e-4 equivalence bar, and every knob arm above landed
+at or below the floor.
+
+**Composition gates** (enforced at startup, `run_fed.py`): `hf_export: final` requires
+`persistent`/`cross_round` AND worker-or-disabled eval (inline/parallel/shared eval loads the
+aggregated model from a per-round HF that no longer exists); `final_eval_mode: worker` needs
+`cross_round` + `eval_mode: worker` (else warn + fall back to the subprocess final eval);
+`one_step_off` runs on the SUBPROCESS client path only and not with `parallel_clients>1`;
+`prewarm_next_round_services` is redundant under `service_scope: run` (warned, ignored).
+
+**Safety mechanics:** the manifest cache persists the PRE-shuffle game list with an atomic write
+and a `(data_path, task_types)` self-validation key — on any mismatch it degrades to the full walk,
+never to wrong data. `service_scope: run` health-checks a reused fleet before adopting it and
+restarts it when stale; the per-client fleet registry is LRU-capped by `service_cache_clients`.
+
+### 10.2 Two refutations — the within-step config surface is CLOSED
+
+- **`use_dynamic_bsz` made BOTH envs slower** (ALFWorld step 127.6→141.7 s, +11 %; WebShop
+  82.2→88.9 s, +8 %): the GPU term was already FLOP-bound, and shape churn defeats compile/CUDA-graph
+  reuse.
+- **WebShop `webshop_replicas` ≈ wash at the paper config** — the earlier probe's −12 % (§9.1)
+  didn't survive: hot-engine steps (~50 s, gen ~10 s) are ≈3× cheaper than cold single-step probes,
+  so cold-probe arithmetic is systematically pessimistic.
+
+### 10.3 Lanes (#3) at paper scale = wash — supersedes the §Lever #3 / ROI / §7.7 single-node advice
+
+On top of the final stack (cross_round + worker eval + Tier-2), `parallel_clients: 2` measured a
+**wash on both envs** (totals 3136/2255 s vs the combos' 3202/2309 s — within noise): the 1.5B fit
+is GPU-bound, so 2 clients × 2 GPU ≈ sequential 4-GPU, and the 2-GPU hot eval gives back the
+overlap. The −35 % in §Lever #3 was real but measured against the SUBPROCESS sequential baseline —
+once #4 + worker eval remove the cold-starts, lanes have nothing left to hide. Not in the final
+recipe; #3 remains the multi-node scaling lever.
+
+### 10.4 The final recipe + headline numbers
+
+`cross_round: true` + `eval_mode: worker` + `service_scope: run` + `final_eval_mode: worker` +
+`hf_export: final`, **plus** `alfworld_manifest_cache: true` / `alfworld_replicas: 8` (ALFWorld) or
+`use_fused_kernels` (WebShop). Copy it from
+`tools/verl08_migration/accel/alfworld/paper_alf_combo.yaml` /
+`.../webshop/paper_ws_combo.yaml` — the archived reports' `use_persistent_trainer:` /
+`persistent_scope:` keys predate the final flag names (`persistent:` / `cross_round:`) and do not
+exist in today's `run_fed.py`.
+
+| (real paper configs, 2 rounds) | total | steady round | 70-round projection |
+|---|---|---|---|
+| ALFWorld combo (r8 + 4×Tier-2) | **3202 s** vs 3719 wiring (−13.9 %) | **762 s** vs 1125 (−32 %) | **16.7 h** vs 29.3 (−43 %) |
+| WebShop combo (fused + 3×Tier-2) | **2309 s** vs 2802 wiring (−17.6 %) | **402 s** vs 905 | **9.4 h** vs 20.4 (−54 %) |
+
+Three-baseline accounting: subprocess ~41/32 h → wiring 29.3/20.4 h → final **16.7 h / 9.4 h**
+(**×2.5 ALFWorld / ×3.5 WebShop**). At this scale the biggest remaining time term is **eval
+cadence**: one n=500 WebShop eval (~630 s) costs more than a steady training round (402–496 s) —
+choose the eval/`client_end_eval` cadence deliberately. A 1.5B client fit still pays a **~310 s
+cold-start** on the subprocess path; the persistent worker is what removes it.
+
+Frontier residue (audited, deliberately unadopted): FSDP param/optimizer offload untested
+(low-priority at 1.5B); `update_weights_bucket_megabytes=2048` is not a bottleneck; fsdp2 marginal
+at 1.5B; verl-0.8 sign-off tier = one-step-off, rollout-logprob reuse (+IS correction),
+over-sampling (biased — do not use), LoRA/FP8.
+
+### 10.5 Onboarding a NEW environment — the transfer rule
+
+ALFWorld and WebShop turned out to be mirror images (env-bound vs GPU-bound, §9/§9.1), so for a
+third env run a 1-step `timing_s` probe at TWO GPU counts and read the gen term:
+
+- **gen flat across GPU counts ⇒ env-bound** → set `<env>_replicas` (K processes shard the
+  service lock/GIL) until the per-replica serial load drops under the episode critical path
+  (K≈4–8), then scale GPUs;
+- **gen scales with GPUs ⇒ GPU-bound** → more GPUs per client; replicas are a garnish;
+- high eval-engine cold-start ⇒ prefer `eval_mode: worker`/`parallel`, avoid `inline`;
+- never starve clients to 1 GPU on either kind — after an env-side fix the 1-GPU penalty GROWS
+  (ALFWorld 1.79×→2.81×, §9).
+
+Caveat: absolute wall-clock seconds are NOT comparable across envs (val 500 goals vs 140 games,
+15 vs 50 turns) — compare rankings, percentages and mechanisms only.

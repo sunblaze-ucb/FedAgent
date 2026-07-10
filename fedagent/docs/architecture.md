@@ -64,6 +64,8 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 | File | Role |
 |---|---|
 | `agent_loops/gym_text_agent_loop.py` | `GymTextAgentLoop` (`@register("gym_text")`) — verl `AgentLoopBase` subclass that drives one `BaseTextEnv` per row on verl's native async seam (`reset → generate → decode → env.step → …`). Returns one concat `AgentLoopOutput` with a `response_mask` that is 1 on agent tokens, 0 on observation tokens, so PPO/GRPO trains only on actions. The verl-0.8 replacement for verl-agent's `TrajectoryCollector.multi_turn_loop`. |
+| `agent_loops/windowed_agent_loop.py` | `WindowedGymTextAgentLoop` (`@register("gym_text_windowed")`) — the **default** (`rollout_mode: windowed`): re-renders the paper's sliding per-turn window and emits **one training sample per turn** (the fork's faithful shape) instead of one concat sample per episode. |
+| `agent_loops/windowed_manager.py` | `WindowedAgentLoopManager` / `WindowedAgentLoopWorker` — injected by `run_fed`'s `inject_rollout_mode` (pins the manager class on every train/eval cmd) to fan per-turn samples back into verl's batch; also where per-trajectory GRPO grouping (`grpo_traj`, opt-in, non-paper) lives. |
 
 ### `data/` — dataset hook ([README](../data/README.md))
 
