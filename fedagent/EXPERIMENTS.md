@@ -665,3 +665,11 @@ are teardown noise (training completes, rc=0, metrics print after the traceback)
 shared 8-CPU/120G interactive job. Running services from a fresh checkout needs the WebShop
 Lucene index (gitignored artifact): symlinked `search_engine/indexes*` + `resources*` from the
 b1222 working copy — a fresh user builds it per installation.md.
+
+Follow-up (2026-07-10): all 176 `config/paper/**` configs now ship `client_end_eval: true`.
+Rationale: on the original stack the per-client evals were not optional — every client's verl
+run validated at its last local step (`trainer.test_freq=5` + `val_before_train=True` in
+`scripts/verl-agent/{grpo,ppo}/run_*.sh`), which is exactly where the figures' circle marks
+came from. So `true` is the paper protocol; the `run_fed.py` library default stays `false`
+(cheaper for non-figure runs), and a config can opt out per-run. No `parallel_clients` conflict
+(all paper configs run sequential lanes; `parallel_clients>1 + client_end_eval` would raise).

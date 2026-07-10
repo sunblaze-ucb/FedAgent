@@ -192,7 +192,7 @@ no client skew) and scores the aggregated **global** model:
 | `val_env_spec` | the unperturbed val env-spec; `""` → no eval | `""` |
 | `test_freq` | **inert** (client jobs pin `trainer.test_freq=-1`; kept for legacy config name-parity) — the aggregated global model is scored **every round** regardless | `5` |
 | `val_before_train` | also eval the **base** model before round 1 (the round-0 point) | `true` |
-| `client_end_eval` | also eval **each selected client's** post-training model per round → the paper figures' per-client "circle" marks (`client_curve` in the summary); costs +M evals/round | `false` |
+| `client_end_eval` | also eval **each selected client's** post-training model per round → the paper figures' per-client "circle" marks (`client_curve` in the summary); costs +M evals/round. All `config/paper/**` configs ship `true` (paper protocol) | `false` |
 | `val_temperature` | val sampling temperature (`val_kwargs.temperature`) | `0.4` |
 
 The round → success/reward curve is written to `federated_summary.json` (`val_curve`). A

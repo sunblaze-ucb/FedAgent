@@ -23,7 +23,7 @@ total_training_steps: 0                             # 0 => full E epochs/round (
 save_freq: 100000                                   # save only the round's last step
 test_freq: 5                                       # inert (name-parity); the global model is evaled EVERY round
 val_before_train: true
-client_end_eval: false                              # true => record the figures' per-client circle marks (+M evals/round)
+client_end_eval: true                               # paper protocol: the figures' per-client circle marks (+M evals/round); false to skip
 val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 1000

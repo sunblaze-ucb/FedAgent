@@ -526,11 +526,14 @@ Each run writes everything under the config's `output_dir`:
   per-client `val_before_train`(step-0) average — same curve, a fraction of the
   rollout cost. `test_freq: 5` is **inert** on this stack (client jobs pin
   `trainer.test_freq=-1`; it is kept only for name-parity with the legacy
-  configs). The figures' per-client **circle marks** are NOT produced by
-  default: set `client_end_eval: true` (adds `clients_per_round` unperturbed-val
-  evals per round and writes `client_curve` into `federated_summary.json`).
-  Decide **before** launching — per-client checkpoints are cleaned up each
-  round, so circles cannot be recomputed from a finished run. The aggregated
+  configs). The figures' per-client **circle marks** come from
+  `client_end_eval: true`, which every paper config ships with (matching the
+  original stack, where each client's verl run always validated at its last
+  step): it adds `clients_per_round` unperturbed-val evals per round and writes
+  `client_curve` into `federated_summary.json`. If you don't need the circles,
+  set it to `false` **before** launching — per-client checkpoints are cleaned
+  up each round, so circles cannot be recomputed from a finished run. (The
+  library-wide default in `run_fed.py` remains `false`.) The aggregated
   curve lands in `federated_summary.json` (`val_curve`) and the round-`r` eval
   dumps live in `round_<r>/eval/`.
 
