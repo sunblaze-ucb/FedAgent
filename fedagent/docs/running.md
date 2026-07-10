@@ -55,6 +55,7 @@ set in the YAML or via `client_overrides`.
 | `--port-base <p>` | `webshop_base_port` | `8080` | run two WebShop jobs on one node without port clashes |
 | `--fedprox-mu <mu>` | `fedprox_mu` | `0.0` | `>0` enables FedProx (else FedAvg) |
 | `--local-client-id <k>` | `local_client_id` | `-1` | Local baseline: pin client k (no federation) |
+| `--fresh` | `resume` | `True` | disable round-level resume: ignore completed rounds in `--output-dir`, start at round 1 (see [Resume](#resume)) |
 
 > `--port-base` overrides **only** `webshop_base_port`. For ALFWorld, set
 > `alfworld_base_port` (and the val ports `webshop_val_port` / `alfworld_val_port`) in the
@@ -147,12 +148,8 @@ client_overrides:
   - actor_rollout_ref.rollout.gpu_memory_utilization=0.4
 ```
 
-Or as a one-off on the command line (each override is a positional arg after the flags):
-
-```bash
-python -m fedagent.fed.run_fed --config <...> --n-gpus 1 \
-  client_overrides='[actor_rollout_ref.rollout.n=2,actor_rollout_ref.rollout.gpu_memory_utilization=0.4]'
-```
+`client_overrides` is **YAML-only** — `run_fed`'s CLI takes no positional overrides (an
+extra token aborts argparse). To change it for one run, edit the config or a copy of it.
 
 ## FedProx
 
@@ -225,7 +222,8 @@ own `n_gpus_per_node / P` GPU slice (2 clients × 2 GPUs on the 4-GPU recipe):
   `client_end_eval` or `one_step_off`.
 - **Numerically identical to sequential** — FedAvg is order-free and the per-client data
   seed is client-indexed (`base_seed + round·100 + client`), so lane order can't change the
-  result. GPU-validated at 1.5B (HF-level max\|Δ\| = 1.144e-5 vs sequential).
+  result. GPU-validated: HF-level max\|Δ\| = 1.144e-5 vs sequential (TinyGuess equivalence
+  rig); the 1.5B lane runs validated coexistence + wall-clock (archive §Lever #3).
 - **When it pays:** small models, or lanes on separate GPU pools. On one 4-GPU node at the
   1.5B paper config it is **−35 % vs the plain subprocess baseline**, but a **wash on top of
   the recommended acceleration stack** (`cross_round` + worker eval + Tier-2) — see
@@ -352,8 +350,10 @@ Notes: the resumed process's `federated_summary.json` is **complete** — the pr
 rounds' `val_curve` / `client_curve` / `rounds` entries are carried over from the original
 run's summary, and any round the summary is missing (e.g. the original run crashed before
 writing it) is rebuilt from the on-disk `round_<k>/eval/val_samples` dumps, which survive
-checkpoint cleanup (`resumed_from_round` records the boundary). Plotting therefore always
-works off the final summary alone. Under `hf_export: final` there are no per-round HF dirs, so the scan
+checkpoint cleanup; if the resume-anchor round completed but crashed **before its eval** (so
+no dump exists either), the resumed run scores that aggregate itself before continuing
+(`resumed_from_round` records the boundary). Plotting therefore always works off the final
+summary alone. Under `hf_export: final` there are no per-round HF dirs, so the scan
 finds nothing and the run starts fresh — resume is an `every_round`-export feature. Consumed
 FSDP shards are deleted after each merge to keep peak disk to ~one round (toggle with
 `cleanup_checkpoints`; an 8-round run otherwise grew to 367 GB).

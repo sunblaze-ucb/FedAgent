@@ -145,7 +145,7 @@ overlay replaced parquet preprocessing with on-the-fly env enumeration.
 | [`webshop_15_ppo.yaml`](../config/envs/webshop_15_ppo.yaml) | 64 | 15 | WebShop **PPO** train (`n_envs=64` == original PPO train_data_size, paired with `train_batch_size=64`). |
 | [`webshop_15_val.yaml`](../config/envs/webshop_15_val.yaml) | 500 | 15 | WebShop validation: held-out `goals[0:500]` on the full catalog (the whole held-out set; eval sets no `FEDAGENT_BASE_SEED`, so every round scores the same 500 goals). |
 | [`alfworld.yaml`](../config/envs/alfworld.yaml) | 8 | 50 | ALFWorld train (game shards; `max_turns=50` == original `max_steps`). |
-| [`alfworld_val.yaml`](../config/envs/alfworld_val.yaml) | 140 | 50 | ALFWorld validation: `valid_seen` (140, in-distribution). For the full 274 trials + per-task-type breakdown, run `tools/verl08_migration/eval_alfworld_by_tasktype.py` on the final model. |
+| [`alfworld_val.yaml`](../config/envs/alfworld_val.yaml) | 140 | 50 | ALFWorld validation: `valid_seen` (140, in-distribution). For the per-task-type breakdown on this 140-game split, run `tools/verl08_migration/eval_alfworld_by_tasktype.py` (it pins `eval_in_distribution`; the 134-game `valid_unseen` half of the paper's 274 needs a separate pass with `alfworld_val_split: eval_out_of_distribution`). |
 
 ---
 
@@ -282,12 +282,12 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 |---|---|---|---|
 | `env_kind` | str | `tinyguess` | `tinyguess` (in-process), `webshop`, or `alfworld` (remote services). |
 | `webshop_run_service` | path | `envs/webshop/service/run_service.sh` | Launcher for a WebShop service. |
-| `webshop_base_port` | int | `8080` | Client `c`'s service -> `webshop_base_port + c`. |
+| `webshop_base_port` | int | `8080` | Client `c`'s replica `j` -> `webshop_base_port + c*replicas + j` (K=1 → `+ c`). |
 | `webshop_pool_size` | int | `8` | Env pool per WebShop service (must be `>= gen_batch`). |
 | `search_return_n` | int | `200` | `WEBSHOP_SEARCH_RETURN_N`: BM25 top-K. Env-het arms use `200` (engine default `50` drops targets under filtering); non-het baselines keep `50`. |
 | `alfworld_run_service` | path | `envs/alfworld/service/run_service.sh` | Launcher for an ALFWorld service. |
-| `alfworld_base_port` | int | `8200` | Client `c`'s service -> `alfworld_base_port + c`. |
-| `alfworld_pool_size` | int | `4` | TextWorld env pool per ALFWorld service (must be `>= gen_batch`). |
+| `alfworld_base_port` | int | `8200` | Client `c`'s replica `j` -> `alfworld_base_port + c*replicas + j` (K=1 → `+ c`). |
+| `alfworld_pool_size` | int | `4` | TextWorld env pool per **client**, split across its `alfworld_replicas` services (`ceil(pool/K)+2` each); total must be `>= gen_batch`. |
 | `alfworld_train_eval` | str | `train` | ALFWorld game split: `train` / `eval_in_distribution` / `eval_out_of_distribution`. |
 | `alfworld_task_types` | str | `""` | `""` => all 6 types; else comma-sep IDs (1=Pick..6=Pick2) for the eval breakdown. |
 | `service_health_timeout` | int (s) | `900` | Seconds to wait for each service `/health` (pool warmup takes minutes). |
@@ -364,6 +364,8 @@ runtime behavior: `running.md`).
 | `cleanup_checkpoints` | bool | `True` | Delete consumed FSDP shards after each merge (disk hygiene; keeps logs + HF). |
 | `persistent` / `cross_round` | bool | `False` | Lever #4: one trainer/vLLM per round / for the whole run (biggest single-node win). |
 | `eval_mode` | str | `inline` | `inline` \| `parallel` (spare GPUs) \| `shared` \| `worker` (hot-engine eval; needs persistent/cross_round). |
+| `eval_gpus` | int | `2` | `eval_mode: parallel`: how many trailing GPUs the async eval takes. |
+| `eval_gpu_mem_util` | float | `0.3` | `eval_mode: shared`: the eval vLLM's `gpu_memory_utilization`, shrunk to coexist with training. |
 | `final_eval_mode` | str | `subprocess` | `worker` scores model_T on the hot engine before teardown (needs cross_round + worker eval). |
 | `hf_export` | str | `every_round` | `final` skips the per-round merge (shard-direct reload; disables round-level resume anchors). |
 | `service_scope` | str | `round` | `run` keeps per-client env-service fleets warm across rounds (LRU `service_cache_clients`, default 4). |
@@ -470,8 +472,9 @@ base_seed: 42
 n_gpus_per_node: 4
 total_training_steps: 0        # 0 => full E epochs/round (no per-round step cap)
 save_freq: 100000              # save only the round's last step
-test_freq: 5
+test_freq: 5                   # inert (name-parity); the aggregate is evaled every round
 val_before_train: true
+client_end_eval: true          # the figures' per-client circle marks
 val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 100

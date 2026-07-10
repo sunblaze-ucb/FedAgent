@@ -692,3 +692,42 @@ dump-only fallback and dedup):
   `round_<k>/eval/val_samples` dumps, which survive cleanup), so a resumed run's summary is
   complete and the figure never needs pre-resume files. Worker eval mode is excluded: its
   teardown fold-in already rebuilds all rounds from the dumps.
+
+## Final multi-agent audit (2026-07-10, post-restructure)
+
+A 45-agent verification workflow (6 parallel finders -- links/anchors, config-key <-> DEFAULTS
+correspondence both directions + regeneration drift, today's doc edits vs code, untouched docs
+vs code, adversarial review of the week's new code, number provenance -- then one adversarial
+verifier per finding) confirmed 39/39 findings. All fixed except the 7 pre-existing broken
+links/images inside the VENDORED WebShop/ALFWorld engine READMEs (upstream princeton-nlp /
+alfworld artifacts, broken upstream too -- left untouched to keep the vendored trees verbatim).
+Highlights of what was fixed:
+- run_fed.py, two real defects in the week's new code: (1) resume seeded the summary's
+  "rounds" provenance only in non-worker eval modes, but no worker teardown path rebuilds it
+  -- a worker-mode resume (or all-complete rerun) silently dropped pre-resume round records;
+  "rounds" is now seeded in every mode (val/circles stay worker-excluded, the fold-in
+  re-derives those). (2) cross_round + eval_mode=parallel + client_end_eval would OOM every
+  per-client circle eval on the worker-held training GPUs and silently return None -- now a
+  startup composition gate with guidance (use worker/shared eval).
+- resume completeness hole closed: the completion marker lands before the round's eval, so a
+  crash in that window left the anchor round unrecoverable (no summary point, no dump); the
+  resumed run now scores the anchor aggregate itself when its val point is missing.
+- test_freq described as a live cadence in 6 more places (features.md x2, fed/README x2,
+  reproducing.md, extending.md, run_fed.py:740 docstring) -- all now say every-round/inert.
+- grpo_traj was documented (migration.md, architecture.md) as an opt-in estimator; it is NOT
+  implemented (only the traj_uid hook exists) -- rephrased.
+- installation.md's cu13 recovery said --no-deps; the preserved fix script (and the reason it
+  works) is WITH deps -- corrected.
+- running.md's positional client_overrides CLI example does not parse (argparse rejects
+  positionals) -- removed; --fresh added to the flags table ("only these flags exist").
+- stale/incomplete enum + formula comments in run_fed.py (eval_mode missing worker,
+  partition_strategy missing env_disjoint, alfworld_val_split "274" -> 140-game valid_seen,
+  module-docstring seed formula, webshop port formula missing replicas) and the replica-aware
+  port/pool formulas + eval_gpus/eval_gpu_mem_util rows + worked-config client_end_eval line
+  in configuration.md; agent_loops/README + fed/README trees now list the windowed /
+  persistent_* files; envs/README step row reads `action`, not task_score; heterogeneity.md
+  PROJECT_ROOT resolution; extending.md fedavg quote gains --standalone, partition sample
+  updated to `or "uniform"`, ALFWorld val-service wording; eval_alfworld_by_tasktype coverage
+  claims (configuration.md + alfworld_val.yaml) corrected to valid_seen-only; running.md's
+  lanes equivalence number re-attributed to the TinyGuess rig; accel/alfworld README's Tier-2
+  arms row relabeled as the A/B rig (not the real config).

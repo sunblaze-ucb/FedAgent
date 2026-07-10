@@ -233,7 +233,7 @@ hardware / scaling matrix → [running.md](./running.md).
 
 ## 9. Evaluation
 
-The aggregated **global** model is scored each `test_freq` rounds on a shared,
+The aggregated **global** model is scored **every round** on a shared,
 **unperturbed** validation service (full env, held-out split), so every arm is measured
 on the same fixed set. Eval is a verl val-only pass (generate + score, no training, no
 critic) and never aborts the loop — a failed eval logs a warning and continues.
@@ -243,7 +243,7 @@ critic) and never aborts the loop — a failed eval logs a warning and continues
 | Capability | Key | Where | Source |
 |---|---|---|---|
 | Enable eval | `val_env_spec` (`""` → no eval) | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) (`eval_global`) |
-| Eval cadence | `test_freq` (every K rounds + final round) | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
+| Eval cadence | every round (unconditional); `test_freq` is **inert** — kept for legacy config name-parity | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
 | Round-0 baseline | `val_before_train` (also eval the base model before round 1) | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
 | Sampling temp | `val_temperature` (paper = 0.4) | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
 | Shared val service ports | `webshop_val_port`, `alfworld_val_port`, `alfworld_val_split` | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) (`start_val_service`) |

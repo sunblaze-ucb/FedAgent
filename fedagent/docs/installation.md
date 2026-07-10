@@ -85,7 +85,8 @@ git -C /path/to/verl apply /path/to/fedagent/tools/verl08_migration/patches/verl
   the `nvidia/<lib>/lib/` namespace and last-installed wins, so torch ends up
   loading NCCL 2.29 on a CUDA-12.8 driver and FSDP param-broadcast dies with
   `ncclUnhandledCudaError`. Fix: uninstall the cu13 orphans and
-  `--force-reinstall --no-deps` the torch trio (recovery script preserved at
+  `--force-reinstall` the torch trio **with deps** from the cu128 index — the deps are
+  what rewrite the clobbered cu12 `.so`s (recovery script preserved at
   `tools/verl08_migration/archived_diagnostics/_fix_nvidia_stack.sh`).
 - **Pin `numpy==2.2.6`** in this env: sglang pulls numpy 2.4, which breaks vLLM's
   numba (needs ≤2.2).

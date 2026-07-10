@@ -332,7 +332,8 @@ def main() -> None:
                     help="output figure path (.pdf; a matching .png is written too)")
     ap.add_argument("--round-stride", type=int, default=None,
                     help="training epochs per round = x-axis stride between rounds "
-                         "(default: ep-per-cl-N parsed from the run dir name)")
+                         "(default: the summary's epochs_per_round when federated_summary.json "
+                         "is the source, else ep-per-cl-N parsed from the run dir name)")
     ap.add_argument("--percent", action="store_true",
                     help="scale the metric to a percentage (x100)")
     ap.add_argument("--title", default=None, help="figure title (default: run dir name)")

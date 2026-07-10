@@ -160,7 +160,7 @@ Backbones are **HuggingFace model ids** (default `Qwen/Qwen2.5-1.5B-Instruct`) a
 **auto-download** on first run to `~/.cache/huggingface` (set `HF_HOME` to relocate). The main
 table's **`Llama-3.2-3B-Instruct` is gated** (accept its license + `huggingface-cli login`);
 on **offline / air-gapped** clusters, pre-fetch on a login node and pass `--model-path <local
-snapshot>`. See [`fedagent/docs/installation.md`](fedagent/docs/installation.md#models).
+snapshot>`. See [`fedagent/docs/installation.md`](fedagent/docs/installation.md#5-models).
 
 ---
 

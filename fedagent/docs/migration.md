@@ -75,8 +75,10 @@ These were verified during migration audits and fixed where they diverged (see
 - **GRPO advantage estimator = stock verl 0.8 `grpo`.** The paper's fork did **not**
   per-trajectory-dedup its groups: the fork's `seen_pairs` dedup is gated on a flag whose
   default disables it, so group mean/std run over **all per-turn samples** — exactly what
-  stock `grpo` computes. No custom estimator is needed; `grpo_traj` (per-trajectory grouping,
-  see `agent_loops/windowed_manager.py`) is an opt-in, non-paper option.
+  stock `grpo` computes. No custom estimator is needed — and none is shipped:
+  the windowed loop tags each sample with `traj_uid` as the hook for a possible future
+  per-trajectory estimator (`grpo_traj`), but no such estimator is registered; the
+  estimator is stock `grpo`.
 - **Task-heterogeneity partitions the real shuffled `server.goals` at runtime** (not an
   offline reconstruction) — so each client's shard matches the original.
 - **Round-threaded data seed** — `FEDAGENT_BASE_SEED = base_seed + round*100 + client`, and

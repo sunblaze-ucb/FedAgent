@@ -118,7 +118,7 @@ Every method POSTs JSON keyed by `session_id`:
 | --- | --- | --- |
 | `system_prompt()` | *(local; returns the static `WEBSHOP_SYSTEM` / `ALFWORLD_SYSTEM` text)* | — |
 | `reset(seed)` | `/create {session_id}` then `/reset {session_id, seed}` | `obs`; WebShop: `available_actions`, `goal_id`; ALFWorld: `admissible_commands` |
-| `step(action_str)` | `/step {session_id, text, step_id}` | `obs`, `reward`, `done`, `success`, `is_action_valid`; actions as above (WebShop also `task_score`) |
+| `step(action_str)` | `/step {session_id, text, step_id}` | `obs`, `reward`, `done`, `success`, `is_action_valid`, `action` (windowed history); actions as above. (The WebShop response also carries `task_score` — a server-side diagnostic the client ignores.) |
 | `close()` | `/close {session_id}` then closes the client | — |
 
 **Reliability contract (exactly-once against mutable env state).** Under load, a plain

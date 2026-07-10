@@ -10,6 +10,9 @@ round from the aggregated model.
 ```
 fed/
 ├── run_fed.py         # the federated driver (round loop, FedAvg, merge, eval, baselines)
+├── persistent_main.py         # lever-#4 worker entry (persistent/cross_round: one process, many fits)
+├── persistent_task_runner.py  # that worker's fit-per-client runner (init_workers once, reload per client)
+├── persistent_patch.py        # arms reload_client_model via sitecustomize (FEDAGENT_PERSISTENT=1)
 ├── metrics_logger.py  # parse each client's training.log -> json_logs/metrics.json
 ├── __init__.py
 └── README.md          # this file
@@ -92,7 +95,7 @@ validation service (`PARTITION_STRATEGY=""`/`uniform`, held-out val split) so ev
 scored on the same fixed set. `eval_global(...)` runs a verl **val-only** pass
 (`trainer.val_only=true`, `adv_estimator=grpo` regardless of the train algorithm — eval is
 generate-and-score, never a critic, and `FEDPROX_MU` is stripped) on the aggregated global
-model every `test_freq` rounds and on the final round; `val_before_train` also scores the
+model **every round** (`test_freq` is inert — kept for legacy name-parity); `val_before_train` also scores the
 base model as the round-0 point. `summarize_val_dump` reads verl's validation JSONL dump
 into `{n, success_rate, reward_mean}` (mean of `traj_success` / `score`). Eval failures
 log a warning and never abort the run — it is measurement, not the loop. Val sampling uses
@@ -204,7 +207,7 @@ CLI flags override the result.
 | Key | Default | Meaning |
 |---|---|---|
 | `val_env_spec` | `""` | `""` disables eval; else the UNPERTURBED val env-spec to score the global model. |
-| `test_freq` | `5` | Eval the aggregated global model every `K` rounds (plus the final round). |
+| `test_freq` | `5` | **Inert** — the aggregated model is evaled every round regardless (kept for legacy config name-parity). |
 | `val_before_train` | `True` | Also eval the base model before round 1 (the round-0 point). |
 | `val_temperature` | `0.4` | Val sampling temperature. |
 | `webshop_val_port` | `8090` | Shared unperturbed WebShop val service port. |

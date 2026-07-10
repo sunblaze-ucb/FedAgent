@@ -1,16 +1,21 @@
 # `agent_loops/` — multi-turn text rollout on verl 0.8's native agent-loop
 
-FedAgent's rollout seam. A single `verl.experimental.agent_loop.AgentLoopBase`
-subclass, **`GymTextAgentLoop`**, drives a multi-turn text episode of the policy
-against one [`BaseTextEnv`](../envs/base.py) instance per dataset row, and returns
-the whole trajectory as one verl `AgentLoopOutput`. This is a thin overlay: it
+FedAgent's rollout seam. Two `verl.experimental.agent_loop.AgentLoopBase`
+subclasses drive a multi-turn text episode of the policy against one
+[`BaseTextEnv`](../envs/base.py) instance per dataset row: **`GymTextAgentLoop`**
+(concat — the whole trajectory as one verl `AgentLoopOutput`) and
+**`WindowedGymTextAgentLoop`** (the paper's sliding per-turn window, one training
+sample per turn — the **default**: `rollout_mode: windowed`, injected together with
+`WindowedAgentLoopManager`). This is a thin overlay: it
 plugs into verl's **stock** PPO/GRPO trainer and **native** async agent-loop
 rollout — there is no trainer fork (see [`../README.md`](../README.md)).
 
 ```
 fedagent/agent_loops/
 ├── __init__.py                 # package marker
-└── gym_text_agent_loop.py      # GymTextAgentLoop (@register("gym_text"))
+├── gym_text_agent_loop.py      # GymTextAgentLoop (@register("gym_text"))
+├── windowed_agent_loop.py      # WindowedGymTextAgentLoop (@register("gym_text_windowed")) — default
+└── windowed_manager.py         # WindowedAgentLoopManager/Worker (fans per-turn samples into the batch)
 ```
 
 ## What `GymTextAgentLoop` does
@@ -46,6 +51,8 @@ carried on each row to an `AgentLoopBase` `_target_`:
 # fedagent/config/agent.yaml
 - name: gym_text
   _target_: fedagent.agent_loops.gym_text_agent_loop.GymTextAgentLoop
+- name: gym_text_windowed
+  _target_: fedagent.agent_loops.windowed_agent_loop.WindowedGymTextAgentLoop
 ```
 
 The federated runner wires this for both training and the val pass — see

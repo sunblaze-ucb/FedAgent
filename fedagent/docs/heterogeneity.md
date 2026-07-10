@@ -312,8 +312,8 @@ check a particular attribute (price, color, ...) to filter the fakes. Because
 different clients attack different attributes, their optimal policies diverge
 *structurally*. The default `N=2` covers the two reward-validated attacks
 (`v_price`, `v_color`); `N=4` adds `v_size`, `v_price_color`. JSON ships under
-`data/env_heterogeneity/lookalike_data/` (paths resolved against `PROJECT_ROOT`,
-exported by the runner).
+`data/env_heterogeneity/lookalike_data/` (paths resolved via the module's repo-root
+`DEFAULT_PROJECT_ROOT` fallback; a `PROJECT_ROOT` env var can override).
 
 ### Rank Wrapper (Variant 5, rendering)
 

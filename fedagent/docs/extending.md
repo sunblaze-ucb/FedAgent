@@ -13,7 +13,7 @@ python -m fedagent.fed.run_fed --config <yaml>
 
 The driver (`fedagent/fed/run_fed.py`) is **verl-agnostic**: a client is just a
 subprocess (`python -m fedagent.main_ppo_fed`). It trains each selected client
-**sequentially**, FedAvgs the resulting FSDP shards, merges them back to a HuggingFace
+**sequentially** (or concurrently — `parallel_clients`, see running.md), FedAvgs the resulting FSDP shards, merges them back to a HuggingFace
 model, and re-enters the next round from that aggregated model. Because of this split,
 each extension point is isolated to a small number of files:
 
@@ -212,7 +212,7 @@ launches uvicorn. Then in your `run_fed.py` you need a launcher analogous to
 `env_kind: myenv` branch in `run()` that calls it. Set the per-client
 `MYENV_SERVICE_URL` in `run_client` so client *c* talks to the service on
 `base_port + c`. The shared **unperturbed** validation service (one full-env service on
-a separate port, used to score the aggregated global model each `test_freq` rounds) is
+a separate port, used to score the aggregated global model every round) is
 wired the same way in `start_val_service` / `eval_global`.
 
 See [`../envs/README.md`](../envs/README.md) for the full client/service contract and
@@ -319,8 +319,9 @@ Two invariants every strategy honors:
    warmed — so those are computed in `_compute_task_partition()` (called from
    `_lifespan`), not at import. Catalog/variant strategies (order-independent ranges or
    `env_kwargs`) are computed at import time. The unperturbed **validation** service is
-   always launched with `PARTITION_STRATEGY` cleared, so divergence is attributable to
-   the perturbation alone.
+   launched unsharded (WebShop val: `PARTITION_STRATEGY=""`; the ALFWorld val service
+   passes `"uniform"` to the engine over the full val split), so divergence is
+   attributable to the perturbation alone.
 
 3. **Forward the knobs from `run_fed.py`.** Add any new knob as a key in the `DEFAULTS`
    dict of `fedagent/fed/run_fed.py`, then export it as an env var inside the service
@@ -328,7 +329,7 @@ Two invariants every strategy honors:
 
    ```python
    env.update({
-       "PARTITION_STRATEGY": cfg.partition_strategy or "",
+       "PARTITION_STRATEGY": cfg.partition_strategy or "uniform",   # "" is reserved for the val service
        "CLIENT_ID": str(c), "CLIENT_NUM": str(cfg.total_clients),
        "MYHET_KNOB": str(cfg.get("myhet_knob", <default>)),   # <- your new knob
        ...
@@ -424,7 +425,7 @@ driver shells out to it once per round (per component) via `torchrun`:
 ```python
 # fedagent/fed/run_fed.py :: fedavg()
 cmd = [
-    "torchrun", f"--nproc_per_node={ws}", str(AGGREGATOR),
+    "torchrun", "--standalone", f"--nproc_per_node={ws}", str(AGGREGATOR),
     "--phase", "aggregate",
     "--client-actor-dirs", ",".join(str(a) for a in client_dirs),
     "--output-actor-dir", str(agg),

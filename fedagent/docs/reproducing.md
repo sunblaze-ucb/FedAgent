@@ -115,7 +115,8 @@ The federation protocol is baked into the `paper/` configs and matches the paper
 **N = 100** clients (`total_clients`), **M = 2** sampled per round
 (`clients_per_round`), **T = 70** rounds (`total_rounds`), **E = 3** local epochs
 (`epochs_per_round`). Each round trains the selected clients from the previous
-round's merged FedAvg model, re-aggregates, and (every `test_freq` rounds) scores
+round's merged FedAvg model, re-aggregates, and (every round — `test_freq` is inert
+on this stack) scores
 the global model on the shared unperturbed val set.
 
 ---

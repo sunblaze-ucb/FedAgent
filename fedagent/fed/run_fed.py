@@ -15,7 +15,7 @@ Round r:
             actor_rollout_ref.model.path=model_r
             trainer.default_local_dir=round_r/client_c/checkpoints
             trainer.total_epochs=E
-          env  FEDAGENT_BASE_SEED=base_seed+c     # distinct env instances per client
+          env  FEDAGENT_BASE_SEED=base_seed+round*100+c   # round-threaded per-client env seed
         -> round_r/client_c/checkpoints/global_step_K/actor   (FSDP shards, ws=n_gpus)
     FedAvg: torchrun --nproc_per_node=ws tools/.../aggregate_fedavg_fsdp.py
             --client-actor-dirs <c0>,<c1> --output-actor-dir round_r/aggregated/.../actor
@@ -89,7 +89,7 @@ DEFAULTS = {
     # --- env_kind=webshop: per-client remote env services + Catalog-Split heterogeneity ---
     "env_kind": "tinyguess",                # "tinyguess" (in-process) | "webshop" | "alfworld" (remote services)
     "webshop_run_service": str(PKG_DIR / "envs" / "webshop" / "service" / "run_service.sh"),
-    "webshop_base_port": 8080,              # client c's service -> webshop_base_port + c
+    "webshop_base_port": 8080,              # client c's service -> webshop_base_port + c*replicas + j (K=1 -> +c)
     "webshop_pool_size": 8,                 # env pool per service (must be >= gen_batch)
     "search_return_n": 200,                 # WEBSHOP_SEARCH_RETURN_N: BM25 top-K (paper=200; engine default 50 drops targets under env-het filtering)
     # --- env_kind=alfworld: per-client remote ALFWorld services + game-shard heterogeneity ---
@@ -107,7 +107,7 @@ DEFAULTS = {
     "webshop_replicas": 1,
     "alfworld_train_eval": "train",         # game split: train | eval_in_distribution | eval_out_of_distribution
     "alfworld_task_types": "",               # "" => all 6 types; else comma-sep IDs (1=Pick..6=Pick2) for the eval breakdown
-    "partition_strategy": "",               # "" | catalog_split/task_disjoint (env) | preference/coverage/hardness (task) | bm25_field_subset/bm25_reweight/lookalike/rank_wrapper (env variants 2-5)
+    "partition_strategy": "",               # "" | catalog_split/task_disjoint/env_disjoint (env) | preference/coverage/hardness (task) | bm25_field_subset/bm25_reweight/lookalike/rank_wrapper (env variants 2-5)
     "env_div": 0.7,                         # catalog-split heterogeneity strength
     "keep_ratio": 0.7,                      # catalog-split distractor density
     "omega": 0.5,                           # preference (task-het) Dirichlet spread
@@ -164,12 +164,12 @@ DEFAULTS = {
     #             4). Since eval is read-only on a checkpoint, this is bit-equivalent to serial eval.
     #   shared  : eval coexists on the SAME (cross-round-held) GPUs at a reduced gpu_memory_utilization
     #             that fits the leftover VRAM -> no OOM, keeps cross_round's speed (eval still serial).
-    "eval_mode": "inline",                   # inline | parallel | shared
+    "eval_mode": "inline",                   # inline | parallel | shared | worker
     "eval_gpus": 2,                          # parallel: # GPUs eval gets (train gets n_gpus_per_node; sum <= node)
     "eval_gpu_mem_util": 0.3,                # shared: eval vLLM gpu_memory_utilization (fits leftover VRAM)
     "webshop_val_port": 8090,               # shared unperturbed WebShop val service port
     "alfworld_val_port": 8290,              # shared unperturbed ALFWorld val service port
-    "alfworld_val_split": "eval_in_distribution",  # ALFWorld val games (274 in-distribution eval set)
+    "alfworld_val_split": "eval_in_distribution",  # ALFWorld val games (the 140-game valid_seen split; 274 = seen+unseen)
     # --- Tier-2 plumbing knobs (report: docs/acceleration_tier2_2026-07-02.md on the migrate/verl-0.8.0 branch). ALL default OFF ==
     # byte-identical legacy behavior; each is individually equivalence-gated (max|delta|<=1e-4). ---
     "alfworld_manifest_cache": False,        # cache the 8810-game walk (PRE-shuffle manifest; shuffle/
@@ -737,7 +737,7 @@ def val_service_url(cfg) -> str:
 
 def start_val_service(cfg, env_base: dict) -> List[dict]:
     """Start the shared UNPERTURBED validation service (full env, held-out val goal/game split),
-    used to score the aggregated GLOBAL model every test_freq rounds so all arms are measured on
+    used to score the aggregated GLOBAL model EVERY round so all arms are measured on
     the same fixed set. Returns [] when eval is off (val_env_spec unset) or the env is in-process
     (tinyguess). With *_replicas=K>1 starts K identical val services (same split -> same val
     distribution; the client spreads the n_envs sessions across them). Mirrors the per-client
@@ -1585,6 +1585,16 @@ def run(cfg) -> dict:
         with open_dict(cfg):
             cfg.cross_round = False
             cfg.persistent = True
+    # same GPU-holding problem for the per-client circle evals: under cross_round the idle worker
+    # keeps its vLLM KV cache on the TRAINING GPUs, and eval_client always launches there (only the
+    # GLOBAL eval is routed to the disjoint parallel-eval GPUs) -- every circle eval would OOM and
+    # silently return None. worker mode evals circles on the hot engine; shared shrinks its KV pool.
+    if (cfg.get("cross_round", False) and do_eval and cfg.get("client_end_eval", False)
+            and eval_mode == "parallel"):
+        raise ValueError("cross_round + eval_mode=parallel + client_end_eval is not supported: the "
+                         "long-lived worker holds the training GPUs, so the per-client circle evals "
+                         "would OOM there. Use eval_mode=worker (circles on the hot engine), "
+                         "eval_mode=shared, or drop cross_round/client_end_eval.")
     use_persistent = cfg.get("persistent", False) or cfg.get("cross_round", False)
     # --- Tier-2 knob resolution (all default off = legacy) --------------------------------
     hf_export = str(cfg.get("hf_export", "every_round")).lower()
@@ -1723,16 +1733,30 @@ def run(cfg) -> dict:
                         f"round {start_round} from {_actor_hf}"
                         + (f" (critic: {_critic_hf})" if is_ppo else ""))
                 # carry the pre-resume rounds into THIS run's summary so federated_summary.json
-                # stays complete (worker mode skips this: its teardown fold-in rebuilds all
-                # rounds from the on-disk dumps and would duplicate the seeded entries)
+                # stays complete. "rounds" provenance records are seeded in EVERY eval mode (no
+                # teardown path ever rebuilds them); val points / client circles are seeded only
+                # for non-worker modes -- the worker's teardown fold-in re-derives those from the
+                # on-disk dumps and seeding them too would duplicate entries.
+                _pv, _pc, _ph = seed_prior_histories(cfg, start_round)
+                history.extend(_ph)
                 if eval_mode != "worker":
-                    _pv, _pc, _ph = seed_prior_histories(cfg, start_round)
                     val_history.extend(_pv)
                     client_history.extend(_pc)
-                    history.extend(_ph)
                     log(f"RESUME: carried rounds < {start_round} into the summary "
                         f"({len(_pv)} val point(s), {len(_pc)} client circle(s), "
                         f"{len(_ph)} round record(s); resumed_from_round={_k})")
+                    # the completion marker (round_k/aggregated/hf) lands BEFORE round k's eval,
+                    # so a crash in that window leaves round k complete with neither a summary
+                    # point nor a dump: score the resume anchor now so val_curve stays gapless
+                    # (worker mode already re-evals its starting model on the hot engine).
+                    if do_eval and _k not in {int(v["round"]) for v in val_history}:
+                        log(f"RESUME: round {_k} has no val point on disk (crashed before its "
+                            "eval?) -- scoring the resume-anchor aggregate now")
+                        run_eval(current_model, _k)
+                else:
+                    log(f"RESUME: carried {len(_ph)} round record(s) into the summary; worker "
+                        f"teardown re-derives val points/circles from the on-disk dumps "
+                        f"(resumed_from_round={_k})")
 
         # round-0 point: the base model on the unperturbed val set (paper val_before_train)
         if do_eval and cfg.val_before_train and start_round == 1:
