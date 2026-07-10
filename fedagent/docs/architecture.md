@@ -270,4 +270,4 @@ FSDP shards are deleted after each merge (`cleanup_checkpoints`) to bound disk t
 - [configuration.md](./configuration.md) — every config key
 - [reproducing.md](./reproducing.md) — the paper config matrix
 - [migration.md](./migration.md) — what changed from verl-agent 0.3.1, and the fidelity record
-- [migration_report.md](./migration_report.md) — the complete migration engineering report (route decision, the dependency saga, the checkpoint/agent-loop/env-service/windowed deep-dives)
+- [migration_report.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/migration_report.md) (migrate/verl-0.8.0 branch) — the complete migration engineering report (route decision, the dependency saga, the checkpoint/agent-loop/env-service/windowed deep-dives)

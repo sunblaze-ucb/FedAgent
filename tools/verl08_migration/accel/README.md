@@ -2,8 +2,8 @@
 
 Reproducibility artifacts behind the acceleration + ALFWorld workstreams
 ([`fedagent/docs/acceleration.md`](../../../fedagent/docs/acceleration.md),
-[`acceleration_results.md`](../../../fedagent/docs/acceleration_results.md),
-[`alfworld_testing.md`](../../../fedagent/docs/alfworld_testing.md)). These are **one-off experiment
+[`acceleration_results.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_results.md),
+[`alfworld_testing.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/alfworld_testing.md) — both on the migrate/verl-0.8.0 branch). These are **one-off experiment
 scaffolding**, not maintained APIs — kept in-repo (out of the retired, gitignored `_scratch/`) so the
 GPU-validated results stay reproducible.
 
@@ -25,7 +25,7 @@ Each subfolder has its own `README.md` mapping its configs → the result they p
 | subfolder | what | doc |
 |---|---|---|
 | [`webshop/`](./webshop/) | WebShop eval-mode sweep (inline/parallel/shared/worker), cross-round persistence, client-end eval marks, lever-#2 prewarm | acceleration.md §7.4 / §Lever #2 |
-| [`alfworld/`](./alfworld/) | **ALFWorld** eval-mode sweep, GPU-scaling (g1/g2/g4), 2-job concurrency, de-risk smoke | alfworld_testing.md §6 |
+| [`alfworld/`](./alfworld/) | **ALFWorld** eval-mode sweep, GPU-scaling (g1/g2/g4), 2-job concurrency, de-risk smoke | alfworld_testing.md §6 (migrate/verl-0.8.0 branch) |
 | [`client_parallel/`](./client_parallel/) | #3 client-parallel layout (1/2/4-GPU, +worker eval) | acceleration.md §Lever #3 / §7.7 |
 | [`dev/`](./dev/) | persistent-trainer (#4) vs subprocess equivalence, cross-round, PPO critic-reload, TinyGuess/windowed smokes | acceleration.md §7.1 / §7.2 |
 | [`helpers/`](./helpers/) | `standalone_eval.py`, `cmp_hf.py`, `critic_diag.py` | — |

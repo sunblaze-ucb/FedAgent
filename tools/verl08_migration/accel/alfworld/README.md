@@ -1,7 +1,7 @@
 # ALFWorld benchmark configs
 
 The ALFWorld acceleration-economics probes. Full rationale + results:
-[`fedagent/docs/alfworld_testing.md`](../../../../fedagent/docs/alfworld_testing.md). All 1.5B
+[`fedagent/docs/alfworld_testing.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/alfworld_testing.md) (migrate/verl-0.8.0 branch). All 1.5B
 (Qwen2.5-1.5B-Instruct), `response_length=4096`, ALFWorld service in conda env `verl-agent-alfworld`.
 Output → gitignored `runs/`.
 
@@ -21,4 +21,4 @@ durable rerun. Full-task offline per-task-type eval: `tools/verl08_migration/eva
 
 > **Key cross-env finding.** ALFWorld *flips* the WebShop eval-mode ranking (`parallel<worker<inline<shared`):
 > worker overtakes parallel (cross-round cold-start amortization pays off on a heavy eval) and inline
-> becomes slowest (its per-round eval-engine re-spin dominates). See alfworld_testing.md §6.
+> becomes slowest (its per-round eval-engine re-spin dominates). See alfworld_testing.md §6 (migrate/verl-0.8.0 branch).

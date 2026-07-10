@@ -170,7 +170,7 @@ DEFAULTS = {
     "webshop_val_port": 8090,               # shared unperturbed WebShop val service port
     "alfworld_val_port": 8290,              # shared unperturbed ALFWorld val service port
     "alfworld_val_split": "eval_in_distribution",  # ALFWorld val games (274 in-distribution eval set)
-    # --- Tier-2 plumbing knobs (docs/acceleration_tier2_2026-07-02.md). ALL default OFF ==
+    # --- Tier-2 plumbing knobs (report: docs/acceleration_tier2_2026-07-02.md on the migrate/verl-0.8.0 branch). ALL default OFF ==
     # byte-identical legacy behavior; each is individually equivalence-gated (max|delta|<=1e-4). ---
     "alfworld_manifest_cache": False,        # cache the 8810-game walk (PRE-shuffle manifest; shuffle/
                                             #   shard/caps run natively on identical input -> byte-identical)

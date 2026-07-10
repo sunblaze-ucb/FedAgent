@@ -2,7 +2,7 @@
 
 > **Status:** Design + analysis doc. The migration is *functionally* closed (windowed GRPO+PPO and
 > concat federated loops all verified green on GPU); this doc is about **speed**, not correctness.
-> A Chinese translation lives in [acceleration_cn.md](acceleration_cn.md).
+> A Chinese translation (`acceleration_cn.md`) lives on the [`migrate/verl-0.8.0`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs) branch.
 >
 > **TL;DR:**
 > 1. **Why it's slow:** a measured **76% (0.5B, warm cache, this session) → 88% (1.5B smoke)** of
@@ -32,10 +32,10 @@
 
 ## 0. Scope & references
 
-- **➜ Companion docs.** *This* doc is the **analysis & plan**. Also:
-  [acceleration_report.md](acceleration_report.md) — the **complete end-to-end walkthrough** (every lever &
+- **➜ Companion docs** (migrate/verl-0.8.0 branch). *This* doc is the **analysis & plan**. Also:
+  [acceleration_report.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_report.md) — the **complete end-to-end walkthrough** (every lever &
   feature in depth, the investigations + corrections, all results); and
-  [acceleration_results.md](acceleration_results.md) — the **results at a glance** (status table + numbers).
+  [acceleration_results.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_results.md) — the **results at a glance** (status table + numbers).
 - **Repo (overlay):** `/gpfs/projects/b1222/userdata/canyu/kangyu/fedagent`
 - **verl 0.8 source (editable):** `/gpfs/projects/b1222/userdata/canyu/kangyu/others/verl/verl`
 - **Bar:** scientific equivalence with the FedAgent paper (reproduce within 3-seed noise).
@@ -824,7 +824,7 @@ python -m fedagent.fed.run_fed --config tools/verl08_migration/accel/dev/tinygue
 ## 9. Tier-1 — env-service replica sharding (2026-07-01, GPU-validated end-to-end)
 
 > Full standalone report (diagnosis, design decisions, complete data, scorecard, lever genealogy):
-> [acceleration_tier1_report_2026-07-01.md](./acceleration_tier1_report_2026-07-01.md).
+> [acceleration_tier1_report_2026-07-01.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_tier1_report_2026-07-01.md) (migrate/verl-0.8.0 branch).
 
 **The finding that motivated it.** §2.2 measured ALFWorld's `_TW_LOCK` at **86 ms/step** on a
 160-step batch (13.7 s) and filed it as "understood and bounded." At **paper-scale batches that

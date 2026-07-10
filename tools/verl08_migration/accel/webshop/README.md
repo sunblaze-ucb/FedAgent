@@ -1,7 +1,7 @@
 # WebShop benchmark configs
 
 WebShop acceleration experiments (Qwen2.5-1.5B-Instruct, paper settings). Numbers:
-[`acceleration_results.md`](../../../../fedagent/docs/acceleration_results.md);
+[`acceleration_results.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_results.md) (migrate/verl-0.8.0 branch);
 analysis: [`acceleration.md`](../../../../fedagent/docs/acceleration.md). Shared val specs
 `../webshop_val_64.yaml`, `../webshop_val_tiny.yaml` (referenced by absolute path). Output → gitignored.
 

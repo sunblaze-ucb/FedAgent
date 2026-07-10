@@ -141,7 +141,7 @@ are config-parse + code-audited but not yet smoke-run end-to-end; the larger bac
 (Qwen2.5-3B/7B, Llama-3.2-3B) and the full 70-round budget have not been exercised on this
 stack. The GRPO federated path **is** GPU-verified end-to-end on both envs at the real paper
 configs (WebShop; ALFWorld 2026-07-02/03 incl. the 50-turn budget — no OOM/truncation, see
-[acceleration_final_2026-07-03.md](./acceleration_final_2026-07-03.md)).
+[acceleration_final_2026-07-03.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_final_2026-07-03.md) on the migrate/verl-0.8.0 branch).
 
 ## Verification status
 
@@ -159,7 +159,7 @@ configs (WebShop; ALFWorld 2026-07-02/03 incl. the 50-turn budget — no OOM/tru
 
 ## See also
 
-- [migration_report.md](./migration_report.md) — the **complete migration walkthrough**: the route decision,
+- [migration_report.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/migration_report.md) (migrate/verl-0.8.0 branch) — the **complete migration walkthrough**: the route decision,
   the environment-build saga, and the hard problems (checkpoint/agent-loop/env-service/windowed) *in depth*.
   *This* doc is the condensed fidelity record; that one is the full engineering account.
 - [architecture.md](./architecture.md) — how the overlay is built
