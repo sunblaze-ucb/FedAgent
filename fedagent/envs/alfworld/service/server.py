@@ -136,17 +136,13 @@ def _partition_kwargs() -> dict:
     return {}  # uniform / env_disjoint take no extra kwargs
 
 
-# The unified config vocabulary (preference/hardness, shared with WebShop + the federated driver)
-# differs from the names the ALFWorld runtime engine accepts for the SAME partition algorithm:
-# preference == its "category" marginal skew, hardness == its "hardiness" success-std split (a typo
-# kept upstream). _partition_kwargs() above keys on the UNIFIED name so omega/success_std forward
-# correctly; ONLY the strategy name handed to AlfredTWEnv is translated here. uniform/coverage/
-# env_disjoint are identical in both vocabularies and pass through unchanged.
-_ENGINE_STRATEGY_ALIASES = {"preference": "category", "hardness": "hardiness"}
-
-
+# The vendored engine (fedagent/envs/alfworld/engine, sys.path-imported above) dispatches on the
+# same unified vocabulary as the configs: uniform/preference/coverage/hardness/env_disjoint
+# (alfred_tw_env.py raises "Invalid partition strategy" for anything else), so the strategy name
+# passes through untranslated. An interim engine revision used "category"/"hardiness" for the
+# preference/hardness algorithms; that alias map was dropped when the current engine was vendored.
 def _engine_partition_strategy() -> str:
-    return _ENGINE_STRATEGY_ALIASES.get(PARTITION_STRATEGY, PARTITION_STRATEGY)
+    return PARTITION_STRATEGY
 
 
 _pool: asyncio.Queue = None
@@ -217,7 +213,7 @@ def _build_base_env():
         train_eval=TRAIN_EVAL,
         client_id=_CLIENT_ID,
         client_num=_CLIENT_NUM,
-        partition_strategy=_engine_partition_strategy(),   # unified name -> engine name (category/hardiness)
+        partition_strategy=_engine_partition_strategy(),   # unified name, accepted by the vendored engine as-is
         min_games_per_client=MIN_GOALS_PER_CLIENT,
         **pkw,                      # preference(omega)/coverage(size_std)/hardness(success_std,trajectories_file)
     )

@@ -302,11 +302,14 @@ python -m fedagent.fed.run_fed \
 
 ## Resume
 
-联邦在 **round 层面**掌管 resume：用同一个 `--output-dir` 重新运行会从上一个已完成 round 的
-聚合模型继续。每个 client 的 per-run 自动 resume 被禁用（`trainer.resume_mode=disable`），
-这样一个中途崩溃的 in-flight round 永远不会被 FedAvg 进半成品权重。被消耗掉的 FSDP 分片在每次
-merge 后删除，以把峰值磁盘维持在约一轮的量（用 `cleanup_checkpoints` 切换；否则一次 8 轮的 run
-曾涨到 367 GB）。
+目前**还没有自动 resume**：重新运行总是从第 1 轮、base model 开始（round 层面的重跑续训在
+`../EXPERIMENTS.md` 中作为待办 ops 工作跟踪）。runner 保证的是：每个 client 的 per-run 自动
+resume 被禁用（`trainer.resume_mode=disable`），这样一个中途崩溃的 in-flight round 永远不会被
+FedAvg 进半成品权重；且每轮的 client 抽样是确定性的（`base_seed + round - 1`），完整重跑会复现
+同一条联邦轨迹。要手动抢救一个崩溃的长 run，可用 `--model-path <output_dir>/round_<k>/aggregated/hf`
+重启 —— 但注意 client 调度会从第 1 轮的种子重新开始，应视为一次 fork，而非忠实的续跑。被消耗掉
+的 FSDP 分片在每次 merge 后删除，以把峰值磁盘维持在约一轮的量（用 `cleanup_checkpoints` 切换；
+否则一次 8 轮的 run 曾涨到 367 GB）。
 
 ## Outputs
 

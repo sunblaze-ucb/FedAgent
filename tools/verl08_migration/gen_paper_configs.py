@@ -34,8 +34,13 @@ Three migration fidelity fixes are baked in (see fedagent/docs/migration.md):
       prompt truncation at max_turns=50; raise max_model_len if episodes truncate.
 
 NOTE on ppo_mini_batch_size: stock verl-0.8 multiplies it by rollout.n internally
-(ray_trainer.py:1311), so the original's "1 update/rollout-batch" (GRPO 8 prompts x G=8 = 64
-sequences; PPO 64 x G) is reproduced by ppo_mini_batch_size=8 (GRPO) / 64 (PPO) PROMPTS here.
+(ray_trainer.py:1311 actor, :1340 critic), while verl-agent 0.3.1 multiplied by
+actor_rollout_ref.rollout.n == 1 (asserted in its main_ppo.py:168; the G=8 grouping came from
+env.rollout.n, which did NOT scale the minibatch). The original therefore always used a 64-ROW
+global minibatch: GRPO 8 prompts x G=8 = 64 rows -> 1 update/step; PPO 64 prompts x G=8 = 512
+rows -> 8 updates/step of 64 rows each. On verl-0.8 that same 64-row minibatch is
+ppo_mini_batch_size=8 PROMPTS (x rollout.n=8) for BOTH algos — NOT 64 for PPO, which would fuse
+the 512-row batch into a single update (8x fewer/larger steps than the paper runs).
 
 Usage:
     python -m tools.verl08_migration.gen_paper_configs                 # all 176 -> fedagent/config/paper
@@ -151,12 +156,12 @@ def client_overrides(is_ppo, group_size, env_kind):
         prompt, resp, max_model_len = 4096, 512, 4608   # WebShop pages are long (== legacy 4096)
         gpu_mem = "0.5" if is_ppo else "0.6"
     batch = 64 if is_ppo else 8
-    mini = 64 if is_ppo else 8
+    mini = 8   # PROMPTS, both algos: x rollout.n=8 = the original's 64-ROW minibatch (see header NOTE)
     ov = [
         f"data.train_batch_size={batch}",
         f"data.max_prompt_length={prompt}",
         f"data.max_response_length={resp}",
-        f"actor_rollout_ref.actor.ppo_mini_batch_size={mini}",   # PROMPTS; verl-0.8 x rollout.n => full batch = 1 update (== FedAgent)
+        f"actor_rollout_ref.actor.ppo_mini_batch_size={mini}",   # PROMPTS; verl-0.8 x rollout.n=8 => 64-row minibatch (== FedAgent; GRPO 1 update/step, PPO 8)
         f"actor_rollout_ref.rollout.n={group_size}",             # FedAgent group size G (env.rollout.n=8)
         f"actor_rollout_ref.rollout.prompt_length={prompt}",
         f"actor_rollout_ref.rollout.response_length={resp}",

@@ -312,11 +312,16 @@ python -m fedagent.fed.run_fed \
 
 ## Resume
 
-The federation owns resume at the **round level**: re-running the same `--output-dir`
-continues from the last completed round's aggregated model. Each client's per-run
-auto-resume is disabled (`trainer.resume_mode=disable`) so a crashed in-flight round never
-FedAvgs partial weights. Consumed FSDP shards are deleted after each merge to keep peak disk
-to ~one round (toggle with `cleanup_checkpoints`; an 8-round run otherwise grew to 367 GB).
+There is **no automatic resume yet**: a re-run always starts at round 1 from the base model
+(round-level rerun-resume is tracked as pending ops work in `../EXPERIMENTS.md`). What the
+runner does guarantee: each client's per-run auto-resume is disabled
+(`trainer.resume_mode=disable`) so a crashed in-flight round never FedAvgs partial weights,
+and the per-round client schedule is deterministic (`base_seed + round - 1`), so a full
+restart reproduces the same federation trajectory. To salvage a crashed long run manually,
+restart with `--model-path <output_dir>/round_<k>/aggregated/hf` — but note the client
+schedule then re-begins at round 1's seed, so treat that as a fork, not a faithful
+continuation. Consumed FSDP shards are deleted after each merge to keep peak disk to ~one
+round (toggle with `cleanup_checkpoints`; an 8-round run otherwise grew to 367 GB).
 
 ## Outputs
 

@@ -37,7 +37,7 @@ client_overrides:
   - data.train_batch_size=64
   - data.max_prompt_length=2048
   - data.max_response_length=512
-  - actor_rollout_ref.actor.ppo_mini_batch_size=64
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
   - actor_rollout_ref.rollout.n=8
   - actor_rollout_ref.rollout.prompt_length=2048
   - actor_rollout_ref.rollout.response_length=512

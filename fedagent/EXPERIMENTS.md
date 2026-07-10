@@ -584,3 +584,27 @@ Capstone (2026-07-03): the DEFINITIVE self-contained acceleration record written
 (subprocess ~41/32 h -> wiring 29.3/20.4 h -> final 16.7/9.4 h = x2.5 ALFWorld / x3.5
 WebShop), the four bottleneck families, the 8-station journey incl. all dead ends, and the
 measurement discipline (noise floor, paper-config survivorship, steady-vs-cold-probe).
+
+## Final pre-release audit fixes (2026-07-09)
+
+Two defects found by the migration-completeness audit run before removing the `legacy/` archive and
+promoting this branch to `main` (audit = 8-dimension parity sweep + adversarial verification;
+PPO minibatch adjudicated against both trainers' sources):
+
+- **PPO actor `ppo_mini_batch_size` 64 → 8 (all 85 PPO paper configs + generator).** The fork's
+  minibatch multiplier `actor_rollout_ref.rollout.n` was asserted `==1` (its main_ppo.py:168;
+  G=8 grouping came from `env.rollout.n` and never scaled the minibatch), so the original
+  stepped in **64-row global minibatches** — PPO did **8 updates/step** over its 512-row batch
+  (dp_actor.py `batch.split(64)`), GRPO 1. verl 0.8 multiplies mini by `rollout.n=8`
+  (ray_trainer.py:1311), so the shipped 64 fused PPO's step batch into a single 8×-larger
+  update. Corrected to `8` prompts (×8 = the original 64-row minibatch) via
+  `gen_paper_configs.py` + regeneration; docs re-worded (migration.md, both migration reports).
+  The critic was **already faithful** (body `critic.ppo_mini_batch_size=8` ×8 = 64 rows = 8
+  critic updates/step; the fork's critic interpolated actor's 64 × `rollout_n==1` = same 64-row
+  split). No GRPO config changed.
+- **ALFWorld service strategy-name alias removed (unblocks the 8 ALFWorld preference/hardness
+  arms).** `service/server.py` still translated unified `preference/hardness` →
+  `category/hardiness` (an interim engine revision's vocabulary), but the engine vendored on
+  2026-07-02 dispatches on the unified names and raises `Invalid partition strategy` otherwise
+  → those arms crashed at service startup. Names now pass through unchanged (kwargs plumbing
+  was already keyed on the unified names and is untouched).

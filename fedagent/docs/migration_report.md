@@ -198,7 +198,10 @@ truncates at the response cap; windowed stays bounded) — **not** speed.
 Full record: [migration.md](migration.md). The science-critical alignments verified during migration:
 
 - **Algorithm** — GRPO **G=8** (`rollout.n=8`); stock verl multiplies `ppo_mini_batch_size` by `rollout.n`
-  internally, so the original's "1 update/rollout-batch" is `ppo_mini_batch_size=8` (GRPO) / 64 (PPO), **not** 64×8.
+  internally, while the fork's multiplier (`actor_rollout_ref.rollout.n`) was asserted `== 1` → the original always
+  stepped in **64-row minibatches** (GRPO 1 update/step, PPO 8/step over its 512-row batch). Reproduced with
+  `ppo_mini_batch_size=8` for **both** algos (PPO shipped as 64 at first; corrected — 64 fuses the 512-row batch
+  into one 8×-larger update).
 - **Trajectories/step = `train_batch_size × rollout.n`** for PPO *and* GRPO (unconditional in the fork source) →
   original ran GRPO 8×8=64, PPO 64×8=512; **`rollout.n` must stay 8 for PPO** (dropping to 1 is unfaithful).
 - **Sparse reward** `{0,10}` + per-turn `0.1×n_invalid` penalty (moved to the agent-loop; same total/episode).

@@ -7,7 +7,8 @@ per-step metric dict to stdout (captured in each client's training.log) as:
     ... step:<N> - global_seqlen/mean:23379.5 - actor/entropy:1.17 - ... - critic/rewards/mean:0.026 - ...
 
 So we just parse those lines into the SAME schema the FedAgent plots/loaders expect
-(scripts/plotting/plot_training_dynamics.py, core/fed/client_runner._load_metrics_from_json):
+(tools/plotting/plot_training_dynamics.py; originally the verl-agent-0.3.1
+core/fed/client_runner._load_metrics_from_json — see the paper-reproduce branch):
 
     metrics.json = [ {"step": int, "metrics": {"<key>": float, ...}}, ... ]
 

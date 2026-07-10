@@ -51,8 +51,14 @@ These were verified during migration audits and fixed where they diverged (see
 
 - **Algorithm** — GRPO with group size **G = 8** (`adv_estimator=grpo`,
   `actor_rollout_ref.rollout.n=8`). Stock verl 0.8 multiplies `ppo_mini_batch_size` by
-  `rollout.n` internally, so the original's "1 update / rollout-batch" is reproduced with
-  `ppo_mini_batch_size=8` prompts (GRPO) / 64 (PPO) — **not** 64×8.
+  `rollout.n` internally; the fork multiplied by its `actor_rollout_ref.rollout.n`, which
+  was **asserted `== 1`** (its main_ppo.py:168 — grouping came from `env.rollout.n` and
+  never scaled the minibatch). The original therefore always stepped in **64-row global
+  minibatches**: GRPO 1 update/step over its 64-row batch, PPO **8 updates/step** over its
+  512-row batch. On verl 0.8 that same 64-row minibatch is `ppo_mini_batch_size=8` prompts
+  for **both** algos — *not* 64 for PPO, which would fuse the 512-row batch into a single
+  8×-larger update. (The PPO configs originally shipped with 64; corrected to 8, see
+  `../EXPERIMENTS.md`.)
 - **Trajectories/step = `train_batch_size × rollout.n`, for PPO as well as GRPO.** Confirmed
   in the verl-agent source (`agent_system/multi_turn_rollout/rollout_loop.py:448` targets
   `train_batch_size * rollout.n`; `:504` does `gen_batch.repeat(rollout.n)`), both
@@ -115,20 +121,26 @@ rather than the fork's re-rendered template (equivalent information); the invali
 penalty is applied in the agent-loop, not the trainer; goal sampling uses a different (still
 reproducible) RNG, so per-seed trajectories are not bit-identical to 0.3.1.
 
-**GPU-pending verification:** the ALFWorld 50-turn budget (#2/#3) needs an OOM/truncation
-check on the target GPU. PPO (`gae`) critic federation, the ALFWorld service path, and the
-decentralized ablations are config-parse + code-audited but not yet smoke-run end-to-end (the
-GRPO WebShop federated path **is** GPU-verified end-to-end).
+**GPU-pending verification:** PPO (`gae`) critic federation and the decentralized ablations
+are config-parse + code-audited but not yet smoke-run end-to-end; the larger backbones
+(Qwen2.5-3B/7B, Llama-3.2-3B) and the full 70-round budget have not been exercised on this
+stack. The GRPO federated path **is** GPU-verified end-to-end on both envs at the real paper
+configs (WebShop; ALFWorld 2026-07-02/03 incl. the 50-turn budget — no OOM/truncation, see
+[acceleration_final_2026-07-03.md](./acceleration_final_2026-07-03.md)).
 
 ## Verification status
+
+(as of 2026-07-09; the running record is [`../EXPERIMENTS.md`](../EXPERIMENTS.md))
 
 | Path | Status |
 |---|---|
 | TinyGuess (in-process) | GPU-verified end-to-end |
-| **WebShop GRPO federated** | **GPU-verified: full 2-round loop** (train → FedAvg → merge → round 2 → eval) |
-| WebShop PPO (gae critic federation) | config-parses + code-audited; not GPU-smoke-run |
-| ALFWorld (service + max_turns=50) | config-parses + code-audited; **GPU-VERIFY** pending |
+| **WebShop GRPO federated** | **GPU-verified: full multi-round loop** (train → FedAvg → merge → next round → eval), incl. the real paper config |
+| **ALFWorld GRPO federated** (service + max_turns=50) | **GPU-verified: 2-round run on the real paper config** (2026-07-02/03); 50-turn budget OK |
+| WebShop PPO (gae critic federation) | config-parses + code-audited; not GPU-smoke-run — use the 2026-07-09 corrected `ppo_mini_batch_size` configs |
+| ALFWorld PPO | config-parses + code-audited; not GPU-smoke-run |
 | Decentralized ablations | config-parses + code-audited; not GPU-smoke-run |
+| Larger backbones (3B/7B/Llama) / 70-round budget | not exercised on this stack |
 
 ## See also
 

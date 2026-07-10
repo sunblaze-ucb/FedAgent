@@ -198,7 +198,9 @@ windowed 58.5 s/step vs concat 39.8 s；差距来自 **vLLM prefix-cache 被打�
 完整记录：[migration.md](migration.md)。迁移期间验证过的科学关键对齐：
 
 - **算法** —— GRPO **G=8**（`rollout.n=8`）；stock verl 在内部把 `ppo_mini_batch_size` 乘以 `rollout.n`，
-  所以原始的 "1 update/rollout-batch" 是 `ppo_mini_batch_size=8`（GRPO）/ 64（PPO），**而非** 64×8。
+  而 fork 乘的因子（`actor_rollout_ref.rollout.n`）被断言 `== 1` → 原始实现始终以 **64 行 minibatch** 步进
+  （GRPO 每步 1 次更新，PPO 对 512 行批每步 8 次）。两种算法都用 `ppo_mini_batch_size=8` 复现（PPO 最初
+  误发为 64，已修正 —— 64 会把 512 行批融合为单次 8 倍大的更新）。
 - **Trajectories/step = `train_batch_size × rollout.n`**，对 PPO *和* GRPO 都成立（在 fork 源码中无条件）→
   原始的 GRPO 跑 8×8=64，PPO 跑 64×8=512；**`rollout.n` 对 PPO 必须保持 8**（降到 1 是不忠实的）。
 - **稀疏 reward** `{0,10}` + per-turn 的 `0.1×n_invalid` 惩罚（移到了 agent-loop；每 episode 总量相同）。

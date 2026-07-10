@@ -51,8 +51,12 @@ agent-loop，取代 fork 的进程内 rollout）—— 对 policy 而言是等�
 
 - **算法** —— GRPO，group size **G = 8**（`adv_estimator=grpo`，
   `actor_rollout_ref.rollout.n=8`）。Stock verl 0.8 在内部把 `ppo_mini_batch_size` 乘以
-  `rollout.n`，所以原版的“1 update / rollout-batch”用
-  `ppo_mini_batch_size=8` prompts（GRPO）/ 64（PPO）复现 —— **不是** 64×8。
+  `rollout.n`；而 fork 乘的是它自己的 `actor_rollout_ref.rollout.n`，且该值被**断言 `== 1`**
+  （其 main_ppo.py:168 —— 分组来自 `env.rollout.n`，从不缩放 minibatch）。因此原版始终以
+  **64 行全局 minibatch** 步进：GRPO 对 64 行批做 1 次更新/步，PPO 对 512 行批做 **8 次
+  更新/步**。在 verl 0.8 上复现同样的 64 行 minibatch，**两种算法都用**
+  `ppo_mini_batch_size=8` prompts —— *不是* PPO 用 64（那会把 512 行批融合成单次 8 倍大的
+  更新）。（PPO 配置最初误发为 64；已修正为 8，见 `../EXPERIMENTS.md`。）
 - **每步 Trajectories = `train_batch_size × rollout.n`，PPO 与 GRPO 都如此。** 已在
   verl-agent 源码中确认（`agent_system/multi_turn_rollout/rollout_loop.py:448` 目标为
   `train_batch_size * rollout.n`；`:504` 执行 `gen_batch.repeat(rollout.n)`），两者都是
@@ -114,20 +118,25 @@ baseline 用 T=70 × E=3（=210 epochs）**，而非原版的 1 round × 210 epo
 agent-loop 里，而非 trainer；goal sampling 用了一个不同（仍可复现）的 RNG，所以
 每个 seed 的 trajectory 与 0.3.1 不是逐 bit 一致。
 
-**GPU 待验证：** ALFWorld 50-turn 预算（#2/#3）需要在目标 GPU 上做一次 OOM/截断
-检查。PPO（`gae`）critic 联邦、ALFWorld 服务路径，以及
-decentralized ablation 都已 config-parse + 代码审计，但尚未端到端 smoke-run（
-GRPO WebShop 联邦路径**已**端到端 GPU 验证）。
+**GPU 待验证：** PPO（`gae`）critic 联邦与 decentralized ablation 已
+config-parse + 代码审计，但尚未端到端 smoke-run；更大的 backbone（Qwen2.5-3B/7B、
+Llama-3.2-3B）与完整 70 轮预算尚未在本栈上运行。GRPO 联邦路径在两个环境上都**已**
+以真实论文配置端到端 GPU 验证（WebShop；ALFWorld 2026-07-02/03，含 50-turn 预算 ——
+无 OOM/截断，见 [acceleration_final_2026-07-03.md](./acceleration_final_2026-07-03.md)）。
 
 ## 验证状态
+
+（截至 2026-07-09；运行记录见 [`../EXPERIMENTS.md`](../EXPERIMENTS.md)）
 
 | 路径 | 状态 |
 |---|---|
 | TinyGuess（进程内） | 已端到端 GPU 验证 |
-| **WebShop GRPO 联邦** | **GPU 验证：完整 2 轮循环**（train → FedAvg → merge → round 2 → eval） |
-| WebShop PPO（gae critic 联邦） | config-parse + 代码审计；未做 GPU-smoke-run |
-| ALFWorld（service + max_turns=50） | config-parse + 代码审计；**GPU-VERIFY** 待定 |
+| **WebShop GRPO 联邦** | **GPU 验证：完整多轮循环**（train → FedAvg → merge → 下一轮 → eval），含真实论文配置 |
+| **ALFWorld GRPO 联邦**（service + max_turns=50） | **GPU 验证：真实论文配置 2 轮运行**（2026-07-02/03）；50-turn 预算无 OOM/截断 |
+| WebShop PPO（gae critic 联邦） | config-parse + 代码审计；未做 GPU-smoke-run —— 请用 2026-07-09 修正后的 `ppo_mini_batch_size` 配置 |
+| ALFWorld PPO | config-parse + 代码审计；未做 GPU-smoke-run |
 | Decentralized ablation | config-parse + 代码审计；未做 GPU-smoke-run |
+| 更大 backbone（3B/7B/Llama）/ 70 轮全预算 | 尚未在本栈上运行 |
 
 ## 另见
 
