@@ -325,9 +325,12 @@ state, so a resumed run reproduces exactly the schedule an uninterrupted run wou
 Each client's per-run verl auto-resume stays disabled (`trainer.resume_mode=disable`) so a
 crashed in-flight round never FedAvgs partial weights.
 
-Notes: the resumed process's `federated_summary.json` covers rounds ≥ the resume point
-(`resumed_from_round` records the boundary; earlier rounds' val points live in the original
-run's logs/eval dumps). Under `hf_export: final` there are no per-round HF dirs, so the scan
+Notes: the resumed process's `federated_summary.json` is **complete** — the pre-resume
+rounds' `val_curve` / `client_curve` / `rounds` entries are carried over from the original
+run's summary, and any round the summary is missing (e.g. the original run crashed before
+writing it) is rebuilt from the on-disk `round_<k>/eval/val_samples` dumps, which survive
+checkpoint cleanup (`resumed_from_round` records the boundary). Plotting therefore always
+works off the final summary alone. Under `hf_export: final` there are no per-round HF dirs, so the scan
 finds nothing and the run starts fresh — resume is an `every_round`-export feature. Consumed
 FSDP shards are deleted after each merge to keep peak disk to ~one round (toggle with
 `cleanup_checkpoints`; an 8-round run otherwise grew to 367 GB).

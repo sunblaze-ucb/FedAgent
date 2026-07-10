@@ -533,7 +533,13 @@ Each run writes everything under the config's `output_dir`:
   `client_curve` into `federated_summary.json`. If you don't need the circles,
   set it to `false` **before** launching — per-client checkpoints are cleaned
   up each round, so circles cannot be recomputed from a finished run. (The
-  library-wide default in `run_fed.py` remains `false`.) The aggregated
+  library-wide default in `run_fed.py` remains `false`.) Render the figures with
+  `tools/plotting/plot_training_dynamics.py <run_dir> [--with-clients]`: on this
+  stack it auto-reads `federated_summary.json` (`val_curve` red line +
+  `client_curve` circles, x-stride = `epochs_per_round`) and stays
+  resume-safe — a resumed run's summary carries the pre-resume rounds. The
+  legacy per-client `json_logs` mode (`--client-logs`) still covers
+  paper-reproduce-branch run dirs. The aggregated
   curve lands in `federated_summary.json` (`val_curve`) and the round-`r` eval
   dumps live in `round_<r>/eval/`.
 

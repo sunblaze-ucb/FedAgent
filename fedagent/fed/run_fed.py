@@ -289,6 +289,51 @@ def find_resume_round(cfg, is_ppo: bool):
     return 0, None, None
 
 
+def seed_prior_histories(cfg, start_round: int):
+    """RESUME: rebuild the pre-resume rounds (< start_round) of the summary's val_curve /
+    client_curve / rounds so a resumed run's federated_summary.json is COMPLETE (the paper
+    figures plot straight from it). Source of truth, in order: the original run's
+    federated_summary.json (overwritten at the end of this run), then the on-disk
+    round_<k>/eval/val_samples dumps for any round the summary is missing (e.g. the original
+    run crashed before writing its summary; the dumps survive cleanup_round_checkpoints).
+    Not used under eval_mode=worker, whose teardown fold-in already rebuilds ALL rounds from
+    the dumps. Returns (val_points, client_circles, round_records)."""
+    out = Path(cfg.output_dir)
+    prior: dict = {}
+    f = out / "federated_summary.json"
+    if f.is_file():
+        try:
+            prior = json.loads(f.read_text())
+        except Exception as e:
+            log(f"[warn] RESUME: unreadable prior federated_summary.json ({e}); "
+                "rebuilding pre-resume val points from the eval dumps only")
+    val = [v for v in prior.get("val_curve", []) if int(v.get("round", -1)) < start_round]
+    circles = [c for c in prior.get("client_curve", []) if int(c.get("round", -1)) < start_round]
+    rounds_hist = [h for h in prior.get("rounds", []) if int(h.get("round", -1)) < start_round]
+    have = {int(v["round"]) for v in val}
+    for k in range(0, start_round):
+        if k in have:
+            continue
+        m = summarize_val_dump(out / f"round_{k}" / "eval" / "val_samples")
+        if m:
+            val.append({"round": k, "model": "base" if k == 0 else "aggregated", **m})
+    have_c = {(int(c["round"]), int(c["client"])) for c in circles}
+    for k in range(1, start_round):
+        for cd in sorted((out / f"round_{k}").glob("client_*/eval/val_samples")):
+            try:
+                c = int(cd.parent.parent.name.split("_")[1])
+            except (IndexError, ValueError):
+                continue
+            if (k, c) in have_c:
+                continue
+            m = summarize_val_dump(cd)
+            if m:
+                circles.append({"round": k, "client": c, **m})
+    val.sort(key=lambda v: int(v["round"]))
+    circles.sort(key=lambda c: (int(c["round"]), int(c["client"])))
+    return val, circles, rounds_hist
+
+
 def world_size_of(actor_dir: Path) -> int:
     """world_size of the saved shards (== aggregator nproc): fsdp_config.json, else filename."""
     cfg = actor_dir / "fsdp_config.json"
@@ -1677,9 +1722,17 @@ def run(cfg) -> dict:
                     log(f"RESUME: round {_k} complete in {cfg.output_dir} -> continuing at "
                         f"round {start_round} from {_actor_hf}"
                         + (f" (critic: {_critic_hf})" if is_ppo else ""))
-                    log("RESUME: the round-0 base eval + earlier rounds' val points were recorded "
-                        "by the original run; this run's federated_summary.json covers rounds "
-                        f">= {start_round} (resumed_from_round={_k})")
+                # carry the pre-resume rounds into THIS run's summary so federated_summary.json
+                # stays complete (worker mode skips this: its teardown fold-in rebuilds all
+                # rounds from the on-disk dumps and would duplicate the seeded entries)
+                if eval_mode != "worker":
+                    _pv, _pc, _ph = seed_prior_histories(cfg, start_round)
+                    val_history.extend(_pv)
+                    client_history.extend(_pc)
+                    history.extend(_ph)
+                    log(f"RESUME: carried rounds < {start_round} into the summary "
+                        f"({len(_pv)} val point(s), {len(_pc)} client circle(s), "
+                        f"{len(_ph)} round record(s); resumed_from_round={_k})")
 
         # round-0 point: the base model on the unperturbed val set (paper val_before_train)
         if do_eval and cfg.val_before_train and start_round == 1:

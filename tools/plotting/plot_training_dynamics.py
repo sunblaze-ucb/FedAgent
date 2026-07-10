@@ -12,23 +12,36 @@ an ``ep-per-cl-3`` run over 70 rounds spans 0..210. Two modes:
                      global point (visualizes client heterogeneity)
 
 The plotted values are the **raw logged numbers** — no padding to a fixed
-horizon, no interpolation, and no smoothing/nudging is applied. Each round's
-aggregated value is the mean across the participating clients of the metric at
-local step 0, i.e. the pre-local-training evaluation of the global model
-*entering* that round (the FedAvg-aggregated model from the previous round).
-Each client's end-of-round value is its metric at its last logged local step.
+horizon, no interpolation, and no smoothing/nudging is applied.
 
-Expected layout (written by the federated runner):
+Two data sources, auto-detected:
 
-    <experiment_dir>/round_<N>/client_<C>/json_logs/metrics.json
+* ``<experiment_dir>/federated_summary.json`` (the verl-0.8 stack; preferred when
+  present). The aggregated red line comes from ``val_curve`` — ONE central eval of
+  each round's aggregated model on the shared unperturbed val service, round 0
+  being the base model (``val_before_train``). The circles come from
+  ``client_curve`` (``client_end_eval: true``): each selected client's
+  post-training model on the same val service, drawn at the round's end boundary.
+  ``val_curve``'s round-k entry is the model *entering* round k+1, so it sits at
+  epoch ``k*stride`` — the same x placement as the legacy source below. The
+  metric maps onto the summary keys (val/success_rate -> success_rate,
+  val/reward_mean or reward -> reward_mean) and the stride defaults to the
+  summary's ``epochs_per_round``. On this stack clients never validate locally,
+  so the legacy source below has no val metrics — the summary is the figure's
+  single source of truth (complete across resumes; see running.md § Resume).
 
-where metrics.json is a list of {"step": int, "metrics": {<name>: float, ...}}.
+* ``round_<N>/client_<C>/json_logs/metrics.json`` (legacy verl-agent-0.3.1 runs,
+  paper-reproduce branch; forced with ``--client-logs``), a list of
+  {"step": int, "metrics": {<name>: float, ...}}. Each round's aggregated value
+  is the mean across the participating clients of the metric at local step 0,
+  i.e. the pre-local-training evaluation of the global model *entering* that
+  round; each client's circle is its metric at its last logged local step.
 
 Usage:
 
     python tools/plotting/plot_training_dynamics.py <experiment_dir> \\
         [--metric val/success_rate] [--with-clients] [--out FIG.pdf] \\
-        [--round-stride N] [--percent] [--title STR]
+        [--round-stride N] [--percent] [--title STR] [--client-logs]
 
 Run it once without and once with --with-clients to get both figures.
 """
@@ -127,6 +140,41 @@ def aggregated_curve(data: Experiment, metric: str) -> List[Tuple[int, float]]:
     return pairs
 
 
+_SUMMARY_METRIC = {
+    "val/success_rate": "success_rate", "success_rate": "success_rate",
+    "val/reward_mean": "reward_mean", "reward_mean": "reward_mean", "reward": "reward_mean",
+}
+
+
+def load_summary_curves(folder: Path, metric: str):
+    """Aggregated curve + client circles from a run's federated_summary.json (verl-0.8 stack).
+
+    Returns (agg, circles, stride): agg = [(entering_round, value), ...] — the val_curve
+    round-k entry (the aggregate produced by round k; k=0 = base) is the model ENTERING
+    round k+1, keeping the x placement identical to the client-log path; circles =
+    {round: [(client, value), ...]} from client_curve (client_end_eval); stride = the run's
+    epochs_per_round, or None if absent.
+    """
+    with open(Path(folder) / "federated_summary.json", "r", encoding="utf-8") as f:
+        summary = json.load(f)
+    key = _SUMMARY_METRIC.get(metric)
+    if key is None:
+        raise ValueError(
+            f"metric '{metric}' is not in federated_summary.json — choose from "
+            f"{sorted(set(_SUMMARY_METRIC))}, or pass --client-logs for a training metric")
+    by_round: Dict[int, float] = {}
+    for v in summary.get("val_curve", []):
+        if v.get(key) is not None:
+            by_round[int(v["round"]) + 1] = float(v[key])   # last entry wins on a duplicate
+    agg = sorted(by_round.items())
+    circles: Dict[int, List[Tuple[int, float]]] = {}
+    for c in summary.get("client_curve", []):
+        if c.get(key) is not None:
+            circles.setdefault(int(c["round"]), []).append((int(c["client"]), float(c[key])))
+    stride = int(summary.get("epochs_per_round") or 0)
+    return agg, circles, (stride if stride > 0 else None)
+
+
 def _last_metric_step(client_data: List[StepData], metric: str) -> Optional[Tuple[int, float]]:
     """The (step, value) at the client's largest local step that logs `metric`."""
     best: Optional[Tuple[int, float]] = None
@@ -148,14 +196,36 @@ def plot_training_dynamics(
     round_stride: Optional[int] = None,
     as_percent: bool = False,
     title: Optional[str] = None,
+    from_summary: Optional[bool] = None,
 ) -> str:
-    """Render the aggregated training-dynamics figure and save .pdf + .png."""
-    data = load_experiment(Path(folder))
-    agg = aggregated_curve(data, metric)
-    if not agg:
-        raise ValueError(f"no step-0 values for metric '{metric}' in {folder}")
+    """Render the aggregated training-dynamics figure and save .pdf + .png.
 
-    stride = round_stride if round_stride is not None else infer_round_stride(folder, data)
+    from_summary: True = read federated_summary.json, False = read the per-client
+    json_logs, None (default) = auto: the summary when the file exists."""
+    folder_p = Path(folder)
+    if from_summary is None:
+        from_summary = (folder_p / "federated_summary.json").is_file()
+    data: Optional[Experiment] = None
+    summary_circles: Dict[int, List[Tuple[int, float]]] = {}
+    stride_hint: Optional[int] = None
+    if from_summary:
+        agg, summary_circles, stride_hint = load_summary_curves(folder_p, metric)
+        if not agg:
+            raise ValueError(
+                f"no '{metric}' points in {folder_p / 'federated_summary.json'} "
+                "(the run needs do_eval; round 0 needs val_before_train)")
+    else:
+        data = load_experiment(folder_p)
+        agg = aggregated_curve(data, metric)
+        if not agg:
+            raise ValueError(f"no step-0 values for metric '{metric}' in {folder}")
+
+    if round_stride is not None:
+        stride = round_stride
+    elif stride_hint is not None:
+        stride = stride_hint
+    else:
+        stride = infer_round_stride(folder, data)
     scale = 100.0 if as_percent else 1.0
     fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -166,29 +236,49 @@ def plot_training_dynamics(
     agg_xy = {r: ((r - 1) * stride, v) for r, v in agg}
 
     if with_clients:
-        clients = sorted({int(c.split("_")[1]) for rd in data.values() for c in rd})
+        if from_summary:
+            clients = sorted({c for lst in summary_circles.values() for c, _ in lst})
+        else:
+            clients = sorted({int(c.split("_")[1]) for rd in data.values() for c in rd})
         palette = plt.cm.tab20(np.linspace(0, 1, max(len(clients), 1)))
         cmap = {c: palette[i % len(palette)] for i, c in enumerate(clients)}
 
-        for round_name in sorted(data, key=_round_index):
-            r = _round_index(round_name)
-            if r not in agg_xy:
-                continue
-            x_agg, y_agg = agg_xy[r]
-            for cname, cdata in sorted(data[round_name].items()):
-                last = _last_metric_step(cdata, metric)
-                if last is None or last[0] == 0:
-                    continue  # nothing logged after the shared step-0 point
-                step, y_client = last
-                c = int(cname.split("_")[1])
-                ax.plot(
-                    [x_agg, x_agg + step], [y_agg * scale, y_client * scale],
-                    color=cmap[c], linewidth=2.0, alpha=0.45, zorder=1,
-                )
-                ax.plot(
-                    [x_agg + step], [y_client * scale], marker="o", markersize=6,
-                    linestyle="None", color=cmap[c], alpha=0.7, zorder=2,
-                )
+        if from_summary:
+            # client_end_eval circles: the client's post-training model at the round's END
+            # boundary (a full ep-per-cl epochs after its entering point)
+            for r in sorted(summary_circles):
+                if r not in agg_xy:
+                    continue
+                x_agg, y_agg = agg_xy[r]
+                for c, y_client in sorted(summary_circles[r]):
+                    ax.plot(
+                        [x_agg, x_agg + stride], [y_agg * scale, y_client * scale],
+                        color=cmap[c], linewidth=2.0, alpha=0.45, zorder=1,
+                    )
+                    ax.plot(
+                        [x_agg + stride], [y_client * scale], marker="o", markersize=6,
+                        linestyle="None", color=cmap[c], alpha=0.7, zorder=2,
+                    )
+        else:
+            for round_name in sorted(data, key=_round_index):
+                r = _round_index(round_name)
+                if r not in agg_xy:
+                    continue
+                x_agg, y_agg = agg_xy[r]
+                for cname, cdata in sorted(data[round_name].items()):
+                    last = _last_metric_step(cdata, metric)
+                    if last is None or last[0] == 0:
+                        continue  # nothing logged after the shared step-0 point
+                    step, y_client = last
+                    c = int(cname.split("_")[1])
+                    ax.plot(
+                        [x_agg, x_agg + step], [y_agg * scale, y_client * scale],
+                        color=cmap[c], linewidth=2.0, alpha=0.45, zorder=1,
+                    )
+                    ax.plot(
+                        [x_agg + step], [y_client * scale], marker="o", markersize=6,
+                        linestyle="None", color=cmap[c], alpha=0.7, zorder=2,
+                    )
         for r in sorted(agg_xy)[1:]:  # round boundaries
             ax.axvline(agg_xy[r][0], color="gray", linestyle="--",
                        alpha=0.35, linewidth=1.0, zorder=0)
@@ -217,7 +307,8 @@ def plot_training_dynamics(
     fig.savefig(out.with_suffix(".png"), dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"[plot] {Path(folder).name}: {len(agg)} rounds, metric={metric}, "
-          f"with_clients={with_clients} -> {out}")
+          f"with_clients={with_clients}, "
+          f"source={'federated_summary.json' if from_summary else 'client json_logs'} -> {out}")
     return str(out)
 
 
@@ -227,8 +318,12 @@ def main() -> None:
     )
     ap.add_argument(
         "experiment_dir",
-        help="run directory containing round_*/client_*/json_logs/metrics.json",
+        help="run directory: federated_summary.json (verl-0.8 stack, auto-detected) "
+             "or round_*/client_*/json_logs/metrics.json (legacy)",
     )
+    ap.add_argument("--client-logs", action="store_true",
+                    help="force the legacy per-client json_logs source even when "
+                         "federated_summary.json exists (e.g. to plot a training metric)")
     ap.add_argument("--metric", default="val/success_rate",
                     help="metric key to plot (default: val/success_rate)")
     ap.add_argument("--with-clients", action="store_true",
@@ -246,6 +341,7 @@ def main() -> None:
         args.experiment_dir, args.metric,
         with_clients=args.with_clients, out_path=args.out,
         round_stride=args.round_stride, as_percent=args.percent, title=args.title,
+        from_summary=False if args.client_logs else None,
     )
 
 

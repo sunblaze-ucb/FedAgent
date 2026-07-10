@@ -673,3 +673,22 @@ run validated at its last local step (`trainer.test_freq=5` + `val_before_train=
 came from. So `true` is the paper protocol; the `run_fed.py` library default stays `false`
 (cheaper for non-figure runs), and a config can opt out per-run. No `parallel_clients` conflict
 (all paper configs run sequential lanes; `parallel_clients>1 + client_end_eval` would raise).
+
+Follow-up 2 (2026-07-10): figure-plotting parity for the new stack.
+`tools/plotting/plot_training_dynamics.py` could not plot a verl-0.8 run: it read
+`val/success_rate` from `round_*/client_*/json_logs/metrics.json` at client step 0 (red line)
+and the last local step (circles), but on this stack clients never validate (client jobs pin
+`trainer.val_before_train=false`, `test_freq=-1`) -- those keys never appear. The figure data
+lives in `federated_summary.json` (`val_curve` from the per-round central eval, `client_curve`
+from `client_end_eval`). Two changes, both verified by a 21-check fixture suite (summary mode,
+legacy-mode regression, x alignment 0/3/6/9, `--client-logs` forcing, resume seeding incl. the
+dump-only fallback and dedup):
+- the plot script auto-detects `federated_summary.json` and renders the same figure from it
+  (val_curve round k = the model entering round k+1 -> epoch k*stride, stride from
+  `epochs_per_round`; circles at the round-end boundary); `--client-logs` keeps the legacy
+  source for paper-reproduce-branch runs.
+- `run_fed.py` resume now seeds the pre-resume rounds' `val_curve`/`client_curve`/`rounds`
+  into the new summary (from the prior summary, else from the on-disk
+  `round_<k>/eval/val_samples` dumps, which survive cleanup), so a resumed run's summary is
+  complete and the figure never needs pre-resume files. Worker eval mode is excluded: its
+  teardown fold-in already rebuilds all rounds from the dumps.
