@@ -51,8 +51,9 @@ but worst-case non-robust to environment-level heterogeneity. See
 
 > **The maintained code lives in [`fedagent/`](fedagent/README.md)** — this README and the
 > [`fedagent/docs/`](fedagent/docs/README.md) suite document it. The original
-> verl-agent-0.3.1 implementation is archived under [`legacy/`](legacy/README.md) for
-> reference; what changed and why is in [`fedagent/docs/migration.md`](fedagent/docs/migration.md).
+> verl-agent-0.3.1 implementation is preserved on the
+> [`paper-reproduce-verl-agent`](https://github.com/sunblaze-ucb/FedAgent/tree/paper-reproduce-verl-agent)
+> branch; what changed and why is in [`fedagent/docs/migration.md`](fedagent/docs/migration.md).
 
 ---
 
@@ -102,7 +103,7 @@ fedagent/                      ← the maintained verl-0.8 overlay (start here)
 sitecustomize.py               repo-root FedProx hook (auto-imported on PYTHONPATH)
 tools/verl08_migration/        FedAvg aggregator, paper-config generator, hardness-traj generator, helpers
 data/env_heterogeneity/        shipped env-level heterogeneity data (holdout / lookalike sets)
-legacy/                        the original verl-agent-0.3.1 artifact (archived; do not run)
+tools/plotting/                training-dynamics figure script (reads round_*/client_*/json_logs)
 LICENSE · NOTICE · CITATION.cff
 ```
 

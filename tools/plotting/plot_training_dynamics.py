@@ -26,7 +26,7 @@ where metrics.json is a list of {"step": int, "metrics": {<name>: float, ...}}.
 
 Usage:
 
-    python scripts/plotting/plot_training_dynamics.py <experiment_dir> \\
+    python tools/plotting/plot_training_dynamics.py <experiment_dir> \\
         [--metric val/success_rate] [--with-clients] [--out FIG.pdf] \\
         [--round-stride N] [--percent] [--title STR]
 

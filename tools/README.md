@@ -14,5 +14,9 @@ Migration + operations tooling for the verl-0.8 FedAgent overlay.
 
 The original verl-agent-0.3.1 tooling (`run_federated.py`, `resolve_paths.py`,
 `generate_uniform_configs.py`, and the `aggregation/`, `env_heterogeneity/`,
-`heterogeneity_test/`, `monitor/` toolboxes) has been archived to
-[`../legacy/tools/`](../legacy/tools/).
+`heterogeneity_test/`, `monitor/` toolboxes) is preserved on the
+`paper-reproduce-verl-agent` branch (`tools/` there).
+
+[`plotting/`](plotting/) holds `plot_training_dynamics.py`, the training-dynamics figure
+script; it reads the `round_*/client_*/json_logs/metrics.json` files every `run_fed` run
+emits (same schema as the original runner).

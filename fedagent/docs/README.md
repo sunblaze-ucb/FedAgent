@@ -42,5 +42,5 @@ Each `fedagent/` subpackage has its own README with code-level detail:
 
 These docs describe the **verl-0.8 overlay** (the live system, under `fedagent/`). The repo's
 top-level [`README.md`](../../README.md) is the landing page for this system; the *original*
-verl-agent-0.3.1 artifact is archived under [`legacy/`](../../legacy/README.md) as historical
-reference. See [migration.md](./migration.md) for the relationship.
+verl-agent-0.3.1 artifact is preserved on the `paper-reproduce-verl-agent` branch as
+historical reference. See [migration.md](./migration.md) for the relationship.

@@ -16,7 +16,7 @@ base、一份 agent-loop registry，以及 per-episode 的 env spec。本页是*
 
 > **没有 legacy schema。** 这是 verl-0.8 的 runner。原始 FedAgent 那套嵌套的
 > `federated:` / `verl:` / `data_preprocess:` block 已经没有了 —— 那套 schema 只存在于
-> 归档的 `legacy/docs/` 里，**这里没有任何东西**会读它。一份 FedAgent 配置是一个
+> `paper-reproduce-verl-agent` 分支上，**这里没有任何东西**会读它。一份 FedAgent 配置是一个
 > **扁平**的 key/value 文件，其 key 即 `run_fed.py` 的 `DEFAULTS`；per-client 的 verl 旋钮
 > 通过 `client_overrides` 传入（见 [§ client_overrides](#client_overrides-and-adv_estimator)）。
 

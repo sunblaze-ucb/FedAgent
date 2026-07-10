@@ -42,5 +42,5 @@
 
 这些文档描述的是 **verl-0.8 overlay**（活跃的线上系统，位于 `fedagent/` 下）。仓库的
 顶层 [`README.md`](../../README.md) 是这套系统的着陆页；*最初的*
-verl-agent-0.3.1 工件作为历史参考归档在 [`legacy/`](../../legacy/README.md) 下。
+verl-agent-0.3.1 工件作为历史参考保存在 `paper-reproduce-verl-agent` 分支上。
 两者的关系见 [migration.md](./migration.md)。

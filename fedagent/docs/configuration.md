@@ -16,8 +16,8 @@ See the package overview in [`../README.md`](../README.md), the folder map in
 [`./reproducing.md`](./reproducing.md).
 
 > **No legacy schema.** This is the verl-0.8 runner. The original FedAgent's nested
-> `federated:` / `verl:` / `data_preprocess:` blocks are gone — that schema lives only in
-> the archived `legacy/docs/` and is **not** read by anything here. A FedAgent config is a
+> `federated:` / `verl:` / `data_preprocess:` blocks are gone — that schema lives only on
+> the `paper-reproduce-verl-agent` branch and is **not** read by anything here. A FedAgent config is a
 > **flat** key/value file whose keys are `run_fed.py`'s `DEFAULTS`; per-client verl knobs
 > are passed through `client_overrides` (see [§ client_overrides](#client_overrides-and-adv_estimator)).
 

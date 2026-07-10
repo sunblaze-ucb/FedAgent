@@ -1,5 +1,6 @@
 # ALFWorld env-spec for PPO. n_envs=64 == the original ALFWorld PPO train_data_size
-# (legacy/config/uniform/.../main/ppo/fed_alfworld_ppo_*.yaml:117). GRPO uses alfworld.yaml
+# (original config tree, preserved on the paper-reproduce-verl-agent branch:
+# config/uniform/.../main/ppo/fed_alfworld_ppo_*.yaml:117). GRPO uses alfworld.yaml
 # (n_envs=8 == the original GRPO train_data_size:106); this mirrors the WebShop split
 # (webshop_15.yaml n_envs=8 for GRPO / webshop_15_ppo.yaml n_envs=64 for PPO). Required because
 # the AgenticDataset emits exactly n_envs train rows: with PPO's train_batch_size=64 and
