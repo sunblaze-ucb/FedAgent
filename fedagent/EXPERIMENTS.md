@@ -646,3 +646,22 @@ surfaced three more items, all fixed:
   gates correctly — noted in-code). Known limitations kept as roadmap items: no round-level
   rerun-resume (running.md corrected accordingly), no in-run Ray/GPU crash hygiene between
   clients, summary written at run end only.
+
+## Post-fix verification on a single H100 (2026-07-10, qgpu3021)
+
+All three audit fixes + the new resume feature exercised on the promoted `main`:
+
+| Test | Result |
+|---|---|
+| WebShop service, `PARTITION_STRATEGY=uniform` client 5/100 (CPU) | ✅ `runtime \|goal_idxs\|=100` (6410-goal train pool -> base 64 -> extended to min 100), pool warmed |
+| ALFWorld service, `preference` omega=0.99 client 0/100 (CPU) | ✅ engine dispatches on the unified name (would have crashed `Invalid partition strategy: category` pre-fix): Dirichlet partition -> 100/3553 games, warmed |
+| ALFWorld service, `hardness` success_std=256 + shipped labels, client 3/100 (CPU) | ✅ Beta-partition path OK, labels loaded, 100/3553 games, warmed |
+| TinyGuess federated 2cl x 2rd, `--n-gpus 1` (fresh) | ✅ LOOP CLOSED, rc=0 (round 2 from round-1 aggregate) |
+| Rerun same `--output-dir` with `--rounds 3` | ✅ `RESUME: round 2 complete -> continuing at round 3 from round_2/aggregated/hf`; LOOP CLOSED, rc=0 |
+| Rerun again (all complete) | ✅ `RESUME: all 3 rounds already complete -- skipping training`; summary has `resumed_from_round: 3`, `final_model=round_3/aggregated/hf` |
+
+Notes: recurring `RuntimeError: DataLoader worker ... killed` tracebacks in the Ray client logs
+are teardown noise (training completes, rc=0, metrics print after the traceback) under the
+shared 8-CPU/120G interactive job. Running services from a fresh checkout needs the WebShop
+Lucene index (gitignored artifact): symlinked `search_engine/indexes*` + `resources*` from the
+b1222 working copy — a fresh user builds it per installation.md.
