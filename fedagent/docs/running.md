@@ -313,16 +313,24 @@ python -m fedagent.fed.run_fed \
 
 ## Resume
 
-There is **no automatic resume yet**: a re-run always starts at round 1 from the base model
-(round-level rerun-resume is tracked as pending ops work in `../EXPERIMENTS.md`). What the
-runner does guarantee: each client's per-run auto-resume is disabled
-(`trainer.resume_mode=disable`) so a crashed in-flight round never FedAvgs partial weights,
-and the per-round client schedule is deterministic (`base_seed + round - 1`), so a full
-restart reproduces the same federation trajectory. To salvage a crashed long run manually,
-restart with `--model-path <output_dir>/round_<k>/aggregated/hf` — but note the client
-schedule then re-begins at round 1's seed, so treat that as a fork, not a faithful
-continuation. Consumed FSDP shards are deleted after each merge to keep peak disk to ~one
-round (toggle with `cleanup_checkpoints`; an 8-round run otherwise grew to 367 GB).
+Re-running the same `--output-dir` **continues at the round after the last completed one**
+(default `resume: true`; pass `--fresh` or set `resume: false` to start over at round 1).
+Completion is detected from the artifacts themselves: `round_k/aggregated/hf` (plus
+`critic_hf` for PPO — a round with an actor but no merged critic counts as incomplete) is
+written only after a successful all-clients round + FedAvg + merge and survives checkpoint
+cleanup, so a crash mid-round never resumes from partial state. The continuation is faithful
+by construction: client selection (`base_seed + round − 1`) and the env data seed
+(`base_seed + round·100 + client`) are threaded by the **round number**, not orchestrator
+state, so a resumed run reproduces exactly the schedule an uninterrupted run would have had.
+Each client's per-run verl auto-resume stays disabled (`trainer.resume_mode=disable`) so a
+crashed in-flight round never FedAvgs partial weights.
+
+Notes: the resumed process's `federated_summary.json` covers rounds ≥ the resume point
+(`resumed_from_round` records the boundary; earlier rounds' val points live in the original
+run's logs/eval dumps). Under `hf_export: final` there are no per-round HF dirs, so the scan
+finds nothing and the run starts fresh — resume is an `every_round`-export feature. Consumed
+FSDP shards are deleted after each merge to keep peak disk to ~one round (toggle with
+`cleanup_checkpoints`; an 8-round run otherwise grew to 367 GB).
 
 ## Outputs
 

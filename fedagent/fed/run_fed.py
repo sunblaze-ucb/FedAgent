@@ -123,6 +123,9 @@ DEFAULTS = {
     "prewarm_next_round_services": False,
     "fedprox_mu": 0.0,                       # >0 => FedProx proximal term (else FedAvg)
     "cleanup_checkpoints": True,             # delete consumed FSDP shards after each merge (disk hygiene)
+    "resume": True,                          # rerun with the same --output-dir => scan for the highest
+                                             #   completed round k (round_k/aggregated/hf, + critic_hf for
+                                             #   PPO) and continue at k+1; false / --fresh => round 1
     # lever #4 (docs/acceleration.md §7): train a ROUND's clients in ONE persistent process
     # (init_workers once, fit-per-client w/ in-process reset) instead of a subprocess per client.
     # GPU-validated equivalent (max|Δ|~1e-6) + ~37% faster on a smoke. IN-PROCESS envs only
@@ -252,6 +255,38 @@ def critic_dir_for(actor_dir: Optional[Path]) -> Optional[Path]:
     if critic.is_dir() and list(critic.glob("model_world_size_*_rank_*.pt")):
         return critic
     return None
+
+
+def _valid_hf_dir(d: Path) -> bool:
+    """A complete merged HF model dir -- the same bar merge_to_hf enforces after a merge
+    (config.json + at least one weight file), so a half-written dir from a crash mid-merge
+    never passes."""
+    return d.is_dir() and (d / "config.json").is_file() and bool(
+        list(d.glob("*.safetensors")) + list(d.glob("*.bin")))
+
+
+def find_resume_round(cfg, is_ppo: bool):
+    """Highest completed round k in output_dir, as (k, actor_hf, critic_hf) -- or (0, None, None).
+
+    round_k/aggregated/hf is written only AFTER a successful all-clients round + FedAvg + merge,
+    and it survives cleanup_round_checkpoints -- so its presence IS the round-completion marker.
+    For PPO the round is complete only if the aggregated critic (critic_hf) merged too; a round
+    with an actor but no critic is treated as incomplete and the scan falls through to the
+    previous round. Restarting at k+1 is faithful by construction: client selection
+    (base_seed + r - 1) and the env data seed (base_seed + r*100 + client) are threaded by the
+    ROUND NUMBER, not by orchestrator state, so the continued run reproduces the exact schedule
+    an uninterrupted run would have had. (Under hf_export=final no per-round hf exists, so the
+    scan finds nothing and the run starts fresh -- resume is an every_round-export feature.)"""
+    for k in range(int(cfg.total_rounds), 0, -1):
+        agg = Path(cfg.output_dir) / f"round_{k}" / "aggregated"
+        actor_hf = agg / "hf"
+        if not _valid_hf_dir(actor_hf):
+            continue
+        critic_hf = agg / "critic_hf"
+        if is_ppo and not _valid_hf_dir(critic_hf):
+            continue
+        return k, actor_hf, (critic_hf if is_ppo else None)
+    return 0, None, None
 
 
 def world_size_of(actor_dir: Path) -> int:
@@ -1625,11 +1660,32 @@ def run(cfg) -> dict:
         # mirroring the original's critic.model.path=<base>; thereafter the aggregated critic.
         current_critic = base_model if is_ppo else None
 
+        # round-level resume: rerunning the same --output-dir continues at the round after the
+        # last completed one (see find_resume_round for why this is faithful). --fresh disables.
+        start_round = 1
+        if cfg.get("resume", True):
+            _k, _actor_hf, _critic_hf = find_resume_round(cfg, is_ppo)
+            if _k > 0:
+                current_model = str(_actor_hf)
+                if is_ppo:
+                    current_critic = str(_critic_hf)
+                start_round = _k + 1
+                if _k >= int(cfg.total_rounds):
+                    log(f"RESUME: all {cfg.total_rounds} rounds already complete in "
+                        f"{cfg.output_dir} -- skipping training, proceeding to summary/final-eval")
+                else:
+                    log(f"RESUME: round {_k} complete in {cfg.output_dir} -> continuing at "
+                        f"round {start_round} from {_actor_hf}"
+                        + (f" (critic: {_critic_hf})" if is_ppo else ""))
+                    log("RESUME: the round-0 base eval + earlier rounds' val points were recorded "
+                        "by the original run; this run's federated_summary.json covers rounds "
+                        f">= {start_round} (resumed_from_round={_k})")
+
         # round-0 point: the base model on the unperturbed val set (paper val_before_train)
-        if do_eval and cfg.val_before_train:
+        if do_eval and cfg.val_before_train and start_round == 1:
             run_eval(base_model, 0)
 
-        for r in range(1, cfg.total_rounds + 1):
+        for r in range(start_round, cfg.total_rounds + 1):
             selected = select_clients(r, cfg.total_clients, cfg.clients_per_round, cfg.base_seed,
                                       local_client_id=lid)
             banner(f"ROUND {r}/{cfg.total_rounds}  |  clients={selected}  |  "
@@ -1861,6 +1917,7 @@ def run(cfg) -> dict:
         **({"local_client_id": lid} if mode == "local" else {}),
         "partition_strategy": cfg.partition_strategy or "none",
         "base_model": base_model,
+        **({"resumed_from_round": start_round - 1} if start_round > 1 else {}),
         "final_model": current_model,
         **({"final_critic": current_critic} if is_ppo else {}),
         **({"val_curve": val_history} if do_eval else {}),
@@ -1905,6 +1962,8 @@ def load_cfg(args) -> "OmegaConf":
         cfg.fedprox_mu = args.fedprox_mu
     if getattr(args, "local_client_id", None) is not None:
         cfg.local_client_id = args.local_client_id
+    if getattr(args, "fresh", False):
+        cfg.resume = False
     # resolve package-relative paths (so configs can use e.g. config/envs/webshop.yaml)
     for key in ("env_spec", "val_env_spec", "custom_cls_path", "agent_config_path",
                 "webshop_run_service", "alfworld_run_service", "trajectories_file"):
@@ -1935,6 +1994,8 @@ def main():
     ap.add_argument("--fedprox-mu", type=float, default=None, help=">0 enables the FedProx proximal term")
     ap.add_argument("--local-client-id", type=int, default=None,
                     help="Local baseline: train only this client of --clients (no federation)")
+    ap.add_argument("--fresh", action="store_true",
+                    help="ignore completed rounds in --output-dir and start at round 1 (default: resume)")
     args = ap.parse_args()
 
     cfg = load_cfg(args)

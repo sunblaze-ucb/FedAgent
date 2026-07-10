@@ -303,14 +303,20 @@ python -m fedagent.fed.run_fed \
 
 ## Resume
 
-目前**还没有自动 resume**：重新运行总是从第 1 轮、base model 开始（round 层面的重跑续训在
-`../EXPERIMENTS.md` 中作为待办 ops 工作跟踪）。runner 保证的是：每个 client 的 per-run 自动
-resume 被禁用（`trainer.resume_mode=disable`），这样一个中途崩溃的 in-flight round 永远不会被
-FedAvg 进半成品权重；且每轮的 client 抽样是确定性的（`base_seed + round - 1`），完整重跑会复现
-同一条联邦轨迹。要手动抢救一个崩溃的长 run，可用 `--model-path <output_dir>/round_<k>/aggregated/hf`
-重启 —— 但注意 client 调度会从第 1 轮的种子重新开始，应视为一次 fork，而非忠实的续跑。被消耗掉
-的 FSDP 分片在每次 merge 后删除，以把峰值磁盘维持在约一轮的量（用 `cleanup_checkpoints` 切换；
-否则一次 8 轮的 run 曾涨到 367 GB）。
+用同一个 `--output-dir` 重新运行会**从最后一个已完成轮次的下一轮继续**（默认 `resume: true`；
+传 `--fresh` 或设 `resume: false` 则从第 1 轮重来）。完成与否直接由产物判定：
+`round_k/aggregated/hf`（PPO 还要求 `critic_hf` —— 只有 actor 没有合并 critic 的轮次按未完成
+处理）只在"全部 client 成功 + FedAvg + merge"之后才写出，且不会被 checkpoint 清理删掉，所以
+轮中崩溃绝不会从半成品状态续训。续训在构造上就是忠实的：client 选择（`base_seed + round − 1`）
+和 env 数据种子（`base_seed + round·100 + client`）都由**轮号**播种、不依赖 orchestrator 状态，
+续跑复现的调度与一次不中断的运行完全一致。每个 client 的 per-run verl 自动 resume 仍保持禁用
+（`trainer.resume_mode=disable`），轮中崩溃永远不会把半成品权重 FedAvg 进去。
+
+注意：续跑进程的 `federated_summary.json` 只覆盖续跑起点之后的轮次（`resumed_from_round` 记录
+边界；更早轮次的 val 点在原 run 的日志/eval dump 里）。`hf_export: final` 模式下没有每轮 HF
+目录，扫描找不到锚点会从头开始 —— resume 是 `every_round` 导出模式的特性。被消耗掉的 FSDP
+分片在每次 merge 后删除，以把峰值磁盘维持在约一轮的量（用 `cleanup_checkpoints` 切换；否则
+一次 8 轮的 run 曾涨到 367 GB）。
 
 ## Outputs
 

@@ -139,8 +139,7 @@ def _partition_kwargs() -> dict:
 # The vendored engine (fedagent/envs/alfworld/engine, sys.path-imported above) dispatches on the
 # same unified vocabulary as the configs: uniform/preference/coverage/hardness/env_disjoint
 # (alfred_tw_env.py raises "Invalid partition strategy" for anything else), so the strategy name
-# passes through untranslated. An interim engine revision used "category"/"hardiness" for the
-# preference/hardness algorithms; that alias map was dropped when the current engine was vendored.
+# passes through untranslated.
 def _engine_partition_strategy() -> str:
     return PARTITION_STRATEGY
 

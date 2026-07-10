@@ -19,6 +19,13 @@
 
 ## Updates
 
+- **[Jul 2026]** FedAgent is now **fully migrated to stock [verl](https://github.com/volcengine/verl) 0.8**
+  and no longer depends on verl-agent: the trainer imports verl as a library (no fork) and the
+  federation logic lives in the thin [`fedagent/`](fedagent/README.md) overlay. The paper's
+  original implementation — built on **verl-agent** (verl 0.3.1) — is preserved unchanged on the
+  [`paper-reproduce-verl-agent`](https://github.com/sunblaze-ucb/FedAgent/tree/paper-reproduce-verl-agent)
+  branch; what changed and the fidelity record are in
+  [`fedagent/docs/migration.md`](fedagent/docs/migration.md).
 - **[Jun 2026]** Initial release of the FedAgent library, federated PPO/GRPO
   trainer, two-level heterogeneity suite, and full WebShop + ALFWorld reproduction.
 - **[Jun 2026]** Paper online: **[Is Decentralized LLM Agent RL Robust to
