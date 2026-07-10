@@ -201,6 +201,7 @@ DEFAULTS):
 | — | `total_training_steps` | per-client-round step cap (`> 0` for smokes; `<= 0` → full `E` epochs) |
 | — | `save_freq` | checkpoint cadence within a client round |
 | — | `wait_between_clients` | seconds to let Ray/GPU release between clients |
+| — | `parallel_clients` | `1` = **sequential** clients within a round (default); `P>1` trains the round's clients **concurrently**, each on a `1/P` GPU slice — numerically identical (FedAvg is order-free, data seeds are client-indexed); needs `cross_round` + worker/off eval. See running.md § Sequential vs parallel clients |
 | — | `cleanup_checkpoints` | delete consumed FSDP shards after each merge (keeps HF + logs) |
 
 Paper config filenames encode the protocol

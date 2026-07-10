@@ -84,8 +84,10 @@ but worst-case non-robust to environment-level heterogeneity. See
   service so their conflicting dependencies stay isolated from the trainer.
 - **FSDP** sharding (single-GPU to 4-GPU), W&B-free (metrics go to JSON / console).
 
-Within a round, clients are trained **sequentially** (one subprocess per client, then
-FedAvg); the loop is verl-agnostic and resumable. Extension points for new datasets,
+Within a round, clients train **sequentially by default** (one subprocess per client, then
+FedAvg) or **concurrently** with `parallel_clients: P` (each client on its own GPU slice —
+numerically identical: FedAvg is order-free and data seeds are client-indexed); the loop is
+verl-agnostic and resumable. Extension points for new datasets,
 environments, heterogeneity strategies, and aggregation rules are documented in
 [`fedagent/docs/extending.md`](fedagent/docs/extending.md); the capability→config→source map
 is in [`fedagent/docs/features.md`](fedagent/docs/features.md).

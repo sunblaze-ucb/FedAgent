@@ -15,10 +15,12 @@ handful of CLI flags override the most-swapped keys (seed, ports, rounds, FedPro
 python -m fedagent.fed.run_fed --config fedagent/config/<name>.yaml
 ```
 
-> **Single node, sequential clients.** This runner is **single-node** — `n_gpus_per_node`
-> is the FSDP world size on one box; there is **no multi-node (`nnodes`) wiring** in
-> `run_fed.py`. Within a round the selected clients train **one after another** (the driver
-> loops `for c in selected:` and waits for each subprocess before the next). See
+> **Single node.** This runner is **single-node** — `n_gpus_per_node` is the FSDP world
+> size on one box; there is **no multi-node (`nnodes`) wiring** in `run_fed.py`. Within a
+> round the selected clients train **sequentially by default** (the driver loops
+> `for c in selected:` and waits for each subprocess before the next); set
+> `parallel_clients: P` to train them **concurrently** on disjoint GPU slices — see
+> [Sequential vs parallel clients](#sequential-vs-parallel-clients) and
 > [Honest scope](#honest-scope) before planning for parallelism or multiple nodes.
 
 ## Basics
@@ -65,7 +67,7 @@ The mode is selected by the config, not a flag. `run_fed.py` derives it as: `loc
 
 | Mode | How to select (YAML / flag) | What happens | Services launched |
 |---|---|---|---|
-| **Federated** (default) | `total_clients: N>1`, `local_client_id: -1` | each round samples `clients_per_round` clients, trains each **sequentially**, then FedAvg → merge → next round starts from the merged model | lazily, per round: one per **selected** client only (the round's sample), torn down after the round; the val service (if eval on) is always-on |
+| **Federated** (default) | `total_clients: N>1`, `local_client_id: -1` | each round samples `clients_per_round` clients, trains each (**sequentially** by default; concurrently with `parallel_clients`), then FedAvg → merge → next round starts from the merged model | lazily, per round: one per **selected** client only (the round's sample), torn down after the round; the val service (if eval on) is always-on |
 | **Centralized** | `total_clients: 1` (and `clients_per_round: 1`, `partition_strategy: ""`) | one model on the pooled (unpartitioned) data; FedAvg of a single client is the identity, so the loop is just `total_rounds × epochs_per_round` of continued training | one (client 0, full env) |
 | **Local** | `local_client_id: k ≥ 0` (with `total_clients: N`) | the paper's "Local Agent Training": pin client `k`'s slice of the N-way partition, train it alone every round, no federation | only the one pinned client `k` |
 
@@ -212,12 +214,33 @@ For ALFWorld, set `alfworld_base_port` in each YAML (no CLI flag). Remember both
 the node's GPUs — with the 4-GPU recipe, two full runs will not both fit; concurrency is for
 small/offloaded runs or different GPU slices.
 
+## Sequential vs parallel clients
+
+Within a round the driver defaults to **sequential** client training. Set
+`parallel_clients: P` to train the round's `M` clients **concurrently**, each lane on its
+own `n_gpus_per_node / P` GPU slice (2 clients × 2 GPUs on the 4-GPU recipe):
+
+- **Requirements** (enforced at startup): `cross_round: true`; eval disabled or
+  `eval_mode: worker`; `P` must divide `n_gpus_per_node`; not combinable with
+  `client_end_eval` or `one_step_off`.
+- **Numerically identical to sequential** — FedAvg is order-free and the per-client data
+  seed is client-indexed (`base_seed + round·100 + client`), so lane order can't change the
+  result. GPU-validated at 1.5B (HF-level max\|Δ\| = 1.144e-5 vs sequential).
+- **When it pays:** small models, or lanes on separate GPU pools. On one 4-GPU node at the
+  1.5B paper config it is **−35 % vs the plain subprocess baseline**, but a **wash on top of
+  the recommended acceleration stack** (`cross_round` + worker eval + Tier-2) — see
+  `acceleration.md` §Lever #3 / §10.3 and prefer the §10.4 recipe there.
+- Per-lane isolation (env-service ports, Ray tmpdirs, the FSDP→vLLM weight-transfer socket
+  via `VERL_RAY_JOB_ID`) is handled automatically.
+
 ## Honest scope
 
-- **Clients run sequentially within a round.** The driver loops `for c in selected:` and
-  blocks on each client's subprocess (`stream(...)` waits via `proc.wait()`), with a
-  `wait_between_clients`-second pause between them to let Ray/GPU fully release. There is **no
-  parallel-client execution** — a round's wall-clock is the sum of its clients.
+- **Clients run sequentially within a round by default.** The driver loops
+  `for c in selected:` and blocks on each client's subprocess (`stream(...)` waits via
+  `proc.wait()`), with a `wait_between_clients`-second pause between them to let Ray/GPU
+  fully release — a round's wall-clock is the sum of its clients. **Parallel execution is
+  opt-in**, not the default: `parallel_clients: P` (previous section) trains the round's
+  clients concurrently under the constraints listed there.
 - **Single-node only.** `n_gpus_per_node` is the FSDP world size on **one** box. There is no
   `nnodes` setting and no multi-node launch in `run_fed.py`; the aggregator runs
   `torchrun --nproc_per_node=<ws>` locally. Multi-node is **not implemented**.
