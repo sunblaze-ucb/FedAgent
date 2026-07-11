@@ -15,6 +15,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/⚖️_License-Apache_2.0-4285F4?style=for-the-badge&logoColor=white" alt="License: Apache 2.0"></a>
 </p>
 
+<p align="center">
+  <a href="https://drive.google.com/file/d/1S13-8c382w8urNDCLwli1PNdc3ABnW1H/view?usp=sharing"><img src="https://img.shields.io/badge/🏆_Best_Paper_Award-AAAI_2026_TrustAgent_Workshop-FFB300?style=for-the-badge&labelColor=8B6914&logoColor=white" alt="Best Paper Award — AAAI 2026 Workshop on Trust and Control in Agentic AI"></a>
+</p>
+
+
 ---
 
 ## Updates
