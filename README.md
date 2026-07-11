@@ -6,7 +6,7 @@
 
 <p align="center">
   <!-- <em>Train LLM agents collaboratively across decentralized clients, without sharing local data.</em> -->
-  <em>Train LLM agents collaboratively across decentralized clients, without sharing local data..</em>
+  <em>Train LLM agents collaboratively across decentralized clients, without sharing local data.</em>
 </p>
 
 <p align="center">
