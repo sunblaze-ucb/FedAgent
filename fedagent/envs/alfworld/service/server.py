@@ -146,6 +146,8 @@ def _engine_partition_strategy() -> str:
 
 _pool: asyncio.Queue = None
 _sessions: dict = {}
+_pending: dict = {}          # session_id -> creation-in-flight event (idempotent /create; see create())
+_create_lock: asyncio.Lock = None   # guards _sessions/_pending bookkeeping (init in _lifespan)
 _base_env = None  # the shared AlfredTWEnv (game-file index); init_env() spawns pooled envs
 _num_games = 0
 
@@ -238,7 +240,8 @@ def _admissible(info: dict):
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    global _pool, _base_env, _num_games
+    global _pool, _base_env, _num_games, _create_lock
+    _create_lock = asyncio.Lock()
     _base_env = await asyncio.to_thread(_build_base_env)
     _num_games = int(getattr(_base_env, "num_games", 0))
     _pool = asyncio.Queue()
@@ -294,11 +297,33 @@ async def health():
 
 @app.post("/create")
 async def create(r: Sid):
-    if r.session_id in _sessions:
-        return {"ok": True}    # idempotent: a retried /create (lost response) must NOT borrow a
-                               # 2nd env -- that would orphan the 1st and slowly drain the pool.
-    env = await _pool.get()  # borrow (waits if the pool is exhausted)
-    _sessions[r.session_id] = _Session(env)
+    # Idempotent, exactly-once borrow. Under the full-PPO storm the client resends /create after a
+    # mid-flight socket reset while the original is still parked in _pool.get(); a bare check-then-
+    # borrow lets that retry borrow a SECOND env (the check sees the session absent because the first
+    # create has not inserted yet), orphaning the first and slowly draining the pool to a permanent
+    # hang. The FIRST caller owns the borrow; any overlapping caller waits on a per-session event.
+    async with _create_lock:
+        if r.session_id in _sessions:
+            return {"ok": True}                       # already ready
+        ev = _pending.get(r.session_id)
+        first = ev is None
+        if first:
+            ev = asyncio.Event()
+            _pending[r.session_id] = ev
+    if not first:
+        await ev.wait()                               # a concurrent create is borrowing; wait for it
+        return {"ok": r.session_id in _sessions}      # ready iff that borrow succeeded
+    try:
+        env = await _pool.get()                       # borrow (waits if the pool is exhausted)
+    except BaseException:
+        async with _create_lock:
+            _pending.pop(r.session_id, None)
+        ev.set()                                      # wake waiters; session absent -> they see ok=False
+        raise
+    async with _create_lock:
+        _sessions[r.session_id] = _Session(env)
+        _pending.pop(r.session_id, None)
+    ev.set()
     return {"ok": True}
 
 
@@ -307,22 +332,28 @@ async def reset(r: ResetReq):
     sess = _sessions.get(r.session_id)
     if sess is None:
         raise HTTPException(404, "unknown session")
-    env = sess.env
 
-    def _do():
-        # textworld reset() takes no game arg; seed(seed) deterministically reshuffles
-        # the game iterator so each seed maps to a fixed game (per-seed game selection).
-        # reset() loads the game -> parses its PDDL grammar via the shared tatsu parser,
-        # so hold the global lock across the whole op (see _TW_LOCK).
-        with _TW_LOCK:
-            env.seed(int(r.seed))
-            obs, infos = env.reset()
-        info = _unbatch_info(infos)
-        return obs[0], _admissible(info), info.get("extra.gamefile")
+    # Serialize under the SAME per-session lock /step uses: the client retries /reset, so a stale
+    # retried /reset must not re-run env.seed()/env.reset() after the episode already advanced via
+    # /step. (_TW_LOCK below serializes the textworld transition across sessions; sess.lock serializes
+    # requests WITHIN this session.)
+    async with sess.lock:
+        env = sess.env
 
-    obs, avail, gamefile = await asyncio.to_thread(_do)
-    sess.reset_steps()   # new episode -> restart the /step idempotency counter
-    return {"obs": obs, "admissible_commands": avail, "gamefile": gamefile}
+        def _do():
+            # textworld reset() takes no game arg; seed(seed) deterministically reshuffles
+            # the game iterator so each seed maps to a fixed game (per-seed game selection).
+            # reset() loads the game -> parses its PDDL grammar via the shared tatsu parser,
+            # so hold the global lock across the whole op (see _TW_LOCK).
+            with _TW_LOCK:
+                env.seed(int(r.seed))
+                obs, infos = env.reset()
+            info = _unbatch_info(infos)
+            return obs[0], _admissible(info), info.get("extra.gamefile")
+
+        obs, avail, gamefile = await asyncio.to_thread(_do)
+        sess.reset_steps()   # new episode -> restart the /step idempotency counter
+        return {"obs": obs, "admissible_commands": avail, "gamefile": gamefile}
 
 
 @app.post("/step")
@@ -376,7 +407,11 @@ async def step(r: StepReq):
 
 @app.post("/close")
 async def close(r: Sid):
-    sess = _sessions.pop(r.session_id, None)
+    async with _create_lock:
+        sess = _sessions.pop(r.session_id, None)
     if sess is not None:
-        _pool.put_nowait(sess.env)  # return to the pool for the next episode
+        # Drain under the session lock: wait for any in-flight /step or /reset to finish before
+        # recycling, so an env still being driven in a worker thread is never handed to a 2nd session.
+        async with sess.lock:
+            _pool.put_nowait(sess.env)  # return to the pool for the next episode
     return {"ok": True}
