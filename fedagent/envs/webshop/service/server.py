@@ -180,6 +180,13 @@ elif PARTITION_STRATEGY:  # non-empty but unrecognized -> FAIL FAST (was: silent
 
 _pool: asyncio.Queue = None
 _sessions: dict = {}
+# Per-session "creation in flight" events + a lock guarding the _sessions/_pending bookkeeping.
+# Makes /create an idempotent, EXACTLY-ONCE borrow: a retried/overlapping /create for a session still
+# parked in _pool.get() (pool exhausted) WAITS on the event instead of borrowing a 2nd env -- which
+# would orphan the 1st and slowly drain the pool to a permanent rollout hang. The lock only guards the
+# O(1) bookkeeping, never the blocking borrow, so distinct sessions still borrow concurrently.
+_pending: dict = {}
+_create_lock: asyncio.Lock = None
 
 
 class _Session:
@@ -278,7 +285,8 @@ def _compute_task_partition(server_goals):
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    global _pool, _GOAL_TASKIDS
+    global _pool, _GOAL_TASKIDS, _create_lock
+    _create_lock = asyncio.Lock()
     _pool = asyncio.Queue()
     envs = await asyncio.gather(*[asyncio.to_thread(_make_env, i) for i in range(POOL_SIZE)])
     for e in envs:
@@ -336,11 +344,33 @@ async def health():
 
 @app.post("/create")
 async def create(r: Sid):
-    if r.session_id in _sessions:
-        return {"ok": True}    # idempotent: a retried /create (lost response) must NOT borrow a
-                               # 2nd env -- that would orphan the 1st and slowly drain the pool.
-    env = await _pool.get()  # borrow (waits if the pool is exhausted)
-    _sessions[r.session_id] = _Session(env)
+    # Idempotent, exactly-once borrow. Under the full-PPO storm the client resends /create after a
+    # mid-flight socket reset while the original is still parked in _pool.get(); a bare check-then-
+    # borrow lets that retry borrow a SECOND env (the check sees the session absent because the first
+    # create has not inserted yet), orphaning the first and slowly draining the pool to a permanent
+    # hang. The FIRST caller owns the borrow; any overlapping caller waits on a per-session event.
+    async with _create_lock:
+        if r.session_id in _sessions:
+            return {"ok": True}                       # already ready
+        ev = _pending.get(r.session_id)
+        first = ev is None
+        if first:
+            ev = asyncio.Event()
+            _pending[r.session_id] = ev
+    if not first:
+        await ev.wait()                               # a concurrent create is borrowing; wait for it
+        return {"ok": r.session_id in _sessions}      # ready iff that borrow succeeded
+    try:
+        env = await _pool.get()                       # borrow (waits if the pool is exhausted)
+    except BaseException:
+        async with _create_lock:
+            _pending.pop(r.session_id, None)
+        ev.set()                                      # wake waiters; session absent -> they see ok=False
+        raise
+    async with _create_lock:
+        _sessions[r.session_id] = _Session(env)
+        _pending.pop(r.session_id, None)
+    ev.set()
     return {"ok": True}
 
 
@@ -349,31 +379,35 @@ async def reset(r: ResetReq):
     sess = _sessions.get(r.session_id)
     if sess is None:
         raise HTTPException(404, "unknown session")
-    env = sess.env
 
-    def _do():
-        if WEBSHOP_SPLIT == "val":
-            sess = int(r.seed) % VAL_SIZE                       # held-out val goals[0:VAL_SIZE] (deterministic coverage; eval sets no base seed)
-        elif CLIENT_GOAL_IDXS:
-            # Pick a goal from THIS client's shard via the full seed entropy (mirrors the original
-            # RandomState(federated_seed).choice(goal_idxs)). NOT `seed % len`: the round-threaded
-            # FEDAGENT_BASE_SEED enters as base*100000 in r.seed, and len|100000 for a ~100-goal
-            # shard => `% len` annihilates the round term => the client would train on the SAME first
-            # len goals every round. random.Random(seed) uses all bits, so goals vary per (round,row)
-            # and cover the shard across rounds (matching the original's per-round re-draw).
-            sess = CLIENT_GOAL_IDXS[random.Random(int(r.seed)).randrange(len(CLIENT_GOAL_IDXS))]
-        else:
-            sess = VAL_SIZE + int(r.seed) % max(1, NUM_GOALS - VAL_SIZE)  # uniform TRAIN pool, excludes val holdout
-        res = env.reset(session=sess)
-        obs = res[0] if isinstance(res, tuple) else res
-        gid = None
-        if LOG_GOAL_ID and _GOAL_TASKIDS is not None:
-            gid = _GOAL_TASKIDS[sess] if 0 <= sess < len(_GOAL_TASKIDS) else None
-        return obs, _avail(env), gid
+    # Serialize same-session requests: /reset is retried by the client, so a stale in-flight /reset
+    # must not re-run env.reset after the episode advanced. Same lock /step takes (see _Session).
+    async with sess.lock:
+        env = sess.env
 
-    obs, avail, gid = await asyncio.to_thread(_do)
-    sess.reset_steps()   # new episode -> restart the /step idempotency counter
-    return {"obs": obs, "available_actions": avail, "goal_id": gid}
+        def _do():
+            if WEBSHOP_SPLIT == "val":
+                sess = int(r.seed) % VAL_SIZE                       # held-out val goals[0:VAL_SIZE] (deterministic coverage; eval sets no base seed)
+            elif CLIENT_GOAL_IDXS:
+                # Pick a goal from THIS client's shard via the full seed entropy (mirrors the original
+                # RandomState(federated_seed).choice(goal_idxs)). NOT `seed % len`: the round-threaded
+                # FEDAGENT_BASE_SEED enters as base*100000 in r.seed, and len|100000 for a ~100-goal
+                # shard => `% len` annihilates the round term => the client would train on the SAME first
+                # len goals every round. random.Random(seed) uses all bits, so goals vary per (round,row)
+                # and cover the shard across rounds (matching the original's per-round re-draw).
+                sess = CLIENT_GOAL_IDXS[random.Random(int(r.seed)).randrange(len(CLIENT_GOAL_IDXS))]
+            else:
+                sess = VAL_SIZE + int(r.seed) % max(1, NUM_GOALS - VAL_SIZE)  # uniform TRAIN pool, excludes val holdout
+            res = env.reset(session=sess)
+            obs = res[0] if isinstance(res, tuple) else res
+            gid = None
+            if LOG_GOAL_ID and _GOAL_TASKIDS is not None:
+                gid = _GOAL_TASKIDS[sess] if 0 <= sess < len(_GOAL_TASKIDS) else None
+            return obs, _avail(env), gid
+
+        obs, avail, gid = await asyncio.to_thread(_do)
+        sess.reset_steps()   # new episode -> restart the /step idempotency counter
+        return {"obs": obs, "available_actions": avail, "goal_id": gid}
 
 
 @app.post("/step")
@@ -428,7 +462,11 @@ async def step(r: StepReq):
 
 @app.post("/close")
 async def close(r: Sid):
-    sess = _sessions.pop(r.session_id, None)
+    async with _create_lock:
+        sess = _sessions.pop(r.session_id, None)
     if sess is not None:
-        _pool.put_nowait(sess.env)  # return to the pool for the next episode
+        # Drain under the session lock: wait for any in-flight /step or /reset to finish before
+        # recycling, so an env still being stepped in a worker thread is never handed to a 2nd session.
+        async with sess.lock:
+            _pool.put_nowait(sess.env)  # return to the pool for the next episode
     return {"ok": True}
