@@ -111,9 +111,9 @@ separate `*_val.yaml` via `cfg.val_env_spec`.
 | `webshop.yaml` | 16 | 6 | WebShop smoke (small budget). |
 | `webshop_15.yaml` | 8 | 15 | WebShop **GRPO** train (`n_envs=8` == original GRPO train_data_size). |
 | `webshop_15_ppo.yaml` | 64 | 15 | WebShop **PPO** train (`n_envs=64` == original PPO train_data_size). |
-| `webshop_15_val.yaml` | 500 | 15 | WebShop validation: held-out `goals[0:500]` on the full catalog. |
+| `webshop_15_val.yaml` | 64 | 15 | WebShop validation: held-out `goals[0:64]` on the full catalog (`n_envs=64` == paper `val_data_size`). |
 | `alfworld.yaml` | 8 | 50 | ALFWorld train (game shards). |
-| `alfworld_val.yaml` | 140 | 50 | ALFWorld validation: `valid_seen` (in-distribution). |
+| `alfworld_val.yaml` | 64 | 50 | ALFWorld validation: first 64 `valid_seen` (in-distribution; `n_envs=64` == paper `val_data_size`). |
 
 Common row fields: `name`, `n_envs`, `max_turns`, `agent_name` (default `gym_text`), and a
 per-env `config` block (e.g. `timeout`). WebShop/ALFWorld are HTTP clients to per-client

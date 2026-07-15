@@ -1,12 +1,14 @@
 # WebShop VALIDATION env-spec (paired with run_fed val_env_spec). The agent talks to the
 # shared UNPERTURBED val service (WEBSHOP_SPLIT=val, PARTITION_STRATEGY="") which serves the
-# held-out goals[0:500] on the full catalog -- the paper's WebShop test set. n_envs=500 covers
-# the WHOLE held-out set (paper evaluates on all 500); seeds are deterministic (eval sets no
-# FEDAGENT_BASE_SEED) so every round scores the SAME 500 val goals -> a clean round->success
-# curve. 15-turn budget like train. (Reduce n_envs for a faster, biased-subsample smoke.)
+# held-out val goals on the full catalog. n_envs=64 == the PAPER's validation size (the original
+# FedAgent configs set val_data_size=64): the first 64 held-out goals[0:64]. Seeds are deterministic
+# (eval sets no FEDAGENT_BASE_SEED) so every round scores the SAME 64 val goals -> a clean
+# round->success curve. 15-turn budget like train. (The verl-0.8 migration briefly set this to 500 =
+# the whole held-out pool, which is LARGER than the paper; raise n_envs only if you want a bigger eval.)
 envs:
   - name: WebShop
-    n_envs: 500
+    n_envs: 64   # PAPER validation size (original FedAgent val_data_size=64): the first 64 held-out
+                 #   val goals[0:64], same fixed set every round. (Migration briefly used 500 = whole pool.)
     max_turns: 15
     agent_name: gym_text
     config:
