@@ -126,6 +126,10 @@ verl's stock FSDP rollout under this world size.
 | `2` | the smoke default (`DEFAULTS`) | TinyGuess / WebShop smokes on a 2-GPU slice |
 | `4` | **the paper recipe** | Qwen2.5-1.5B @ 15 turns; GRPO and PPO both validated here |
 
+Per-environment best practice for each count — which env actually speeds up with GPUs, which
+wants env-service replicas instead, and the pre-accelerated paper matrix
+(`config/paper_accelerated/`) — is in [gpu_recipes.md](./gpu_recipes.md).
+
 ### CPU offload and GPU memory (via `client_overrides`)
 
 The spine forwards every `client_overrides` entry verbatim as a Hydra override to the
@@ -314,6 +318,11 @@ bash fedagent/scripts/run_webshop_fed_smoke.sh fedagent/config/examples/webshop/
 # WebShop main, GRPO, Qwen2.5-1.5B, 4 GPUs
 python -m fedagent.fed.run_fed \
   --config fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
+
+# The same cell ACCELERATED (identical science, a fraction of the wall-clock; swap
+# paper/ -> paper_accelerated/ for any cell -- see gpu_recipes.md):
+python -m fedagent.fed.run_fed \
+  --config fedagent/config/paper_accelerated/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
 
 # Same config, second seed + its own output dir + client-service ports.
 # NOTE: --port-base moves ONLY webshop_base_port (the per-client services). This paper config

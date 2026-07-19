@@ -17,6 +17,15 @@ het arms instantiate), and [`./running.md`](./running.md) (the hardware knobs an
 CLI overrides). This is **scientific-equivalence** reproduction, not bit-identical
 — see [the fidelity note](#scientific-equivalence-not-bit-identical).
 
+> **Faster, same science.** Every cell below also ships an **accelerated twin** at the same
+> relative path under [`../config/paper_accelerated/`](../config/paper_accelerated/) — the
+> A/B-equivalent acceleration stack baked in (one hot trainer process for the whole run,
+> hot-engine eval, warm env services; ALFWorld replica sharding + manifest cache; WebShop
+> fused kernels on the 1.5B backbone). Final aggregated models match the plain path within
+> the measured 9.3e-5 GPU-noise floor, at roughly **×2.5 (ALFWorld) – ×3.5 (WebShop)** less
+> wall-clock. Just swap `paper/` → `paper_accelerated/` in any command below. See
+> [`./gpu_recipes.md`](./gpu_recipes.md) and [`./acceleration.md`](./acceleration.md).
+
 ---
 
 ## Prerequisites
@@ -499,7 +508,11 @@ Per-config (single seed) estimates, on the default 4 × H100 node:
 
 GPU-hours = wall-clock × 4 GPUs. Multiply by **3 seeds** for each reported
 mean ± std cell, and by the number of sweep points / backbones in a given figure
-or table block. To shrink cost while developing, drop the group size
+or table block. The table is the plain `config/paper/` path — the **accelerated
+twins** (`config/paper_accelerated/`, same science) cut wall-clock by roughly
+×2.5 (ALFWorld) – ×3.5 (WebShop), measured on the 1.5B cells
+([`./acceleration.md`](./acceleration.md), [`./gpu_recipes.md`](./gpu_recipes.md)).
+To shrink cost while developing, drop the group size
 (`gen_paper_configs.py --group-size 2` regenerates a cheap-smoke matrix) or run on
 fewer GPUs with `--n-gpus`; see [`./running.md`](./running.md).
 

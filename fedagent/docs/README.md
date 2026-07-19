@@ -9,6 +9,7 @@ overview in [`../README.md`](../README.md), then:
 | [architecture.md](./architecture.md) | How the overlay works: the federated round loop, the in-framework hooks, the remote env services, FedProx, eval. |
 | [installation.md](./installation.md) | The three conda envs (trainer + WebShop + ALFWorld services), data, and models. |
 | [running.md](./running.md) | Running `run_fed.py`: run modes, GPUs, baselines, FedProx, validation, worked examples. |
+| [gpu_recipes.md](./gpu_recipes.md) | **Best-practice recipes per GPU count (1 / 2 / 4)** and the pre-accelerated paper matrix (`config/paper_accelerated/`). |
 | [configuration.md](./configuration.md) | The config-file decoder and the full federated-runner key reference. |
 | [features.md](./features.md) | Each capability → its config key → its source file (a navigation map). |
 | [heterogeneity.md](./heterogeneity.md) | The two-level (task vs environment) heterogeneity suite, with the construction math for each arm. |

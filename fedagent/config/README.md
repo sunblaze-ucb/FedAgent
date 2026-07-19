@@ -19,7 +19,8 @@ config/
 │   ├── webshop/                       #   *_long / probe / fedprox / 2cl_catalog_split smokes
 │   │   └── scaled/                    #   the 15 scaled WebShop arms (homog, task, pref, …, ppo)
 │   └── alfworld/                      #   smoke.yaml + paper.yaml (env-het, 8cl x 70rd)
-└── paper/                     # generated paper matrix (176): uniform/ env_heterogeneity/ task_heterogeneity/ decentralized/
+├── paper/                     # generated paper matrix (176): uniform/ env_heterogeneity/ task_heterogeneity/ decentralized/
+└── paper_accelerated/         # the same 176 cells + the A/B-equivalent acceleration stack (gen_paper_configs.py --accel)
 ```
 
 See the top-level [`../README.md`](../README.md) for the project overview,
@@ -37,7 +38,7 @@ figure-by-figure reproduction guide.
 | **Hydra base config** | `fedagent_ppo.yaml` | `fedagent.main_ppo_fed` (`@hydra.main(config_name="fedagent_ppo")`) | The single training config for one client; composes verl's stock `ppo_trainer` and overrides only the leaves FedAgent needs. |
 | **Agent registry** | `agent.yaml` | verl's `AgentLoopManager` (via `actor_rollout_ref.rollout.agent.agent_loop_config_path`) | Maps each `agent_name` carried on dataset rows to its `AgentLoopBase` class. |
 | **Env spec** | `envs/*.yaml` | `fedagent.data.agentic_dataset.AgenticDataset` (via `data.train_files` / `data.val_files`) | Declares the env pool: one dataset row per episode (`n_envs` rows, distinct seeds). |
-| **Federated-runner config** | `examples/**/*.yaml`, `paper/**/*.yaml` | `python -m fedagent.fed.run_fed --config <file>` | Top-level federation knobs; keys map to `run_fed.py`'s `DEFAULTS` dict. Drives the round loop, FedAvg, env services, and validation. |
+| **Federated-runner config** | `examples/**/*.yaml`, `paper/**/*.yaml`, `paper_accelerated/**/*.yaml` | `python -m fedagent.fed.run_fed --config <file>` | Top-level federation knobs; keys map to `run_fed.py`'s `DEFAULTS` dict. Drives the round loop, FedAvg, env services, and validation. |
 
 The runner config is the *outer* layer: `run_fed` reads it, launches per-client env
 services, then shells out to `main_ppo_fed` (which loads `fedagent_ppo.yaml`) once per
@@ -215,8 +216,28 @@ paper/
 ```bash
 python tools/verl08_migration/gen_paper_configs.py                # all 176 -> fedagent/config/paper
 python tools/verl08_migration/gen_paper_configs.py --group-size 2 # cheap smoke (lower G)
+python tools/verl08_migration/gen_paper_configs.py --accel        # the 176 accelerated twins -> paper_accelerated/
 ```
 
 Every generated config runs directly with `python -m fedagent.fed.run_fed --config <path>`.
 Per-table reproduction recipes (which config → which paper number) are in
 [`../docs/reproducing.md`](../docs/reproducing.md).
+
+---
+
+## `paper_accelerated/` — the accelerated twins
+
+Every `paper/**` cell has an **accelerated twin at the same relative path** under
+`paper_accelerated/`: the same science (partition, seeds, federation protocol, eval cadence),
+plus the adopted A/B-equivalent acceleration stack from
+[`../docs/acceleration.md`](../docs/acceleration.md) — `cross_round` + worker eval + warm
+env services + worker final-eval, ALFWorld replica sharding + manifest cache, and the WebShop
+fused kernels on the Qwen2.5-1.5B backbone (where the A/B ran). Final aggregated models match
+the plain path within the measured 9.3e-5 GPU-nondeterminism floor, at roughly ×2.5
+(ALFWorld) – ×3.5 (WebShop) less wall-clock.
+
+Two things to know before launching: the twins keep `hf_export: every_round` so round-level
+resume works (`final` is faster if the run fits one walltime), and they sit on **disjoint port
+bands** from `paper/` (WebShop `25000+`, ALFWorld `52224+`), so a cell and its twin can share
+a host. Generated, never hand-edited — regenerate with `--accel` (above). Per-GPU-count
+guidance: [`../docs/gpu_recipes.md`](../docs/gpu_recipes.md).
