@@ -17,6 +17,20 @@ bit-identical to the 0.3.1 baseline. The only *additions* are the thin public
 `*_for_client(...)` wrappers each module exposes for the verl-0.8 WebShop remote
 service ([`../envs/webshop/service/`](../envs/webshop/service/)).
 
+> **Exception: `hardness_partition` is corrected, not verbatim.** The upstream body
+> had an assembly bug — the step-2 success-shortfall was recomputed *after* the
+> step-1 picks were removed from the easy bucket, so it always fired and double-drew
+> an extra `|Y_i|` items from the **unsuccessful** pool, then filled from a **mixed**
+> pool. That floored each client's success rate at the global rate `g` and cut the
+> realized inter-client difficulty spread `Delta^2_hard` to ~25-59% of the intended
+> `C_h/(xi'+1)` with a drifting mean. It now implements the paper's `HardnessPartition`
+> **literally**: `Y_i` is placed on the easy pool by `assign_with_overlap` (the box's
+> `Y_i <- CoveragePartition(Y, ..., xi', r)` — full easy-pool coverage + exact cross-client
+> replica budget, vs ~6-9% orphaned by an independent draw), then `X_i = Y_i ∪ F_i` fills
+> the remainder **only** from the hard pool. So `rho_i = |Y_i|/L` and the D1/D3 guarantees
+> hold. Beta sizing, seeds, and `base_seed=42` are unchanged. See
+> [`../docs/bugfixes.md`](../docs/bugfixes.md).
+
 ## The two-level taxonomy
 
 | Strategy (`PARTITION_STRATEGY`) | Level | Entry function | Knob (env var) | What it perturbs |
@@ -96,10 +110,12 @@ trajectories file.
 ### `webshop_hardness.py` — task level: **Hardness** (knob `success_std`, needs a labels file)
 
 - `hardness_for_client(client_id, client_num, *, success_std, trajectories_file, min_goals_per_client=100, start_idx=500, env_goals=None, data_dir=None) -> List[int]`
-- Wraps verbatim `hardness_partition`. Reads per-task success labels from
-  `trajectories_file` (`task_id -> success`), buckets goals into high/low success, and a
-  Beta distribution (`success_std`) sets each client's count of easy ("success") goals,
-  the rest filled randomly. `task_id` is derived as `f"{asin}_{md5(goal_options)}"`
+- Wraps the **corrected** `hardness_partition` (see the exception note at the top).
+  Reads per-task success labels from `trajectories_file` (`task_id -> success`), buckets
+  goals into high/low success, and a Beta distribution (`success_std`) sets each client's
+  count of easy ("success") goals `|Y_i|`; the remainder of the fixed quota `L` is filled
+  **only from the hard (low-success) bucket**, so `rho_i = |Y_i|/L`. `task_id` is derived
+  as `f"{asin}_{md5(goal_options)}"`
   (with `instruction_text` / bare-`asin` fallbacks) — the **same** formula the labelling
   pass records — so the lookup resolves only against real goal dicts.
 - **`trajectories_file` is required**: there is no usable default in this package, so

@@ -5,6 +5,75 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-19 — Hardness partition: success quota double-drawn from the *unsuccessful* pool → floored difficulty
+
+- **File:** `fedagent/hetero/webshop_hardness.py` (`hardness_partition`), and the ALFWorld copies in
+  `fedagent/envs/alfworld/engine/agent_system/environments/partition_strategy.py`
+  (`hardness_partition`, `hardness_partition_alfworld`).
+- **Severity:** science-correctness — the reported task-level **Hardness** arm did not realize the
+  dispersion the paper's control law prescribes. **Symptom:** none at runtime (shards are the right
+  size `L`); visible only by measuring the realized per-client success rate.
+- **Provenance:** inherited verbatim from upstream verl-agent `partition_strategy.py`; surfaced by
+  a paper-fidelity audit.
+
+### The bug
+
+`HardnessPartition` builds each client's shard as `X_i = Y_i ∪ F_i`: a Beta-sized success quota `Y_i`
+from the easy (high-success) bucket, remainder of the fixed quota `L` filled from the hard bucket, so
+the realized success fraction is `rho_i = |Y_i|/L`. The upstream body computed the step-2 shortfall as
+`current_success_count - len([s for s in current_client_data if s in high_success_data])` *after* step 1
+had already `.remove()`d its picks from `high_success_data`, so that comprehension is always `0` and
+`remaining == current_success_count` every time. Step 2 therefore unconditionally drew an **extra**
+`|Y_i|` items from the **low-success** pool (mislabeled "additional success"), and step 3 topped up from
+a **mixed** pool. Net effect: every client's success rate is floored at the global rate `g` (easy
+clients reproduce correctly; hard clients with `|Y_i|/L < 0.5` are pulled up toward `g`), shrinking
+`Delta^2_hard` to ~25-59% of `C_h/(xi'+1)` and drifting the mean `rho` with `xi'` (0.50→0.59 on WebShop
+`g=0.278`; 0.50→0.70 on ALFWorld `g=0.594`) — breaking the paper's D1 control law and D3 mean-invariance
+for this arm.
+
+### The fix
+
+The shard assembly now follows the paper's `HardnessPartition` Algorithm **literally**:
+
+1. **`Y_i` via CoveragePartition on the success pool.** The Beta success COUNTS `{|Y_i|}` are still
+   drawn by `generate_client_sizes` (unchanged), but the easy goals themselves are now placed by
+   `assign_with_overlap(|Y|, {|Y_i|}, r_easy, rng)` — the *same* Beta-sizing + overlap primitive
+   `coverage_partition` uses — with `r_easy = target_sum/|Y|`. This is exactly the Algorithm box's
+   `Y_i <- CoveragePartition(Y, N, (kappa_min, kappa_avg, kappa_max), xi', r)`. Effect: each easy
+   goal lands in ~`floor/ceil(r_easy)` clients (exact cross-client replica budget) and the union of
+   `{Y_i}` **covers the entire easy pool** — where the prior independent per-client `rng.choice`
+   orphaned ~`exp(-r_easy)` (≈6% WebShop / ≈9% ALFWorld) of the easy goals.
+2. **`F_i` from the unsuccessful pool.** The remainder up to `L` is filled **strictly from
+   `low_success_data`** by simple without-replacement sampling — this alone removes the step-2
+   flooring bug (the broken shortfall test on the easy bucket is gone). Step 3 remains only as a
+   safety top-up for the degenerate `|U| < L-|Y_i|` case (never triggers at scale, `|U| >> L`).
+
+Seed 42 is shared, so every client recomputes the SAME global assignment and indexes its own slice
+(mirrors `coverage_partition`). Beta sizing and `base_seed=42` are unchanged, so `{|Y_i|}` — hence
+`rho_i`, `Delta^2_hard`, `rho_bar` — are set exactly as before; only WHICH easy goals each client
+sees (and their controlled overlap) changes. Both WebShop (`webshop_hardness.py`) and the two
+ALFWorld copies (`partition_strategy.py`) are updated identically.
+
+### Verification
+
+Calling the REAL `hardness_partition` (WebShop, `g=0.278`) and `hardness_partition_alfworld`
+(ALFWorld, `g=0.594`) for all 100 clients on synthetic labels (`N=100`, `L=100`):
+
+| env | `xi'` | `Delta^2_hard` | `C_h/(xi'+1)` | `rho_bar` | easy coverage | indep-draw ref |
+|---|---|---|---|---|---|---|
+| WebShop  | 1   | 0.14933 | 0.12500 | 0.5000 | **100.0%** | 94.3% |
+| WebShop  | 256 | 0.00102 | 0.00097 | 0.5000 | **100.0%** | 94.2% |
+| ALFWorld | 1   | 0.14933 | 0.12500 | 0.5000 | **100.0%** | ~94% |
+| ALFWorld | 256 | 0.00102 | 0.00097 | 0.5000 | **100.0%** | ~94% |
+
+`Delta^2_hard` is bit-identical to the count-only fix (the 0.149 vs 0.125 at `xi'=1` is the known
+finite-`L` boundary overshoot, matching the paper's distribution figure); `rho_bar = 0.5000`
+exactly (D3); and the easy pool is now **fully covered** (vs the ≈6–9% orphaned by an independent
+draw). The paper's `HardnessPartition` (D1/D3) holds, and the code now matches the Algorithm box's
+`Y_i <- CoveragePartition(...)` line literally (was `0.088`/`0.589` `rho_bar` under the original bug).
+
+---
+
 ## 2026-07-11 — Env-service pool: `/create` double-borrow race → pool drain → rollout hang
 
 - **Services:** `fedagent/envs/webshop/service/server.py`, `fedagent/envs/alfworld/service/server.py`

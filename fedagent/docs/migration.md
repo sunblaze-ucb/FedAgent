@@ -35,7 +35,9 @@ The MDP is therefore unchanged:
   `{0,10}` sparse training reward (won iff `done and score==1.0`), action validity, the
   catalog files, the **seed-42** goal shuffle, and the `val=goals[0:500]/train=goals[500:]`
   split are all the same. The heterogeneity math (catalog-split, preference, coverage,
-  hardness, bm25/lookalike/rank) is a **verbatim copy** of `partition_strategy.py`.
+  bm25/lookalike/rank) is a **verbatim copy** of `partition_strategy.py`; the one exception is
+  `hardness_partition`, whose shard assembly was corrected to the paper's `X_i = Y_i ∪ F_i`
+  (its Beta sizing and seeds are unchanged — see [`bugfixes.md`](bugfixes.md)).
 - **ALFWorld** — `AlfredTWEnv` / TextWorld, the `alfworld_projection` parser, the game
   loader, the `10 × won` reward, the 6 task types, and the `uniform/preference/coverage/
   hardness/env_disjoint` partition set are all reused unchanged.

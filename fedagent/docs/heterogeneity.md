@@ -74,6 +74,19 @@ the verl-0.8 remote env service. The shared Beta-sizing primitives
 (`default_r` / `generate_client_sizes` / `assign_with_overlap`) live in
 [`../hetero/_beta_sizing.py`](../hetero/_beta_sizing.py).
 
+> **One deliberate deviation — `hardness_partition`.** The Hardness body is the
+> single exception to the verbatim rule. The original had an assembly bug (the
+> step-2 success-shortfall was recomputed *after* the step-1 picks were removed, so
+> it always fired and double-drew an extra `|Y_i|` items from the **unsuccessful**
+> pool, then topped up from a **mixed** pool). That floored every client's success
+> rate at the global rate `g` and shrank the realized inter-client difficulty
+> spread to ~25-59% of the intended `C_h/(xi'+1)`, with a drifting mean. The body now
+> implements the paper's `HardnessPartition` **literally**: `Y_i` is placed on the easy
+> bucket by `assign_with_overlap` (`Y_i <- CoveragePartition(Y, ..., xi', r)` — full
+> easy-pool coverage + exact replica budget), then `X_i = Y_i ∪ F_i` fills the remainder
+> **only** from the hard bucket. So `rho_i = |Y_i|/L` and the control law +
+> mean-invariance hold. See [`bugfixes.md`](bugfixes.md).
+
 ---
 
 ## Task-level constructions (observable `tau`)
@@ -85,11 +98,11 @@ disturbing the other two. Each sub-type has a WebShop and an ALFWorld backend
 (ALFWorld derives a goal's category/difficulty from its task-file path rather than
 a product field).
 
-| Paper name | Question | `run_fed` knob | Verbatim partition | Endpoints (near-uniform -> extreme) |
+| Paper name | Question | `run_fed` knob | Partition fn | Endpoints (near-uniform -> extreme) |
 |---|---|---|---|---|
-| **Preference** | *what kind of task?* | `omega` (`OMEGA`) | `_preference_partition_generic` | `0.01` -> `0.99` |
-| **Coverage** | *how many tasks?* | `size_std` (`SIZE_STD`), the paper's `xi` | `coverage_partition` | `256` -> `1` |
-| **Hardness** | *how hard are the tasks?* | `success_std` (`SUCCESS_STD`), the paper's `xi'` (+ `trajectories_file`) | `hardness_partition` | `256` -> `1` |
+| **Preference** | *what kind of task?* | `omega` (`OMEGA`) | `_preference_partition_generic` (verbatim) | `0.01` -> `0.99` |
+| **Coverage** | *how many tasks?* | `size_std` (`SIZE_STD`), the paper's `xi` | `coverage_partition` (verbatim) | `256` -> `1` |
+| **Hardness** | *how hard are the tasks?* | `success_std` (`SUCCESS_STD`), the paper's `xi'` (+ `trajectories_file`) | `hardness_partition` (**corrected**, see above) | `256` -> `1` |
 
 > **Knob-direction caveat.** `size_std`/`success_std` are named like standard
 > deviations but are forwarded as the **Beta concentration** `dispersion_s`
@@ -185,11 +198,20 @@ success_counts = generate_client_sizes(C=client_num, low=low, center=center,
 ```
 
 Goals are bucketed `high_success` (label `True`) vs `low_success` (label `False`
-or unknown); the client draws `success_counts[client_id]` from the easy bucket,
-backfills from the hard bucket if short, then fills the rest of its quota
-randomly. Larger `success_std` -> uniform difficulty across clients; `success_std=1`
--> extreme (some clients see almost only solvable goals, others almost only hard
-ones).
+or unknown); the client draws `success_counts[client_id]` (`= |Y_i|`) from the
+easy bucket, then fills the remainder of its fixed quota `L` **only from the hard
+bucket** (`X_i = Y_i ∪ F_i`, paper `HardnessPartition`), so the realized success
+fraction is `rho_i = |Y_i| / L` exactly. Larger `success_std` -> uniform difficulty
+across clients; `success_std=1` -> extreme (some clients see almost only solvable
+goals, others almost only hard ones).
+
+> **Corrected vs the original.** The upstream body double-drew the success quota
+> from the **unsuccessful** pool (a shortfall test that always fired) and filled
+> from a **mixed** pool, which floored `rho_i` at the global rate `g` and cut the
+> realized `Delta^2_hard` to ~25-59% of `C_h/(xi'+1)` with a drifting mean. The
+> body above is the corrected `X_i = Y_i ∪ F_i`; a fresh label sweep verifies
+> `Delta^2_hard(xi'=1) ≈ 0.149 ≈ C_h/2` and mean `rho ≈ 0.5` for every `xi'`
+> (was `0.088`/`0.59` at `g=0.278`). See [`bugfixes.md`](bugfixes.md).
 
 > **Shipped input.** The original **trained-checkpoint** labels ship in
 > `data/hardness/` (WebShop + ALFWorld, full train pool), so the Hardness configs run
@@ -462,7 +484,9 @@ These hold across **every** arm and are what make the federated runs reproducibl
 and the cross-arm curves comparable.
 
 - **Seed-42 science red line.** Every partition body is copied verbatim with
-  `base_seed = 42` hardcoded. Shared randomness uses `RandomState(42)` /
+  `base_seed = 42` hardcoded (the **one** exception is `hardness_partition`, whose
+  assembly was corrected to the paper's `X_i = Y_i ∪ F_i`; its Beta sizing, seeds,
+  and `base_seed = 42` are unchanged). Shared randomness uses `RandomState(42)` /
   `default_rng(42)`; per-client randomness uses `RandomState(42 + client_id)` (or
   `42 + 1000*client_id` for Catalog Split's per-client `v`). Assignment is
   therefore **deterministic by `client_id`** and stable across rounds.

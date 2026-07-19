@@ -951,53 +951,69 @@ def hardness_partition(
 
     print(f"Data distribution: high_success={len(high_success_data)}, low_success={len(low_success_data)}")
 
-    # Assemble the data for the current client.
+    # Assemble this client's shard as X_i = Y_i u F_i, following the paper's
+    # HardnessPartition Algorithm literally:
+    #   Y_i <- CoveragePartition(|Y|, N, (kappa_min, kappa_avg, kappa_max), xi', r) -- the easy
+    #         ("success") goals, placed by the SAME Beta-sizing + assign_with_overlap machinery
+    #         coverage_partition uses, so each easy goal lands in ~floor/ceil(r_easy) clients and
+    #         the union of {Y_i} covers the easy pool;
+    #   F_i = fill the remainder up to size L from low_success_data ("hard") by simple
+    #         without-replacement sampling.
+    # rho_i = |Y_i| / L is fixed by the Beta success COUNTS (generate_client_sizes), so
+    # Delta^2_hard and rho_bar are unchanged vs an independent per-client easy draw; routing Y_i
+    # through assign_with_overlap only changes WHICH easy goals each client sees and pins their
+    # cross-client replica budget (an independent draw instead orphans ~exp(-r_easy) of the easy
+    # pool).
+    # (Earlier revision -- the upstream body recomputed the success shortfall AFTER removing the
+    # step-1 picks, always == current_success_count, double-drawing |Y_i| extra items from the
+    # UNSUCCESSFUL pool and flooring rho_i at the global rate g; that flooring bug is gone.)
     current_client_data = []
 
-    # 1. Assign success samples (drawn preferentially from high_success_data).
-    if current_success_count > 0 and high_success_data:
-        # Randomly pick success samples from high_success_data.
-        success_samples = rng.choice(
-            high_success_data,
-            size=min(current_success_count, len(high_success_data)),
-            replace=False
-        ).tolist()
+    # 1. Y_i: place the easy quota via CoveragePartition on the success pool Y.
+    #    generate_client_sizes already set the per-client success COUNTS; assign_with_overlap
+    #    distributes the |Y| easy goals across ALL clients with replica budget r_easy =
+    #    target_sum / |Y|. Seed 42 is shared, so every client recomputes the SAME global
+    #    assignment and indexes its own slice (mirrors coverage_partition).
+    if high_success_data:
+        n_easy = len(high_success_data)
+        r_easy = target_sum / n_easy
+        easy_sets, _k_easy = assign_with_overlap(n_easy, success_counts, r_easy, rng)
+        chosen_ids = easy_sets[client_id]
+        success_samples = [high_success_data[i] for i in chosen_ids]
         current_client_data.extend(success_samples)
 
-        # Remove the chosen samples from high_success_data.
-        for sample in success_samples:
-            if sample in high_success_data:
-                high_success_data.remove(sample)
+        # Drop this client's easy picks so the hard fill / safety top-up cannot re-select them.
+        high_success_data = [d for j, d in enumerate(high_success_data) if j not in chosen_ids]
 
-    # 2. If more success samples are still needed, draw from low_success_data.
-    remaining_success_needed = current_success_count - len([s for s in current_client_data if s in high_success_data])
-    if remaining_success_needed > 0 and low_success_data:
-        additional_success = rng.choice(
+    # 2. F_i: fill the remainder up to L strictly from low_success_data (hard goals),
+    #    so the filler contributes no additional successes.
+    remaining_needed = min_samples_per_client - len(current_client_data)
+    if remaining_needed > 0 and low_success_data:
+        filler = rng.choice(
             low_success_data,
-            size=min(remaining_success_needed, len(low_success_data)),
+            size=min(remaining_needed, len(low_success_data)),
             replace=False
         ).tolist()
-        current_client_data.extend(additional_success)
+        current_client_data.extend(filler)
 
         # Remove the chosen samples from low_success_data.
-        for sample in additional_success:
+        for sample in filler:
             if sample in low_success_data:
                 low_success_data.remove(sample)
 
-    # 3. Fill the remaining quota with randomly chosen samples, ensuring the
-    #    total does not exceed max_samples_per_client.
-    remaining_needed = min(max_samples_per_client - len(current_client_data), min_samples_per_client - len(current_client_data))
+    # 3. Safety fill: only if the unsuccessful pool was exhausted before reaching L
+    #    (does not trigger at the experimental scale, where |U| >> L). Top up from any
+    #    still-unused goals so the shard reaches L; this cannot lower rho_i below quota.
+    remaining_needed = min_samples_per_client - len(current_client_data)
     if remaining_needed > 0:
-        # Collect all still-unused samples.
         all_remaining_data = high_success_data + low_success_data
-
         if all_remaining_data:
-            additional_samples = rng.choice(
+            extra = rng.choice(
                 all_remaining_data,
                 size=min(remaining_needed, len(all_remaining_data)),
                 replace=False
             ).tolist()
-            current_client_data.extend(additional_samples)
+            current_client_data.extend(extra)
 
     # Final check: make sure we do not exceed the maximum.
     if len(current_client_data) > max_samples_per_client:
@@ -1176,53 +1192,69 @@ def hardness_partition_alfworld(
 
     print(f"Alfworld data distribution: high_success={len(high_success_data)}, low_success={len(low_success_data)}")
 
-    # Assemble the data for the current client.
+    # Assemble this client's shard as X_i = Y_i u F_i, following the paper's
+    # HardnessPartition Algorithm literally:
+    #   Y_i <- CoveragePartition(|Y|, N, (kappa_min, kappa_avg, kappa_max), xi', r) -- the easy
+    #         ("success") goals, placed by the SAME Beta-sizing + assign_with_overlap machinery
+    #         coverage_partition uses, so each easy goal lands in ~floor/ceil(r_easy) clients and
+    #         the union of {Y_i} covers the easy pool;
+    #   F_i = fill the remainder up to size L from low_success_data ("hard") by simple
+    #         without-replacement sampling.
+    # rho_i = |Y_i| / L is fixed by the Beta success COUNTS (generate_client_sizes), so
+    # Delta^2_hard and rho_bar are unchanged vs an independent per-client easy draw; routing Y_i
+    # through assign_with_overlap only changes WHICH easy goals each client sees and pins their
+    # cross-client replica budget (an independent draw instead orphans ~exp(-r_easy) of the easy
+    # pool).
+    # (Earlier revision -- the upstream body recomputed the success shortfall AFTER removing the
+    # step-1 picks, always == current_success_count, double-drawing |Y_i| extra items from the
+    # UNSUCCESSFUL pool and flooring rho_i at the global rate g; that flooring bug is gone.)
     current_client_data = []
 
-    # 1. Assign success samples (drawn preferentially from high_success_data).
-    if current_success_count > 0 and high_success_data:
-        # Randomly pick success samples from high_success_data.
-        success_samples = rng.choice(
-            high_success_data,
-            size=min(current_success_count, len(high_success_data)),
-            replace=False
-        ).tolist()
+    # 1. Y_i: place the easy quota via CoveragePartition on the success pool Y.
+    #    generate_client_sizes already set the per-client success COUNTS; assign_with_overlap
+    #    distributes the |Y| easy goals across ALL clients with replica budget r_easy =
+    #    target_sum / |Y|. Seed 42 is shared, so every client recomputes the SAME global
+    #    assignment and indexes its own slice (mirrors coverage_partition).
+    if high_success_data:
+        n_easy = len(high_success_data)
+        r_easy = target_sum / n_easy
+        easy_sets, _k_easy = assign_with_overlap(n_easy, success_counts, r_easy, rng)
+        chosen_ids = easy_sets[client_id]
+        success_samples = [high_success_data[i] for i in chosen_ids]
         current_client_data.extend(success_samples)
 
-        # Remove the chosen samples from high_success_data.
-        for sample in success_samples:
-            if sample in high_success_data:
-                high_success_data.remove(sample)
+        # Drop this client's easy picks so the hard fill / safety top-up cannot re-select them.
+        high_success_data = [d for j, d in enumerate(high_success_data) if j not in chosen_ids]
 
-    # 2. If more success samples are still needed, draw from low_success_data.
-    remaining_success_needed = current_success_count - len([s for s in current_client_data if s in high_success_data])
-    if remaining_success_needed > 0 and low_success_data:
-        additional_success = rng.choice(
+    # 2. F_i: fill the remainder up to L strictly from low_success_data (hard goals),
+    #    so the filler contributes no additional successes.
+    remaining_needed = min_samples_per_client - len(current_client_data)
+    if remaining_needed > 0 and low_success_data:
+        filler = rng.choice(
             low_success_data,
-            size=min(remaining_success_needed, len(low_success_data)),
+            size=min(remaining_needed, len(low_success_data)),
             replace=False
         ).tolist()
-        current_client_data.extend(additional_success)
+        current_client_data.extend(filler)
 
         # Remove the chosen samples from low_success_data.
-        for sample in additional_success:
+        for sample in filler:
             if sample in low_success_data:
                 low_success_data.remove(sample)
 
-    # 3. Fill the remaining quota with randomly chosen samples, ensuring the
-    #    total does not exceed max_samples_per_client.
-    remaining_needed = min(max_samples_per_client - len(current_client_data), min_samples_per_client - len(current_client_data))
+    # 3. Safety fill: only if the unsuccessful pool was exhausted before reaching L
+    #    (does not trigger at the experimental scale, where |U| >> L). Top up from any
+    #    still-unused goals so the shard reaches L; this cannot lower rho_i below quota.
+    remaining_needed = min_samples_per_client - len(current_client_data)
     if remaining_needed > 0:
-        # Collect all still-unused samples.
         all_remaining_data = high_success_data + low_success_data
-
         if all_remaining_data:
-            additional_samples = rng.choice(
+            extra = rng.choice(
                 all_remaining_data,
                 size=min(remaining_needed, len(all_remaining_data)),
                 replace=False
             ).tolist()
-            current_client_data.extend(additional_samples)
+            current_client_data.extend(extra)
 
     # Final check: make sure we do not exceed the maximum.
     if len(current_client_data) > max_samples_per_client:
