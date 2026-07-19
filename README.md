@@ -24,14 +24,15 @@
 
 ## Updates
 
-- **[Jul 2026]** Every cell of the 176-config paper matrix now ships an **accelerated twin**
-  under [`fedagent/config/paper_accelerated/`](fedagent/config/paper_accelerated/): the
-  A/B-equivalent acceleration stack (one hot trainer+vLLM process per run, hot-engine eval,
-  warm env services, ALFWorld replica sharding) baked in — same science, final aggregated
-  models within the measured 9.3e-5 GPU-noise floor, at roughly **×2.5 (ALFWorld) – ×3.5
-  (WebShop)** less wall-clock. Swap `paper/` → `paper_accelerated/` in any command. GPU-count
-  best practices (1 / 2 / 4): [`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md);
-  the measured record: [`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md).
+- **[Jul 2026]** **Reproduce the paper ×2.5–×3.5 faster.** Every one of the 176 paper configs
+  now has a ready-made accelerated version under
+  [`fedagent/config/paper_accelerated/`](fedagent/config/paper_accelerated/) — to use it, just
+  swap `paper/` → `paper_accelerated/` in any run command. Same experiment, same results: the
+  speedup comes from removing fixed overheads (per-round process restarts, engine cold starts,
+  env-service reboots), not from changing the training, and every lever was verified to leave
+  the final model unchanged (differences ≤ 9.3e-5 — below GPU run-to-run noise). Which GPU
+  count to use: [`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md); how each lever
+  works and all measurements: [`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md).
 - **[Jul 2026]** FedAgent is now **fully migrated to stock [verl](https://github.com/volcengine/verl) 0.8**
   and no longer depends on [verl-agent](https://github.com/langfengQ/verl-agent): the trainer imports verl as a library (no fork) and the
   federation logic lives in the thin [`fedagent/`](fedagent/README.md) overlay. The paper's
@@ -92,12 +93,13 @@ but worst-case non-robust to environment-level heterogeneity. See
   and `local` (one pinned client, no federation), selectable from the same config.
 - **Fully configurable protocol** — clients `N`, clients/round `M`, local epochs `E`, rounds
   `T`, tasks/client `|Xᵢ|` — with a ready-made **176-config paper matrix**.
-- **Equivalence-gated acceleration** — opt-in levers (persistent cross-round trainer,
-  hot-engine eval, warm env services, ALFWorld replica sharding) cut paper-run wall-clock
-  **×2.5–×3.5** with final models unchanged (≤ 9.3e-5, the GPU-noise floor); every paper cell
-  ships pre-accelerated under
-  [`config/paper_accelerated/`](fedagent/config/paper_accelerated/)
-  ([`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md)).
+- **Verified acceleration, results unchanged** — optional speed levers (keep one trainer+vLLM
+  process alive across rounds instead of restarting it per client, evaluate on the
+  already-loaded engine, keep env services warm, run ALFWorld's env service as parallel
+  replicas) make paper runs **×2.5–×3.5 faster**; each lever was checked to leave the final
+  model unchanged (≤ 9.3e-5, below GPU run-to-run noise). All 176 paper configs come
+  pre-accelerated in [`config/paper_accelerated/`](fedagent/config/paper_accelerated/) — see
+  [`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md).
 - **Any HuggingFace backbone** (paper: Qwen2.5-1.5B/3B/7B-Instruct, Llama-3.2-3B-Instruct);
   **WebShop** and **ALFWorld** benchmarks out of the box, each behind a per-client HTTP env
   service so their conflicting dependencies stay isolated from the trainer.
