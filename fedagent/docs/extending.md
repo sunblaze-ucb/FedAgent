@@ -5,7 +5,7 @@ federated control loop, the environments, the heterogeneity constructors, and th
 model aggregation are deliberately decoupled, so you can replace any one of them
 without touching the others. This document is the reference for doing exactly that.
 
-The maintained entry point never changes — every extension is reachable through
+The maintained entry point never changes, every extension is reachable through
 
 ```bash
 python -m fedagent.fed.run_fed --config <yaml>
@@ -13,7 +13,7 @@ python -m fedagent.fed.run_fed --config <yaml>
 
 The driver (`fedagent/fed/run_fed.py`) is **verl-agnostic**: a client is just a
 subprocess (`python -m fedagent.main_ppo_fed`). It trains each selected client
-**sequentially** (or concurrently — `parallel_clients`, see running.md), FedAvgs the resulting FSDP shards, merges them back to a HuggingFace
+**sequentially** (or concurrently, `parallel_clients`, see running.md), FedAvgs the resulting FSDP shards, merges them back to a HuggingFace
 model, and re-enters the next round from that aggregated model. Because of this split,
 each extension point is isolated to a small number of files:
 
@@ -30,7 +30,7 @@ each extension point is isolated to a small number of files:
 > row). Stock verl owns the *RL update* (advantage estimation, the actor/critic FSDP
 > workers, the optimizer). Extension points 1 and 2 live entirely in the overlay;
 > point 3 lives in verl (the overlay only selects it and carries the extra
-> checkpoint); point 4 straddles both — the server rule is an overlay tool, the
+> checkpoint); point 4 straddles both, the server rule is an overlay tool, the
 > client-side proximal term is a verl monkeypatch loaded at interpreter startup.
 
 > **Before you start.** Read [`./architecture.md`](./architecture.md) for the round
@@ -54,7 +54,7 @@ not the old batched, synchronous `EnvironmentManager`).
 
 ### The contract
 
-`BaseTextEnv` is the whole surface — four methods, three of them abstract. The
+`BaseTextEnv` is the whole surface, four methods, three of them abstract. The
 observation convention is a dict with at least `obs_str` (the text shown to the
 model):
 
@@ -97,7 +97,7 @@ Three invariants the existing envs honor, and you must too:
 - **`obs_str` is the only required observation key.** Image/multimodal envs may later
   add `multi_modal_data` without changing the contract.
 
-`TinyGuessEnv` (`fedagent/envs/tiny_guess.py`, ~70 lines) is the cleanest reference —
+`TinyGuessEnv` (`fedagent/envs/tiny_guess.py`, ~70 lines) is the cleanest reference,
 fully in-process, dependency-free, parses the action with a regex, returns
 higher/lower. Read it first.
 
@@ -147,7 +147,7 @@ higher/lower. Read it first.
 
 4. **Point the federated config at the spec.** In your `run_fed` YAML set
    `env_spec: config/envs/myenv.yaml` (resolved relative to the package). For an
-   in-process env that is all — set `env_kind` to a value other than `webshop`/
+   in-process env that is all, set `env_kind` to a value other than `webshop`/
    `alfworld` so the driver starts **no** services (`tinyguess` is the in-process
    sentinel). See the smoke recipe at the end.
 
@@ -229,7 +229,7 @@ worked services.
 Each construction is a self-contained, numpy-only module under `fedagent/hetero/`
 exposing a public **`*_for_client(...)`** function. (The functions are copied
 *verbatim* from the verl-agent-0.3.1 `partition_strategy.py` so per-client assignment
-is bit-identical to the baseline — the science red line; only the thin
+is bit-identical to the baseline, the science red line; only the thin
 `*_for_client` public API is new.) The strategy is selected by `partition_strategy`,
 threaded into each env service through an **environment-variable bridge**.
 
@@ -252,7 +252,7 @@ The public functions share a fixed shape (keyword-only knobs after `client_id`,
 `client_num`). A **task-level** function returns the client's goal indices:
 
 ```python
-# fedagent/hetero/webshop_catalog_split.py (env-level — returns a (catalog, idxs) pair)
+# fedagent/hetero/webshop_catalog_split.py (env-level: returns a (catalog, idxs) pair)
 def catalog_split_for_client(
     client_id: int,
     client_num: int,
@@ -316,7 +316,7 @@ Two invariants every strategy honors:
 
    Note the **deferral subtlety**: a content-dependent task partition must address the
    env's *actual* seed-42-shuffled `server.goals`, which only exist after the pool is
-   warmed — so those are computed in `_compute_task_partition()` (called from
+   warmed, so those are computed in `_compute_task_partition()` (called from
    `_lifespan`), not at import. Catalog/variant strategies (order-independent ranges or
    `env_kwargs`) are computed at import time. The unperturbed **validation** service is
    launched unsharded (WebShop val: `PARTITION_STRATEGY=""`; the ALFWorld val service
@@ -337,7 +337,7 @@ Two invariants every strategy honors:
    ```
 
 4. **Select it from config.** Heterogeneity is chosen entirely through the federated
-   YAML (a **flat** schema = the `DEFAULTS` dict — there is no nested `federated:`
+   YAML (a **flat** schema = the `DEFAULTS` dict, there is no nested `federated:`
    block):
 
    ```yaml
@@ -372,11 +372,11 @@ if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
 - **GRPO** (default, `adv_estimator: grpo`): actor-only. The group size *G* comes from
   `rollout.n` (paper *G = 8* via `actor_rollout_ref.rollout.n=8` in `client_overrides`).
   The client writes **only** an actor checkpoint, and the driver FedAvgs/merges just the
-  actor — the GRPO command is byte-identical to the verified baseline.
+  actor, the GRPO command is byte-identical to the verified baseline.
 - **PPO** (`adv_estimator: gae`): adds a **critic** (value model). The driver detects
   the critic shard dir alongside the actor (`critic_dir_for`), FedAvgs **both**
   components, merges each to HF, and carries the federated value model forward
-  (`critic.model.path` is set per round; round 1's critic = the base model — a random
+  (`critic.model.path` is set per round; round 1's critic = the base model, a random
   value head on the backbone). For this to work the PPO config **must** include
   `critic.checkpoint.save_contents=[model]` (and `...actor.checkpoint.save_contents=[model]`)
   in `client_overrides`, so the aggregator finds the value-model weights. See
@@ -394,13 +394,13 @@ if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
    `client_overrides` (each entry is a literal Hydra override applied to the per-client
    subprocess).
 
-3. **Mind the checkpoint shape — this is the only federation-level concern.** The
+3. **Mind the checkpoint shape, this is the only federation-level concern.** The
    aggregator (§4) operates on the **FSDP shard layout**
    (`checkpoints/global_step_<n>/<component>/model_world_size_*_rank_*.pt`), not on
    algorithm internals. An **actor-only** algorithm needs nothing extra. If your
    algorithm adds a trainable component beyond the actor (as PPO adds the critic), make
    sure that component lands under the same `global_step_<n>/<component>/` layout *with*
-   `checkpoint.save_contents=[model]`, and FedAvg/merge it with the same machinery —
+   `checkpoint.save_contents=[model]`, and FedAvg/merge it with the same machinery,
    `run_fed.fedavg(..., kind="<component>")` and `merge_to_hf(..., kind="<component>")`
    are already component-agnostic (they average and merge whatever shard dir they are
    given). The merger reads the architecture from the shard's `huggingface/config.json`,
@@ -412,10 +412,10 @@ if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
 
 ## 4. Add an aggregation rule (beyond FedAvg / FedProx)
 
-Aggregation has **two** seams, because FedProx is not a server rule — it is a
+Aggregation has **two** seams, because FedProx is not a server rule, it is a
 client-side proximal term, with server aggregation left as FedAvg.
 
-### 4a. Server-side rule — `aggregate_fedavg_fsdp.py`
+### 4a. Server-side rule: `aggregate_fedavg_fsdp.py`
 
 ### Where
 
@@ -444,7 +444,7 @@ objects, only local values changed), so the next round loads it with verl's own 
 wrap unchanged.
 
 Why write-back rather than a single-process load: on **real** verl-0.8 training
-checkpoints the params are `DTensor` and *do* load single-process — the earlier
+checkpoints the params are `DTensor` and *do* load single-process, the earlier
 "`ShardedTensor` cannot be loaded single-process" belief was an artifact of a synthetic
 spike's own save path, not of verl's. Matched-PG write-back is kept because structural
 identity makes the result provably round-trippable and sidesteps the re-wrap trap
@@ -470,7 +470,7 @@ torch.save(base, out / rank_file)          # same objects, averaged local values
    skeleton above; most rules (trimmed mean, median, FedAvgM, per-client weighting by
    `|X_i|`) are a different reduction over the same per-rank `sds` list. Keep the output
    structure intact: write `model_world_size_<ws>_rank_<rank>.pt`, copy
-   `fsdp_config.json` + `huggingface/`, and write `latest_checkpointed_iteration.txt` —
+   `fsdp_config.json` + `huggingface/`, and write `latest_checkpointed_iteration.txt`,
    that *is* the format the next round's clients load from.
 2. **A weighting hook already exists.** If your rule is "FedAvg but weighted", you do
    not need new code in the aggregator: compute the weights and pass them through
@@ -481,12 +481,12 @@ torch.save(base, out / rank_file)          # same objects, averaged local values
    (FedAvg correctness) and that they round-trip as `ShardedTensor` (so verl will load
    them). Run it on a real round before trusting a new rule.
 
-### 4b. Client-side rule — the `sitecustomize` FedProx hook
+### 4b. Client-side rule: the `sitecustomize` FedProx hook
 
 FedProx adds `mu * (w - w_t)` to the actor gradient before each optimizer step, where
 `w_t` is the round-start global model. In FedAgent's subprocess-per-round design each
 client-round is a **fresh process** that loads the aggregated model, so `w_t` is simply
-the params at the first optimizer step — no external per-round reset is needed.
+the params at the first optimizer step, no external per-round reset is needed.
 
 The hook is injected **without** a Ray `runtime_env` worker hook (which clobbered
 verl's per-worker `CUDA_VISIBLE_DEVICES`). Instead, `sitecustomize.py` at the repo
@@ -509,11 +509,11 @@ if mu > 0:
 
 `install_deferred_patch` arms a `sys.meta_path` finder that monkeypatches
 `FSDPEngine.optimizer_step` on verl's **first** import of
-`verl/workers/engine/fsdp/transformer_impl.py` — which happens *after* the Ray worker has
+`verl/workers/engine/fsdp/transformer_impl.py`, which happens *after* the Ray worker has
 its per-rank `CUDA_VISIBLE_DEVICES` set. (Importing `FSDPEngine` eagerly here at interpreter
 startup would pull in torch/verl before device assignment and break per-rank GPU isolation
 at multi-GPU, "Duplicate GPU detected".) The patch snapshots `w_t` on the first call, then
-adds the proximal gradient per local shard (FSDP1 sharded view / FSDP2 DTensor — the
+adds the proximal gradient per local shard (FSDP1 sharded view / FSDP2 DTensor, the
 elementwise `grad.add_` is correct on each shard) before the original step. The driver
 sets `FEDPROX_MU` per client when `fedprox_mu > 0`; plain FedAvg leaves `mu = 0` (a
 no-op, and `fedagent` is never even imported). Eval always strips `FEDPROX_MU`.
@@ -521,14 +521,14 @@ no-op, and `fedagent` is never even imported). Eval always strips `FEDPROX_MU`.
 To add **another** client-side rule on the same pattern: write the patch in a module
 under `fedagent/`, add an env-var gate to `sitecustomize.py`, and have `run_fed.py` set
 that env var per client. Keep the patch CUDA-free at import time (importing
-`FSDPEngine` must not initialize CUDA — it runs *before* verl assigns devices).
+`FSDPEngine` must not initialize CUDA, it runs *before* verl assigns devices).
 
 ---
 
 ## Smoke-test recipe
 
 Validate any extension end-to-end with the in-process TinyGuess smoke (2 clients × 2
-rounds, 1 step/client/round — closes the full federated loop in minutes, no services):
+rounds, 1 step/client/round, closes the full federated loop in minutes, no services):
 
 ```bash
 # inside the fedagent-verl08 conda env, on a GPU node
@@ -550,7 +550,7 @@ What to check per extension point:
 
 | You changed | The smoke proves | Then exercise |
 |---|---|---|
-| **A new in-process env** | point `env_spec` at your `config/envs/<env>.yaml` — it resolves, rolls out, and aggregates | full run on real data |
+| **A new in-process env** | point `env_spec` at your `config/envs/<env>.yaml`: it resolves, rolls out, and aggregates | full run on real data |
 | **A service-backed env** | (TinyGuess can't test the service) | set `env_kind: <env>`, watch `/health` come up, confirm episodes step |
 | **A heterogeneity strategy** | set `partition_strategy` + knobs; confirm the service `/health` echoes your partition and per-client slices differ | the het arm under [`./reproducing.md`](./reproducing.md) |
 | **A new algorithm** | set `adv_estimator`; for a critic-bearing algo confirm both components FedAvg/merge | `examples/webshop/scaled/ppo.yaml` as the PPO template |

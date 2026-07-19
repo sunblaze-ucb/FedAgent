@@ -1,43 +1,43 @@
 # Architecture
 
 FedAgent is **federated reinforcement learning for LLM agents**. This document explains how
-the `fedagent/` package implements it as a **thin overlay on stock verl 0.8** — what runs
+the `fedagent/` package implements it as a **thin overlay on stock verl 0.8**: what runs
 where, and how a federated round actually executes.
 
 ## Design principle: overlay, not fork
 
 The original FedAgent forked verl-agent 0.3.1 and wove federated logic *into* the trainer.
 This version imports **stock verl 0.8 as a library** and adds everything through verl's public
-extension points — **no patched verl tree**:
+extension points, **no patched verl tree**:
 
 | Extension point | What FedAgent plugs in |
 |---|---|
-| `data.custom_cls` | [`data/agentic_dataset.py`](../data/README.md) — emits env-spec rows instead of static text |
-| agent-loop registry (`agent.yaml`) | [`agent_loops/`](../agent_loops/README.md) — `GymTextAgentLoop`, multi-turn rollout |
-| Hydra `searchpath` | [`config/fedagent_ppo.yaml`](../config/README.md) — layered on verl's stock `ppo_trainer` |
+| `data.custom_cls` | [`data/agentic_dataset.py`](../data/README.md), emits env-spec rows instead of static text |
+| agent-loop registry (`agent.yaml`) | [`agent_loops/`](../agent_loops/README.md), `GymTextAgentLoop`, multi-turn rollout |
+| Hydra `searchpath` | [`config/fedagent_ppo.yaml`](../config/README.md), layered on verl's stock `ppo_trainer` |
 | interpreter startup (`sitecustomize.py`) | FedProx proximal term, gated on `FEDPROX_MU` |
-| process boundary (HTTP) | [`envs/webshop/service/`](../envs/webshop/service/README.md), [`envs/alfworld/service/`](../envs/alfworld/service/README.md) — remote envs |
+| process boundary (HTTP) | [`envs/webshop/service/`](../envs/webshop/service/README.md), [`envs/alfworld/service/`](../envs/alfworld/service/README.md), remote envs |
 
 The benefit: verl 0.8's trainer, FSDP engine, async agent-loop rollout, and model merger are
 used **as-is**, so the framework tracks upstream without fork maintenance.
 
 ## Two planes
 
-**Control plane** — [`fed/run_fed.py`](../fed/README.md). The federated round loop. It is
+**Control plane**: [`fed/run_fed.py`](../fed/README.md). The federated round loop. It is
 verl-agnostic: it never imports verl; a client is just a subprocess
 (`python -m fedagent.main_ppo_fed`). It orchestrates subprocesses, FedAvg, and merging.
 
-**In-framework hooks** — `envs/`, `agent_loops/`, `data/`, `fedprox.py`. These run *inside*
+**In-framework hooks**: `envs/`, `agent_loops/`, `data/`, `fedprox.py`. These run *inside*
 the verl client process, reached through the extension points above.
 
 ## Code map: `fedagent/` file → role
 
 Every first-party file in the live overlay, grouped by subpackage. Each subpackage also has
 its own README (linked) with code-level detail; this table is the one-screen index. There is
-**no** legacy `core/` / `eval/` / `scripts/` control plane here — the entire federated loop is
+**no** legacy `core/` / `eval/` / `scripts/` control plane here; the entire federated loop is
 [`fed/run_fed.py`](../fed/README.md) plus the in-process hooks below.
 
-### `fed/` — control plane ([README](../fed/README.md))
+### `fed/`: control plane ([README](../fed/README.md))
 
 | File | Role |
 |---|---|
@@ -45,42 +45,42 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 | `fed/metrics_logger.py` | Parses each client's verl `training.log` stdout into `json_logs/metrics.json` in the FedAgent plot schema (`[{"step", "metrics"}]`). Restores measurability without forking verl's `Tracking`. |
 | `fed/persistent_main.py`, `fed/persistent_patch.py`, `fed/persistent_task_runner.py` | The optional **persistent-trainer** path (lever #4, [acceleration.md](./acceleration.md)), used when `persistent=true`/`cross_round=true`. `persistent_main.py` is a `main_ppo_fed` counterpart that drives a `PersistentFedTaskRunner` (`init_workers()` once, then `fit()` per client over a JSON plan) to avoid the per-client subprocess cold-start; `persistent_task_runner.py` is that runner; `persistent_patch.py` arms (via `sitecustomize.py`, gated on `FEDAGENT_PERSISTENT=1`) the `reload_client_model` worker method that re-points the live FSDP engines at the next aggregated model. |
 
-### `envs/` — env contract + clients ([README](../envs/README.md))
+### `envs/`: env contract + clients ([README](../envs/README.md))
 
 | File | Role |
 |---|---|
-| `envs/base.py` | `BaseTextEnv` — the per-instance async env contract (`system_prompt` / `reset` / `step`), one env object per dataset row. Aligned with VAGEN's `GymBaseEnv`. |
+| `envs/base.py` | `BaseTextEnv`: the per-instance async env contract (`system_prompt` / `reset` / `step`), one env object per dataset row. Aligned with VAGEN's `GymBaseEnv`. |
 | `envs/registry.py` | `ENV_REGISTRY` mapping the row's `env_name` → env class; `make_env(...)`. Registers `TinyGuess`, `WebShop`, `ALFWorld`. |
-| `envs/tiny_guess.py` | `TinyGuessEnv` — dependency-free in-process guess-the-number env. Wiring smoke test, not part of the research suite. |
-| `envs/webshop/webshop_env.py` | `WebShopEnv` — thin async **HTTP client** to the WebShop service. Ferries action text in, formats verl-agent `WEBSHOP_TEMPLATE` observations out. |
+| `envs/tiny_guess.py` | `TinyGuessEnv`: dependency-free in-process guess-the-number env. Wiring smoke test, not part of the research suite. |
+| `envs/webshop/webshop_env.py` | `WebShopEnv`: thin async **HTTP client** to the WebShop service. Ferries action text in, formats verl-agent `WEBSHOP_TEMPLATE` observations out. |
 | `envs/webshop/service/server.py` | WebShop remote service (FastAPI). Pre-warms a pool of `WebAgentTextEnv`; serves `/create`·`/reset`·`/step`·`/close`; parses actions server-side with the original `webshop_projection`; reads heterogeneity `env_kwargs` from the environment. Runs in the `verl-agent-webshop` conda env. ([README](../envs/webshop/service/README.md)) |
 | `envs/webshop/service/run_service.sh` | Launch script for the WebShop service (port, conda env, vendored `engine/` on path). |
-| `envs/alfworld/alfworld_env.py` | `AlfworldEnv` — thin async **HTTP client** to the ALFWorld service. Mirrors `WebShopEnv`; uses verl-agent's `ALFWORLD_TEMPLATE_NO_HIS`. |
+| `envs/alfworld/alfworld_env.py` | `AlfworldEnv`: thin async **HTTP client** to the ALFWorld service. Mirrors `WebShopEnv`; uses verl-agent's `ALFWORLD_TEMPLATE_NO_HIS`. |
 | `envs/alfworld/service/server.py` | ALFWorld remote service (FastAPI). Builds `AlfredTWEnv` once, pre-warms a pool of `batch_size=1` textworld envs; per-seed game selection via `env.seed(seed)`; parses actions with `alfworld_projection`. Runs in the `verl-agent-alfworld` conda env. ([README](../envs/alfworld/service/README.md)) |
 | `envs/alfworld/service/run_service.sh` | Launch script for the ALFWorld service (port, conda env, `$ALFWORLD_DATA` / `$ALF_CONFIG`). |
 
-### `agent_loops/` — rollout ([README](../agent_loops/README.md))
+### `agent_loops/`: rollout ([README](../agent_loops/README.md))
 
 | File | Role |
 |---|---|
-| `agent_loops/gym_text_agent_loop.py` | `GymTextAgentLoop` (`@register("gym_text")`) — verl `AgentLoopBase` subclass that drives one `BaseTextEnv` per row on verl's native async seam (`reset → generate → decode → env.step → …`). Returns one concat `AgentLoopOutput` with a `response_mask` that is 1 on agent tokens, 0 on observation tokens, so PPO/GRPO trains only on actions. The verl-0.8 replacement for verl-agent's `TrajectoryCollector.multi_turn_loop`. |
-| `agent_loops/windowed_agent_loop.py` | `WindowedGymTextAgentLoop` (`@register("gym_text_windowed")`) — the **default** (`rollout_mode: windowed`): re-renders the paper's sliding per-turn window and emits **one training sample per turn** (the fork's faithful shape) instead of one concat sample per episode. |
-| `agent_loops/windowed_manager.py` | `WindowedAgentLoopManager` / `WindowedAgentLoopWorker` — injected by `run_fed`'s `inject_rollout_mode` (pins the manager class on every train/eval cmd) to fan per-turn samples back into verl's batch; also propagates the per-sample `traj_uid` tag — the hook for a possible future per-trajectory grouping estimator (`grpo_traj`), which is **not implemented** (the estimator is stock `grpo`). |
+| `agent_loops/gym_text_agent_loop.py` | `GymTextAgentLoop` (`@register("gym_text")`), verl `AgentLoopBase` subclass that drives one `BaseTextEnv` per row on verl's native async seam (`reset → generate → decode → env.step → …`). Returns one concat `AgentLoopOutput` with a `response_mask` that is 1 on agent tokens, 0 on observation tokens, so PPO/GRPO trains only on actions. The verl-0.8 replacement for verl-agent's `TrajectoryCollector.multi_turn_loop`. |
+| `agent_loops/windowed_agent_loop.py` | `WindowedGymTextAgentLoop` (`@register("gym_text_windowed")`), the **default** (`rollout_mode: windowed`): re-renders the paper's sliding per-turn window and emits **one training sample per turn** (the fork's faithful shape) instead of one concat sample per episode. |
+| `agent_loops/windowed_manager.py` | `WindowedAgentLoopManager` / `WindowedAgentLoopWorker`: injected by `run_fed`'s `inject_rollout_mode` (pins the manager class on every train/eval cmd) to fan per-turn samples back into verl's batch; also propagates the per-sample `traj_uid` tag, the hook for a possible future per-trajectory grouping estimator (`grpo_traj`), which is **not implemented** (the estimator is stock `grpo`). |
 
-### `data/` — dataset hook ([README](../data/README.md))
+### `data/`: dataset hook ([README](../data/README.md))
 
 | File | Role |
 |---|---|
-| `data/agentic_dataset.py` | `AgenticDataset` — verl `data.custom_cls` that emits one row **per env instance** from an env-spec YAML (`name`/`n_envs`/`max_turns`/`agent_name`/`config`), each with a distinct seed. Non-tensor columns flow to `AgentLoop.run()` as kwargs. `_partition_specs` is the *designated* per-client heterogeneity seam (meant to read `PARTITION_STRATEGY`/`CLIENT_ID`/… → `hetero/`), but is presently an identity no-op — heterogeneity is injected service-side, not here. |
+| `data/agentic_dataset.py` | `AgenticDataset`: verl `data.custom_cls` that emits one row **per env instance** from an env-spec YAML (`name`/`n_envs`/`max_turns`/`agent_name`/`config`), each with a distinct seed. Non-tensor columns flow to `AgentLoop.run()` as kwargs. `_partition_specs` is the *designated* per-client heterogeneity seam (meant to read `PARTITION_STRATEGY`/`CLIENT_ID`/… → `hetero/`), but is presently an identity no-op; heterogeneity is injected service-side, not here. |
 
-### `hetero/` — heterogeneity constructions ([README](../hetero/README.md))
+### `hetero/`: heterogeneity constructions ([README](../hetero/README.md))
 
 | File | Role |
 |---|---|
 | `hetero/webshop_task.py` | **Task-level** Preference (omega): a category-skewed (Dirichlet) goal distribution per client, full catalog. `preference_for_client(...) → goal_idxs`. |
 | `hetero/webshop_coverage.py` | **Task-level** Coverage (xi): Beta-sized per-client goal counts with controlled cross-client overlap, full catalog. `coverage_for_client(...)`. |
 | `hetero/webshop_hardness.py` | **Task-level** Hardness (xi'): easy-vs-hard skew from a precomputed per-task success file, full catalog. `hardness_for_client(...)` (requires a `trajectories_file`). |
-| `hetero/webshop_catalog_split.py` | **Env-level** Variant 1 — Catalog Split: each client gets a disjoint product catalog + goal slice (the hidden-kernel divergence P_i). `load_webshop_data`, `catalog_split_for_client(...)`. |
+| `hetero/webshop_catalog_split.py` | **Env-level** Variant 1, Catalog Split: each client gets a disjoint product catalog + goal slice (the hidden-kernel divergence P_i). `load_webshop_data`, `catalog_split_for_client(...)`. |
 | `hetero/webshop_env_variants.py` | **Env-level** Variants 2–5: Field-Subset Index, BM25 Reweighting, Lookalike Injection, Rank Wrapper. Emits the service `env_kwargs` overrides for each. |
 | `hetero/_beta_sizing.py` | Shared Beta-distribution sizing primitives (`default_r`, `generate_client_sizes`, `assign_with_overlap`) used by Coverage/Hardness. |
 
@@ -88,14 +88,14 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 > `partition_strategy.py` (with `base_seed=42`) so a client's shard is bit-identical to the
 > 0.3.1 baseline; only the thin public API around it is new. See [heterogeneity.md](./heterogeneity.md).
 
-### `config/` — Hydra configs ([README](../config/README.md))
+### `config/`: Hydra configs ([README](../config/README.md))
 
 | Path | Role |
 |---|---|
 | `config/fedagent_ppo.yaml` | The training config layered on verl's **stock** `ppo_trainer` (via `hydra.searchpath` → `$VERL_CFG`). Sets `adv_estimator`, `data.custom_cls`, batch sizes; machine paths come from the CLI. |
 | `config/agent.yaml` | Agent-loop registry consumed by verl's `AgentLoopManager`: maps `agent_name: gym_text` → `GymTextAgentLoop._target_`. |
-| `config/envs/*.yaml` | Env-spec files read by `AgenticDataset` (`tiny_guess`, `webshop_15`, `webshop_15_ppo`, `webshop_15_val`, `alfworld`, `alfworld_val`, …) — the per-run env pool + turn budget. |
-| `config/examples/**` | **Run configs** for `run_fed.py` (`examples/tinyguess_2cl_2rd.yaml`, `examples/webshop/`, `examples/alfworld/`): smoke, scaled WebShop arms, ALFWorld, FedProx. The top level holds **no** `fed_*.yaml` — only `agent.yaml` + `fedagent_ppo.yaml`. |
+| `config/envs/*.yaml` | Env-spec files read by `AgenticDataset` (`tiny_guess`, `webshop_15`, `webshop_15_ppo`, `webshop_15_val`, `alfworld`, `alfworld_val`, …), the per-run env pool + turn budget. |
+| `config/examples/**` | **Run configs** for `run_fed.py` (`examples/tinyguess_2cl_2rd.yaml`, `examples/webshop/`, `examples/alfworld/`): smoke, scaled WebShop arms, ALFWorld, FedProx. The top level holds **no** `fed_*.yaml`: only `agent.yaml` + `fedagent_ppo.yaml`. |
 | `config/paper/` | The paper matrix (the `fed_*.yaml` run configs live here): `uniform/<model>/`, `task_heterogeneity/{grpo,ppo}/`, `env_heterogeneity/<variant>{,_ppo}/`, `decentralized/`. See [reproducing.md](./reproducing.md). |
 
 ### Top-level overlay modules
@@ -111,8 +111,8 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 
 | Path | Role |
 |---|---|
-| `envs/{webshop,alfworld}/engine/` | The **vendored WebShop/ALFWorld engines** (+ original `partition_strategy.py`, `*_projection` action parsers). `sys.path`-injected by the env services so the environment MDP is the *same code* the original FedAgent used — now carrying **no verl-agent dependency**. The trainer itself is **stock verl 0.8**. |
-| `sitecustomize.py` (repo root) | Auto-imported by CPython at interpreter startup in every process on `PYTHONPATH` (client + Ray workers). Gated on `FEDPROX_MU`, it applies `fedprox.py`'s patch — deliberately **not** a Ray `runtime_env` hook (that clobbered per-worker `CUDA_VISIBLE_DEVICES`). |
+| `envs/{webshop,alfworld}/engine/` | The **vendored WebShop/ALFWorld engines** (+ original `partition_strategy.py`, `*_projection` action parsers). `sys.path`-injected by the env services so the environment MDP is the *same code* the original FedAgent used, now carrying **no verl-agent dependency**. The trainer itself is **stock verl 0.8**. |
+| `sitecustomize.py` (repo root) | Auto-imported by CPython at interpreter startup in every process on `PYTHONPATH` (client + Ray workers). Gated on `FEDPROX_MU`, it applies `fedprox.py`'s patch, deliberately **not** a Ray `runtime_env` hook (that clobbered per-worker `CUDA_VISIBLE_DEVICES`). |
 | `tools/verl08_migration/aggregate_fedavg_fsdp.py` | The FedAvg core. Run under `torchrun --nproc_per_node=world_size`: each rank averages its own FSDP shard in place across clients and re-saves, byte-structurally identical to a verl checkpoint so the next round loads it unchanged. Shelled out to by `run_fed.py`'s `fedavg`. |
 
 ## The federated round loop
@@ -160,7 +160,7 @@ python -m fedagent.main_ppo_fed                       (verl stock run_ppo + FedA
        ├─ GymTextAgentLoop (agent-loop registry)      → multi-turn rollout per row
        │     reset → generate → parse action → env.step → repeat (until done / max_turns)
        │     └─ BaseTextEnv: WebShopEnv / AlfworldEnv  → HTTP → remote env service
-       ├─ advantage (GRPO group of G — base 4, paper arms 8 — or GAE w/ critic)
+       ├─ advantage (GRPO group of G, base 4, paper arms 8, or GAE w/ critic)
        └─ actor update → FSDP checkpoint shards
 ```
 
@@ -222,13 +222,13 @@ trainer (fedagent-verl08)  ──HTTP──>  client 0 service (verl-agent-websh
 ```
 
 (Only the round's selected clients are up at once, so **at most `clients_per_round`
-per-client services are alive simultaneously** — not the whole fleet.)
+per-client services are alive simultaneously**: not the whole fleet.)
 
 `run_fed.py` starts the per-client services **lazily each round** (only that round's
 selected clients) via `start_webshop_services` / `start_alfworld_services`, waits for each
 `/health`, and **tears them down per round, before aggregation**; only the shared
 unperturbed VAL service stays up for the whole run and is stopped at the end. The
-services `sys.path`-inject the vendored engine from `fedagent/envs/<name>/engine/` — the **same
+services `sys.path`-inject the vendored engine from `fedagent/envs/<name>/engine/`, the **same
 code the original FedAgent used**, so the environment MDP is unchanged (see
 [migration.md](./migration.md)). This isolation is also why the service packages live at the
 top level of `fedagent/`, not under `envs/`.
@@ -252,8 +252,8 @@ It is deliberately **not** a Ray `runtime_env` hook (that clobbered verl's per-w
 ## Evaluation
 
 A single **unperturbed** validation service (full env, held-out val split, no heterogeneity)
-scores the **aggregated global model** **every round** (`if do_eval: run_eval(current_model, r)`)
-— plus the base model at round 0 (`val_before_train`) — at sampling temperature
+scores the **aggregated global model** **every round** (`if do_eval: run_eval(current_model, r)`),
+plus the base model at round 0 (`val_before_train`), at sampling temperature
 `val_temperature`. (`test_freq` is *not* this gate: it is verl's within-job step cadence for
 the per-client "circle" marks, not the global red line.) `eval_global` runs a verl `val_only`
 pass and parses the round→success/reward curve into `federated_summary.json`. A failed eval
@@ -268,8 +268,8 @@ FSDP shards are deleted after each merge (`cleanup_checkpoints`) to bound disk t
 
 ## See also
 
-- [running.md](./running.md) — how to run it (modes, GPUs, baselines, FedProx, eval)
-- [configuration.md](./configuration.md) — every config key
-- [reproducing.md](./reproducing.md) — the paper config matrix
-- [migration.md](./migration.md) — what changed from verl-agent 0.3.1, and the fidelity record
-- [migration_report.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/migration_report.md) (migrate/verl-0.8.0 branch) — the complete migration engineering report (route decision, the dependency saga, the checkpoint/agent-loop/env-service/windowed deep-dives)
+- [running.md](./running.md), how to run it (modes, GPUs, baselines, FedProx, eval)
+- [configuration.md](./configuration.md), every config key
+- [reproducing.md](./reproducing.md), the paper config matrix
+- [migration.md](./migration.md), what changed from verl-agent 0.3.1, and the fidelity record
+- [migration_report.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/migration_report.md) (migrate/verl-0.8.0 branch), the complete migration engineering report (route decision, the dependency saga, the checkpoint/agent-loop/env-service/windowed deep-dives)

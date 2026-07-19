@@ -6,10 +6,10 @@ goals across clients (dispersion = `success_std` = ξ′). The partition
 ([`../../hetero/webshop_hardness.py`](../../hetero/webshop_hardness.py) for WebShop;
 the ALFWorld branch of the vendored
 [`partition_strategy.py`](../../envs/alfworld/engine/agent_system/environments/partition_strategy.py))
-**requires** a labels file — there is no usable default.
+**requires** a labels file; there is no usable default.
 
 These are the **original FedAgent reference labels**, produced by the paper's **trained
-checkpoint** (a Qwen2.5-1.5B policy fine-tuned on each benchmark — *not* zero-shot), via
+checkpoint** (a Qwen2.5-1.5B policy fine-tuned on each benchmark, *not* zero-shot), via
 the original verl-agent inference pipeline (`scripts/inference/run_{webshop,alfworld}_inference.sh`,
 Sept 2025), and copied verbatim from the original `output/inference/` summaries.
 
@@ -30,7 +30,7 @@ Sept 2025), and copied verbatim from the original `output/inference/` summaries.
 
 The partition reads only `trajectories` (the `metadata` block records provenance and is
 ignored). `success` is a **strict binary** (the episode achieved the benchmark's success
-condition). `task_id` matches the partition's keying **by construction** — both the labels
+condition). `task_id` matches the partition's keying **by construction**; both the labels
 and the partition come from the same verl-agent code:
 - **WebShop**: `f"{asin}_{abs(md5(sorted(goal_options.items())))}"` (e.g.
   `B07WMMYB6G_18488311…`).
@@ -40,7 +40,7 @@ and the partition come from the same verl-agent code:
 ## Regenerating
 
 The labels depend on the reference policy, so regenerate per backbone if you change it:
-- **WebShop**: the overlay ships a generator — run it with a **trained** checkpoint as the
+- **WebShop**: the overlay ships a generator, run it with a **trained** checkpoint as the
   reference (NOT the base instruct model; zero-shot Qwen2.5-1.5B strictly succeeds on only
   ~1.4 % of goals, which collapses the easy/hard split):
   ```bash
@@ -53,4 +53,4 @@ The labels depend on the reference policy, so regenerate per backbone if you cha
   original verl-agent inference pipeline (`run_alfworld_inference.sh` over the train split).
   Regenerating requires that pipeline (or a port of it) with a trained checkpoint.
 
-Both keep the schema identical, so no config change is needed — just overwrite the file.
+Both keep the schema identical, so no config change is needed, just overwrite the file.

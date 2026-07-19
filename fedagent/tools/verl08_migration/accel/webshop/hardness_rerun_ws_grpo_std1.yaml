@@ -1,0 +1,62 @@
+# TASK-HET hardness (xi'=1) | GRPO | webshop | Qwen2.5-1.5B-Instruct  — CORRECTED-partition RE-RUN
+# = config/paper/task_heterogeneity/grpo/webshop/...p-hardness_success_std-1.yaml
+#   + the acceleration stack (cross_round + worker eval + service_scope=run + final_eval worker,
+#     hf_export=every_round to keep round-level resume) + WebShop fused kernels
+#   + local offline model snapshot + GPFS output_dir.
+# Purpose: regenerate the Hardness xi'=1 numbers with the FIXED hardness_partition
+#   (X_i = Y_i u F_i; see docs/bugfixes.md 2026-07-19). Accel knobs are A/B-equivalent
+#   (max|Delta|<=9.3e-5, docs/acceleration.md). webshop_replicas intentionally OFF (rejected for WS).
+
+env_kind: webshop
+env_spec: config/envs/webshop_15.yaml
+val_env_spec: config/envs/webshop_15_val.yaml
+output_dir: /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent/runs/hardness_rerun/grpo_ws_std1
+model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+
+# --- federation protocol ---
+total_clients: 100
+clients_per_round: 2
+total_rounds: 70
+epochs_per_round: 3
+base_seed: 42
+
+# --- 4-GPU FSDP recipe + unperturbed validation ---
+n_gpus_per_node: 4
+total_training_steps: 0
+save_freq: 100000
+test_freq: 5
+val_before_train: true
+client_end_eval: true                               # paper protocol (per-client circle marks)
+val_temperature: 0.4
+wait_between_clients: 8
+min_goals_per_client: 100
+webshop_pool_size: 16
+webshop_base_port: 19728
+webshop_val_port: 19828
+search_return_n: 50
+
+# --- acceleration stack (docs/acceleration.md; all A/B-equivalent) ---
+cross_round: true                                   # ONE trainer+vLLM process for the whole run
+eval_mode: worker                                   # score each round's aggregate on the hot engine
+service_scope: run                                  # keep per-client env services warm across rounds
+final_eval_mode: worker                             # score the final model on the hot engine
+hf_export: every_round                              # keep round-level resume (walltime safety)
+
+# --- heterogeneity (FIXED partition) ---
+partition_strategy: hardness
+success_std: 1
+trajectories_file: data/hardness/qwen2.5-1.5b_webshop_trajectories.json   # trained-checkpoint labels
+
+client_overrides:
+  - data.train_batch_size=8
+  - data.max_prompt_length=4096
+  - data.max_response_length=512
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=8
+  - actor_rollout_ref.rollout.prompt_length=4096
+  - actor_rollout_ref.rollout.response_length=512
+  - actor_rollout_ref.rollout.max_model_len=4608
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.6
+  - actor_rollout_ref.model.use_fused_kernels=True
+  - actor_rollout_ref.model.fused_kernel_options.impl_backend=triton
+  - actor_rollout_ref.actor.checkpoint.save_contents=[model]

@@ -1,4 +1,4 @@
-# `envs/alfworld/service/` — one HTTP ALFWorld engine per federated client
+# `envs/alfworld/service/`: one HTTP ALFWorld engine per federated client
 
 A tiny [FastAPI](https://fastapi.tiangolo.com/) service that wraps the real
 ALFWorld / TextWorld engine behind HTTP, so the verl-0.8 trainer can drive
@@ -9,7 +9,7 @@ launched, one process per client, by [`../../../fed/run_fed.py`](../../../fed/ru
 ## Why a separate service
 
 ALFWorld needs the **TextWorld + Fast-Downward planning stack** plus `alfworld`,
-`gymnasium`, and pinned `torch`/`torchvision` — none of which are compatible with
+`gymnasium`, and pinned `torch`/`torchvision`, none of which are compatible with
 the trainer's `fedagent-verl08` env (see the [root README](../../../README.md)).
 So the heavy engine runs in its **own conda env** (`verl-agent-alfworld`, holding
 the vendored engine under [`../engine/`](../engine/), which `server.py`
@@ -25,8 +25,8 @@ built from this client's slice of the **train** games (the env arm of the paper'
 Input-Dynamics Asymmetry; eval splits stay full). `../../../fed/run_fed.py`'s
 `start_alfworld_services()` launches one `run_service.sh` per client on
 `alfworld_base_port + client_id`, sets `ALFWORLD_SERVICE_URL` per client, and waits on
-each `/health`. `run_fed.py` starts these **lazily per round** — only the round's
-selected clients, so at most `clients_per_round` services run concurrently — and tears
+each `/health`. `run_fed.py` starts these **lazily per round** (only the round's
+selected clients, so at most `clients_per_round` services run concurrently) and tears
 them down **per round, before aggregation**; only the shared val service persists to the
 end of the run.
 
@@ -39,7 +39,7 @@ uvicorn fedagent.envs.alfworld.service.server:app --host 0.0.0.0 --port "$PORT" 
 ```
 
 On startup (`_lifespan`) the service builds the `AlfredTWEnv` **once** (it walks
-`$ALFWORLD_DATA` collecting solvable games — the slow part) and pre-warms a
+`$ALFWORLD_DATA` collecting solvable games, the slow part) and pre-warms a
 **pool** of `POOL_SIZE` single-instance TextWorld gym envs
 (`AlfredTWEnv.init_env(batch_size=1)`) so per-episode registration cost is paid
 up front. Episodes then run as **borrow → reset → step\* → return** against the
@@ -60,13 +60,13 @@ rollouts) is preserved.
 | `POST` | `/close`  | `close(Sid)` | Return the env to the pool for the next episode |
 
 `/health` returns
-`{ok, free, sessions, num_games, split, task_types, partition, client_id, client_num, alfworld_data}`
-— so a caller (and `start_alfworld_services()`, which logs `partition` and
+`{ok, free, sessions, num_games, split, task_types, partition, client_id, client_num, alfworld_data}`,
+so a caller (and `start_alfworld_services()`, which logs `partition` and
 `num_games`) can confirm the shard before training.
 
 Per-episode game selection is deterministic: TextWorld's `reset()` takes no game
 argument (it advances a shuffled iterator), so `/reset` calls `env.seed(seed)`
-first, mapping each `seed` value to a fixed game — the analog of WebShop's
+first, mapping each `seed` value to a fixed game, the analog of WebShop's
 per-seed goal selection. `/step` parses the model's action text **server-side**
 with the original `alfworld_projection` (loaded in isolation), runs one PDDL
 action, and computes the reward.
@@ -106,7 +106,7 @@ not by this service.
 `AlfredTWEnv` with `train_eval`, `client_id`, `client_num`,
 `partition_strategy`, `min_games_per_client`, and the strategy-specific kwargs
 from `_partition_kwargs()`. The engine collects solvable games from the chosen
-split and — for the **train** split with `client_num > 1` — keeps only this
+split and, for the **train** split with `client_num > 1`, keeps only this
 client's partition; eval splits always use the full dataset. `num_games` (the
 resulting shard size) is reported on `/health`.
 
@@ -115,7 +115,7 @@ upstream partition functions reject unexpected kwargs):
 
 | `PARTITION_STRATEGY` | Level | Extra kwargs forwarded |
 |---|---|---|
-| `uniform` | — | none (even split) |
+| `uniform` | - | none (even split) |
 | `env_disjoint` | environment | none |
 | `preference` | task | `omega` (from `OMEGA`) |
 | `coverage` | task | `size_std` (from `SIZE_STD`) |
@@ -158,14 +158,14 @@ curl -s localhost:8200/health        # -> {... "num_games": N, "split": "train",
 
 ## Files
 
-- `server.py` — FastAPI app: pool lifecycle, env-var bridge, `/health` `/create` `/reset` `/step` `/close`.
-- `run_service.sh` — activates `verl-agent-alfworld`, exports `ALFWORLD_DATA` / `PYTHONPATH`, `exec`s `uvicorn`.
-- `__init__.py` — package marker; never imported trainer-side (only the sibling `../alfworld_env.py` client is), so the trainer env never pulls ALFWorld deps.
+- `server.py`: FastAPI app: pool lifecycle, env-var bridge, `/health` `/create` `/reset` `/step` `/close`.
+- `run_service.sh`: activates `verl-agent-alfworld`, exports `ALFWORLD_DATA` / `PYTHONPATH`, `exec`s `uvicorn`.
+- `__init__.py`: package marker; never imported trainer-side (only the sibling `../alfworld_env.py` client is), so the trainer env never pulls ALFWorld deps.
 
 ## See also
 
-- [`../../../README.md`](../../../README.md) — project overview and two-conda-env setup.
-- [`../alfworld_env.py`](../alfworld_env.py) — the trainer-side HTTP client (`AlfworldEnv`).
-- [`../../webshop/service/`](../../webshop/service/) — the WebShop service this mirrors.
-- [`../../../hetero/`](../../../hetero/) — WebShop heterogeneity constructions (ALFWorld uses the engine's native partitioner).
-- [`../../../fed/run_fed.py`](../../../fed/run_fed.py) — federated runner; `start_alfworld_services()` launches one service per client.
+- [`../../../README.md`](../../../README.md), project overview and two-conda-env setup.
+- [`../alfworld_env.py`](../alfworld_env.py), the trainer-side HTTP client (`AlfworldEnv`).
+- [`../../webshop/service/`](../../webshop/service/), the WebShop service this mirrors.
+- [`../../../hetero/`](../../../hetero/), WebShop heterogeneity constructions (ALFWorld uses the engine's native partitioner).
+- [`../../../fed/run_fed.py`](../../../fed/run_fed.py), federated runner; `start_alfworld_services()` launches one service per client.

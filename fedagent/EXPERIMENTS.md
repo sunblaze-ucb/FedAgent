@@ -1,15 +1,15 @@
-# FedAgent → verl 0.8 — Experiment Log
+# FedAgent → verl 0.8: Experiment Log
 
 Lab notebook for the FedAgent (federated agent-RL) migration from vendored verl-agent
 0.3.1 to **verl 0.8.0**, on branch `migrate/verl-0.8.0`. Records every run: setup,
 result, status, artifacts.
 
-> **Living document** — the status table, observed-reward data, and the roadmap below are
+> **Living document**: the status table, observed-reward data, and the roadmap below are
 > updated as runs complete and the plan evolves. Last sections: completed runs (top) →
 > in-flight → **planned roadmap** (bottom).
 
 ## Setup
-- **Package**: `fedagent/` (thin overlay — imports verl 0.8 as a library, stock
+- **Package**: `fedagent/` (thin overlay, imports verl 0.8 as a library, stock
   `RayPPOTrainer` + native async `AgentLoopManager`, no trainer fork).
 - **Trainer env**: conda `fedagent-verl08` (py3.12, torch 2.8.0+cu128, vllm 0.11, flash-attn 2.7.4).
 - **WebShop env**: conda `verl-agent-webshop` (gym 0.24 / pyserini / Java), runs as a remote HTTP service.
@@ -20,7 +20,7 @@ result, status, artifacts.
   `config/uniform/*/main/grpo/*.yaml` -- NOT GiGPO, despite the verl-agent fork being the GiGPO repo).
   The migration keeps the SAME algorithm (GRPO, group size G=8) and only swaps the ROLLOUT MECHANISM
   to verl 0.8's native concat multi-turn agent loop (the fork's per-turn rollout machinery is not ported).
-- **Note**: federated checkpoints live on the COMPUTE node's `/tmp` — inspect via `srun --overlap`.
+- **Note**: federated checkpoints live on the COMPUTE node's `/tmp`, inspect via `srun --overlap`.
   The recurring `DataLoader worker ... Killed` traceback is a benign teardown artifact (every client exits 0).
 
 ## Status summary
@@ -32,10 +32,10 @@ result, status, artifacts.
 | 1 | TinyGuess smoke through `fedagent` package | Qwen0.5B, 2×H100 | canonical FSDP ckpt ×2 | ✅ |
 | 2 | WebShop remote service + GRPO smoke | Qwen0.5B, 6-turn | real episodes; reward≈0 (small model) | ✅ |
 | 6 | Matched-PG FedAvg on REAL verl-0.8 ckpts | 2 real Qwen ckpts | max\|got−avg\|=0.0 | ✅ |
-| 7a | **Federated loop — TinyGuess 2 client × 2 round** | Qwen0.5B | loop CLOSED (R2 from R1 aggregate), exit 0 | ✅ |
+| 7a | **Federated loop, TinyGuess 2 client × 2 round** | Qwen0.5B | loop CLOSED (R2 from R1 aggregate), exit 0 | ✅ |
 | 7b | **Federated WebShop Catalog-Split 2×2** | Qwen0.5B, env-het | catalogs 762/750, loop CLOSED | ✅ |
 | 4v | Catalog-Split determinism (CPU) | numpy 1.26 & 2.2 | c0=762, c1=750, Jaccard 0.62, identical | ✅ |
-| P | **Signal probe** — 1.5B / 15-turn WebShop | 1 client, 4 steps | reward 0.026→0.147 (max 0.857) | ✅ |
+| P | **Signal probe**: 1.5B / 15-turn WebShop | 1 client, 4 steps | reward 0.026→0.147 (max 0.857) | ✅ |
 | A | Scaled env-het (catalog_split) | 1.5B/15-turn, 2×4 | R1/2/3 mean 0.137/0.138/0.093 (flat); within-round peaks ~0.26 | ⚠ OOM at R4 (ran concurrent w/ B) |
 | B | Scaled task-het (task_disjoint) | 1.5B/15-turn, 2×4 | R1/2 mean 0.156/0.124 | ⚠ OOM at R3 (ran concurrent w/ A) |
 | Fx | FedProx hook test | 1.5B, μ=0.1, 1×2 | `[fedprox] enabled` in every worker | ✅ |
@@ -54,45 +54,45 @@ Legend: ✅ done · ▶ running · ⏳ queued.
 
 ## Validation spikes (Phase 0)
 
-**0a — checkpoint round-trip + matched-PG FedAvg.** `tools/verl08_migration/phase0a_ckpt_roundtrip.py`.
+**0a, checkpoint round-trip + matched-PG FedAvg.** `tools/verl08_migration/phase0a_ckpt_roundtrip.py`.
 Established that verl-0.8 FSDP shards are averaged under a matched-world-size `torchrun` PG
 (`aggregate_fedavg_fsdp.py`). FedAvg numerically exact; round-trips through verl's own loader.
 
-**0b — custom AgentLoop on stock trainer.** `tools/verl08_migration/run_phase0b.sh`.
-Proved a custom `AgentLoopBase` runs the full GRPO loop on STOCK `verl.trainer.main_ppo` (no fork) —
+**0b, custom AgentLoop on stock trainer.** `tools/verl08_migration/run_phase0b.sh`.
+Proved a custom `AgentLoopBase` runs the full GRPO loop on STOCK `verl.trainer.main_ppo` (no fork),
 the seam the whole overlay rests on.
 
 ## Package smokes (Phase 1–2)
 
-**1 — TinyGuess.** `fedagent/scripts/run_smoke.sh`. `python -m fedagent.main_ppo_fed` + Hydra config +
+**1, TinyGuess.** `fedagent/scripts/run_smoke.sh`. `python -m fedagent.main_ppo_fed` + Hydra config +
 `custom_cls` dataset + registered AgentLoop → rollout→GRPO→update→checkpoint ×2, canonical
 `global_step_N/actor/model_world_size_2_rank_*.pt` layout.
 
-**2 — WebShop.** `fedagent/scripts/run_webshop_smoke.sh`. Remote service (FastAPI in `verl-agent-webshop`,
+**2, WebShop.** `fedagent/scripts/run_webshop_smoke.sh`. Remote service (FastAPI in `verl-agent-webshop`,
 pre-warmed env pool, server-side action parsing) + thin HTTP client. Real 6-turn episodes → GRPO → ckpt.
-Reward ≈ 0 (Qwen0.5B can't shop in 6 truncated turns) — plumbing proven, signal deferred to a capable model.
+Reward ≈ 0 (Qwen0.5B can't shop in 6 truncated turns), plumbing proven, signal deferred to a capable model.
 
 ## Federated loop (Phase 6/7)
 
-**7a — TinyGuess 2×2.** `fedagent/scripts/run_tinyguess_fed_smoke.sh`. The closed loop:
+**7a, TinyGuess 2×2.** `fedagent/scripts/run_tinyguess_fed_smoke.sh`. The closed loop:
 per-(client,round) `main_ppo_fed` → matched-PG FedAvg → `model_merger` (FSDP→HF) → round 2 trains from
 the round-1 aggregate. `federated_summary.json`: round 2 `started_from` = round-1 aggregated HF. Exit 0.
 
-**7b — WebShop Catalog-Split 2×2.** `fedagent/scripts/run_webshop_fed_smoke.sh`. Each client a DISJOINT
+**7b, WebShop Catalog-Split 2×2.** `fedagent/scripts/run_webshop_fed_smoke.sh`. Each client a DISJOINT
 product catalog via its own service (client 0 = 762 ASINs @:8080, client 1 = 750 @:8081); FedAvg across
 the divergent envs; round 2 re-enters from the aggregate. Proves the env-heterogeneity arm composes with
 the federated loop on the real env. (Qwen0.5B → reward weak; mechanism proof.)
 
 ## Heterogeneity + signal (Phase 4 / scaling)
 
-**4v — Catalog-Split determinism.** `fedagent/hetero/webshop_catalog_split.py` (verbatim port of the
+**4v, Catalog-Split determinism.** `fedagent/hetero/webshop_catalog_split.py` (verbatim port of the
 `_distractor_disjoint_partition_webshop_v5` partition). Verified per-client catalogs are distinct
 (client0=762, client1=750 ASINs, Jaccard 0.62), goal slices disjoint, and IDENTICAL under numpy 1.26
-(WebShop env) and 2.2 (trainer env) — `RandomState` is version-stable.
+(WebShop env) and 2.2 (trainer env), `RandomState` is version-stable.
 
-**P — signal probe.** `config/examples/webshop/probe_signal.yaml`. Qwen2.5-1.5B, 15-turn WebShop, 1 client,
+**P, signal probe.** `config/examples/webshop/probe_signal.yaml`. Qwen2.5-1.5B, 15-turn WebShop, 1 client,
 4 steps, full catalog. **critic/rewards/mean = 0.026 → 0.036 → 0.104 → 0.147** (max → 0.857). First
-nonzero, *rising* reward — the env produces a learnable signal with a capable model + 15-turn budget.
+nonzero, *rising* reward: the env produces a learnable signal with a capable model + 15-turn budget.
 
 ## In-flight: the A/B/C decomposition (Phase 8-lite)
 
@@ -109,7 +109,7 @@ factor each so the asymmetry decomposes cleanly:
 under FedAvg. Expected (Input-Dynamics Asymmetry): A−B negative (env-het hurts), B−C ≈ 0 (task-het robust).
 Analyze with `tools/verl08_migration/summarize_fed_run.py A=… B=… C=…`.
 
-**Fx — FedProx hook test.** `config/examples/webshop/fedprox_test.yaml` (μ=0.1). Verifies the non-fork FedProx
+**Fx, FedProx hook test.** `config/examples/webshop/fedprox_test.yaml` (μ=0.1). Verifies the non-fork FedProx
 injection (`fedagent/fedprox.py` patches `FSDPEngine.optimizer_step` via the Ray
 `worker_process_setup_hook`). Look for `[fedprox] enabled: proximal mu=0.1` in the worker log.
 
@@ -132,18 +132,18 @@ per round = mean-over-clients of the round's step-averaged reward:
 | **slope/rd** | **+0.0023** | **+0.0035** | **+0.0090** |
 | **mean** | 0.126 | 0.147 | 0.133 |
 
-**Finding (directional, suggestive — not yet conclusive).** Both by **compounding slope**
+**Finding (directional, suggestive, not yet conclusive).** Both by **compounding slope**
 (homog +0.0090 > task +0.0035 > **envhet +0.0023**) and by mean reward, the
 **env-heterogeneity arm (catalog_split) is the distinct loser**; the task-heterogeneity arm
 (task_disjoint) tracks the IID baseline (B−C ≈ 0, noisy). envhet's total 8-round gain
 (+0.015) is ~¼ of the IID baseline's (+0.055). This is **directionally consistent with the
 Input-Dynamics Asymmetry**: env (transition-kernel P_i) heterogeneity degrades FedAvg while
-task (goal-distribution) heterogeneity is ~robust. It is also the **first multi-round signal**
-— the earlier 4-round runs were flat.
+task (goal-distribution) heterogeneity is ~robust. It is also the **first multi-round signal**,
+the earlier 4-round runs were flat.
 
 **Honest caveats**: **1 seed**, **4 steps/round** ⇒ per-round reward is noisy (the A−B/B−C
 *trajectory* is not readable round-by-round; only the aggregate slope/mean ordering is). The
-absolute gaps sit within the noise band. This is **suggestive, not significant** — paper-scale
+absolute gaps sit within the noise band. This is **suggestive, not significant**: paper-scale
 (E×T≈210) × **3 seeds** + unperturbed validation are needed for a firm claim (Phase 8-full).
 `task` here is the `task_disjoint` stand-in; the faithful Preference/Coverage task arm is a
 follow-up (Coverage run launched). Reproduce: `tools/verl08_migration/collect_fed_logs.sh`.
@@ -162,12 +162,12 @@ follow-up (Coverage run launched). Reproduce: `tools/verl08_migration/collect_fe
 
 - **Signal is real**: with Qwen2.5-1.5B @ 15 turns, `critic/rewards/mean` is nonzero and
   rises *within* a round (probe 0.026→0.147; scaled within-round peaks ~0.26–0.28). With
-  Qwen0.5B @ 6 turns it was ~0 — capable model + turn budget matter.
+  Qwen0.5B @ 6 turns it was ~0, capable model + turn budget matter.
 - **No compounding at tiny budget**: across federated rounds at 4 steps/round the round-mean
   reward is FLAT/noisy (A 0.137/0.138/0.093; B 0.156/0.124), so the env-vs-task asymmetry is
   NOT visible at 16 steps. Each round re-enters from the aggregate with a FRESH optimizer
   (faithful to FedAgent), so durable progress needs many more steps × rounds. **The asymmetry
-  MAGNITUDE requires ~paper budget (E×T≈210)** — a dedicated large run, not a debugging-window run.
+  MAGNITUDE requires ~paper budget (E×T≈210)**: a dedicated large run, not a debugging-window run.
 - **OOM lesson (memory sizing)**: the SLURM job has a **900GB** memory cgroup; each WebShop
   service env is **≈14GB** (in-memory catalog/index). So pool=16 ×2 services ≈ **32 envs ≈448GB
   per run** (safe), but **two concurrent runs ≈64 envs ≈896GB → OOM** (killed a worker → both
@@ -199,9 +199,9 @@ byte-for-byte** from verl-agent's `partition_strategy.py` (now vendored at `feda
 8/8 functions identical to source). Then wired + independently smoke-tested:
 
 - **Task-level variants** (full catalog, goal-distribution skew only):
-  - `fedagent/hetero/webshop_coverage.py` — `coverage_for_client(...)` (Beta-sized goal
+  - `fedagent/hetero/webshop_coverage.py`: `coverage_for_client(...)` (Beta-sized goal
     coverage ξ). Verified: client0=876 / client1=124 goals, overlap 0.
-  - `fedagent/hetero/webshop_hardness.py` — `hardness_for_client(...)` (Beta easy/hard ξ′);
+  - `fedagent/hetero/webshop_hardness.py`: `hardness_for_client(...)` (Beta easy/hard ξ′);
     requires a `TRAJECTORIES_FILE` (task_id→success); raises cleanly if missing/empty.
   - shared `fedagent/hetero/_beta_sizing.py` (`generate_client_sizes` / `assign_with_overlap`).
 - **Env-level (transition) variants 2–5** (`fedagent/hetero/webshop_env_variants.py`,
@@ -229,10 +229,10 @@ byte-for-byte** from verl-agent's `partition_strategy.py` (now vendored at `feda
     + per-client `ALFWORLD_SERVICE_URL` + generic `stop_services`. New `config/envs/alfworld.yaml`
     (max_turns 20) + `config/examples/alfworld/smoke.yaml` (2×2, n_gpus 4). Config validated
     offline (service URLs, gen_batch=pool=8, registry); GPU federated run pending a free node.
-  - **GPU federated run — 2nd-env loop PROVEN (2026-06-20).** After two GPU bugs found+fixed,
+  - **GPU federated run, 2nd-env loop PROVEN (2026-06-20).** After two GPU bugs found+fixed,
     the federated ALFWorld loop **trained 2 full GRPO steps end-to-end** (service → concat
     `gym_text` agent loop → GRPO → `update_actor`; num_turns mean ~19/20, response ~3000 tok).
-    `critic/rewards/mean = 0` (Qwen2.5-1.5B can't *solve* ALFWorld at this budget — expected;
+    `critic/rewards/mean = 0` (Qwen2.5-1.5B can't *solve* ALFWorld at this budget, expected;
     the mechanism is what's proven). Bugs: **(1)** pool=8 raced textworld's shared module-level
     PDDL parser (`tatsu` `IndexError: pop from empty list`) → process-global `_TW_LOCK`
     serializing `reset`/`step`; **(2)** batch shape (`data size must be divisible by
@@ -240,7 +240,7 @@ byte-for-byte** from verl-agent's `partition_strategy.py` (now vendored at `feda
     Remaining: vLLM `EngineCore died` at step 3 = **memory/stability tuning** (20-turn concat
     stresses the KV cache), not a loop bug; needs lower `max_model_len`/shorter turns for a full run.
 
-**FedProx under verl 0.8 — injection finding (2026-06-20).** The proximal patch is correct and
+**FedProx under verl 0.8, injection finding (2026-06-20).** The proximal patch is correct and
 the hook *fires* (`[fedprox] enabled: proximal mu=0.1` in every actor worker), BUT injecting it
 via `ray_kwargs.ray_init.runtime_env.worker_process_setup_hook` **breaks verl's per-worker GPU
 isolation** → `Duplicate GPU detected: rank N and rank 0 both on CUDA device 42000`. Confirmed
@@ -257,9 +257,9 @@ generalizes beyond catalog_split, and whether a *faithful* task variant tracks I
 - **rank_wrapper** (env Variant 5, 4rd): mean **0.076** ≪ homog 0.113 ⇒ a 2nd env-het pattern
   underperforms IID (consistent with env-het-hurts).
 - **bm25_reweight** (env Variant 3): trained with **real reward** (R1 mean 0.134, max 0.70) but
-  the run hit `No space left on device` at R2 (compute /tmp full) — inconclusive (2 rounds);
+  the run hit `No space left on device` at R2 (compute /tmp full), inconclusive (2 rounds);
   rerun with disk hygiene pending.
-- **lookalike** (env Variant 4): **data-format bug** — injected products have a list field where
+- **lookalike** (env Variant 4): **data-format bug**: injected products have a list field where
   the WebShop engine's `load_products` calls `.split()` (`AttributeError: 'list' object has no
   attribute 'split'`); parked pending a format fix.
 
@@ -275,7 +275,7 @@ mid-flight. Fix: `run_fed.cleanup_round_checkpoints` deletes the consumed per-cl
 disk at ~one round. Plus a relaunch wrapper that `ray stop`s + clears stale procs (the failed
 FedProx attempts had left a Ray cluster → `Duplicate GPU detected` on relaunch).
 
-**Seed robustness — seed-43 REPLICATES the env effect (2026-06-20).** Re-ran the 3-way at
+**Seed robustness, seed-43 REPLICATES the env effect (2026-06-20).** Re-ran the 3-way at
 **base_seed 43** (8 rounds, disk hygiene on). The env arm vs IID, both seeds:
 
 | | envhet slope | homog slope | envhet mean | homog mean |
@@ -284,7 +284,7 @@ FedProx attempts had left a Ray cluster → `Duplicate GPU detected` on relaunch
 | seed 43 | +0.0023 | +0.0052 | 0.123 | 0.144 |
 
 **env-het compounds slower than IID *and* has lower mean reward in BOTH seeds** (envhet's slope
-is +0.0023 in both). The env-het-underperforms finding **replicates across 2 seeds** — materially
+is +0.0023 in both). The env-het-underperforms finding **replicates across 2 seeds**, materially
 strengthening the headline beyond the single-seed caveat. (seed-43 `task_disjoint` arm still
 running → full seed-43 3-way decomposition + the env-het generality at 8 rounds, rank/bm25,
 pending those runs.)
@@ -328,17 +328,17 @@ diverged from the paper recipe on 8 science-critical points. All fixed + GPU-ver
 - **B2 SEARCH_RETURN_N** default 50 → **200** (run_fed DEFAULTS + both service starters + hardness
   generator): env-het needs ≥100 (filtered catalogs drop targets under top-50 BM25).
 - **B4 GRPO objective** restored in **base** `fedagent_ppo.yaml` (`use_kl_loss=true,
-  kl_loss_coef=0.01, kl_loss_type=low_var_kl, entropy_coeff=0.001`) — compose-verified to
+  kl_loss_coef=0.01, kl_loss_type=low_var_kl, entropy_coeff=0.001`), compose-verified to
   propagate to every GRPO arm.
 - **B5 prompt tokenization**: agent loop now uses a NON-truncating `_tokenize_chat` (the stock
   `apply_chat_template` left-truncates to prompt_length=2048, silently dropping multi-turn obs).
 - **B7 reward**: WebShop service returns **sparse {0,10}** (dense kept as `task_score`) + agent-loop
-  **invalid-action penalty** (coef 0.1) — both reproduced from verl-agent envs.py.
+  **invalid-action penalty** (coef 0.1), both reproduced from verl-agent envs.py.
 - **B8 val specs**: WebShop 500 / ALFWorld 140 (+274 via the by-task-type eval tool).
 - **ALFWorld het wiring**: run_fed forwards OMEGA/SIZE_STD/SUCCESS_STD/TRAJECTORIES_FILE →
   service `_partition_kwargs()` → AlfredTWEnv → partition_dataset.
 
-- **B3 (the crux) — WebShop task-het goal mapping.** The original partitions the env's ACTUAL
+- **B3 (the crux), WebShop task-het goal mapping.** The original partitions the env's ACTUAL
   `server.goals` (the seed-42 *shuffled* list) and maps back via `goals.index()`, so the served
   goal at index *i* carries the category/size/hardness the partition selected. The overlay was
   computing indices from `_generate_goal_asins_for_partition` (the **unshuffled** order), so for
@@ -348,11 +348,11 @@ diverged from the paper recipe on 8 science-critical points. All fixed + GPU-ver
   goal-id logging now uses the real options-hash task_id (matches `hardness_partition`).
   - GPU-verified the lynchpin: `server.goals` is reproducible run-to-run and **identical** whether
     or not a `catalog_filter_asins` is applied (goals come from the full pool; the filter is pure
-    list ops, no RNG) — so catalog_split/task_disjoint (contiguous index RANGE from raw products)
+    list ops, no RNG), so catalog_split/task_disjoint (contiguous index RANGE from raw products)
     were **already equivalent** (an earlier "shuffle-reproduction" fix was correctly reverted).
   - GPU-verified equivalence to the original on the SAME real `server.goals`: preference
     `idx_set_equal=True`; coverage/hardness `selected_goal_multiset_equal=True` (idx values differ
-    only where duplicate goals map to their true slot vs `.index()` first-match — same goals
+    only where duplicate goals map to their true slot vs `.index()` first-match, same goals
     served). Service wiring confirmed end-to-end (defer at import → runtime partition; omega=0.5 →
     92% top-category skew on real goals).
 
@@ -363,7 +363,7 @@ task_disjoint (2), variants (18), homog "" (4) are unaffected.
 ### Group-size alignment + local-training recipe (2026-06-21, round 2)
 
 Established the ORIGINAL FedAgent base RL is **GRPO with G=8** (`config/uniform/*/main/grpo/*.yaml`:
-`adv_estimator=grpo`, `env.rollout.n=8`, `train_batch_size=8`, `ppo_mini_batch_size=64`) — **not
+`adv_estimator=grpo`, `env.rollout.n=8`, `train_batch_size=8`, `ppo_mini_batch_size=64`), **not
 GiGPO** (the verl-agent fork is the GiGPO repo, but the federated experiments used GRPO/PPO; zero
 `gigpo` configs in the tree). A second ultracode audit (10 dims) + a deep code-mechanism audit then
 found the migration's local-training recipe diverged. Fixed + verified:
@@ -391,7 +391,7 @@ found the migration's local-training recipe diverged. Fixed + verified:
 
 Still open (coverage/secondary, tracked): ALFWorld 50-step budget (B-B: needs `max_model_len` raise +
 GPU verify; ALFWorld 1.5B is secondary), and the config-emission breadth (multi-backbone 3B/7B/Llama,
-ALFWorld matrix, decentralized M/E-T/min_goals ablations) — additive generator work, no run_fed change.
+ALFWorld matrix, decentralized M/E-T/min_goals ablations), additive generator work, no run_fed change.
 
 ## Reproduce
 
@@ -414,11 +414,11 @@ Full analysis in [`docs/acceleration.md`](https://github.com/sunblaze-ucb/FedAge
 
 **GPU-validated timings (1.5B, 15-turn WebShop, paper settings, 4×H100):**
 - **Client-parallel #3** (2 client × 2 GPU concurrent) = **727s/round** vs 4-GPU solo 558s, 2-GPU solo
-  725s — sub-linear FSDP scaling makes 2×2 a ~35% win on small models (`accel/run_p3.sh`).
+  725s, sub-linear FSDP scaling makes 2×2 a ~35% win on small models (`accel/run_p3.sh`).
 - **Eval modes** (inline / parallel / shared / worker) swept; `eval_mode=worker` (hot-engine eval, no
   cold-start) is the cheap-eval path (`accel/run_evalmode.sh`, `run_paper_modes*.sh`).
 - **"2 train on 1 GPU + 2 GPU eval" layout** (`accel/run_complete.sh`): t1(1)=**995s/round**, eval 407s
-  **fully hidden** on the spare cards — correctness-OK but **NOT** the fast path. #3 + worker eval =
+  **fully hidden** on the spare cards, correctness-OK but **NOT** the fast path. #3 + worker eval =
   **845s** beats it (`accel/run_worker3.sh`): 1-GPU train is only 1.37× slower than 2-GPU (rollout is
   env-latency-bound), so hiding eval (−407s) doesn't offset the 1-GPU penalty (+268s/round).
   **Recommended single-node fast path: #3 (2 GPU/client) + `eval_mode=worker`.**
@@ -445,11 +445,11 @@ READMEs this round). **Setup:** 1.5B, 4×H100 (qgpu3021), `response_length=4096`
   inline's per-round eval-engine re-spin makes it the **slowest** (not shared). ALFWorld single-node
   fast path = `worker` or `parallel`. (`alf_em_{inline,parallel,shared,worker}.yaml`.)
 - **GPU scaling** (`alf_scale_g{1,2,4}.yaml`, eval off, 1 step): `timing_s/step` 534 / 387 / 298 s at
-  1/2/4 GPU. Decomposition: **`gen` (rollout) is FLAT — 228→225→219s** (env-latency-bound; `_TW_LOCK` +
+  1/2/4 GPU. Decomposition: **`gen` (rollout) is FLAT, 228→225→219s** (env-latency-bound; `_TW_LOCK` +
   `pool_size=8` gate it, not GPU compute) while **`update_actor` scales ~linearly 140→43s**. The
   per-step 1-GPU penalty is **+38% ≈ WebShop** (it does NOT shrink); the +21% *wall* figure is a
   1-step fixed-overhead (~490s service-load/init) artifact. Lever for ALFWorld rollout = `pool_size`, not GPUs.
-- **Concurrency (Tier-1): PASS** — 2 independent ALFWorld training jobs on GPUs {0,1}+{2,3}, both
+- **Concurrency (Tier-1): PASS**: 2 independent ALFWorld training jobs on GPUs {0,1}+{2,3}, both
   weight-syncing on the shared `/tmp` socket, both `rc=0` (A 392s, B 473s). The `VERL_RAY_JOB_ID` fix
   holds under ALFWorld's heavier 2-service load. (`alf_conc_{A,B}.yaml`.)
 
@@ -458,7 +458,7 @@ magnitude/ordering predictions FLIPPED (per-step 1-GPU penalty didn't shrink ✗
 the eval-mode loser ✗). De-risk smoke (0.5B) GREEN earlier.
 
 **Infra lesson (cost 2 dead runs):** orphaned `srun --overlap` drivers were SIGKILL'd when their
-launching step's **cgroup** was cleaned — `setsid` escapes the session but not the cgroup. Durable
+launching step's **cgroup** was cleaned, `setsid` escapes the session but not the cgroup. Durable
 pattern: run the driver in the **foreground of a long-lived step**; monitor via **GPFS reads** + **log-mtime
 staleness** liveness (never self-matching `pgrep`). Banked to memory.
 
@@ -472,42 +472,42 @@ Ran on TWO allocations simultaneously (4×H100 qgpu3021 + 1×H100/8-core qgpu301
   service processes per client over the same shard, sessions round-robin client-side
   (`envs/base.py::resolve_service_url` comma-list; run_fed replicates train+val services, splits the
   pool, band-aware port guard). K=1 = byte-identical legacy.
-- **ALFWorld (env-bound, 73% of a 4-GPU step was `_TW_LOCK` serialization) — validated at 3 levels:**
+- **ALFWorld (env-bound, 73% of a 4-GPU step was `_TW_LOCK` serialization), validated at 3 levels:**
   mechanism (same-node K-sweep: gen 217.5→65.8→61.8 s; control K=1/pool64 = 217.5 s → pool
   irrelevant, the lock is everything); component (4-GPU step **298→127.6 s, −57%**, gen −76%,
   update_actor untouched; 1-GPU step 534→350–359 on BOTH nodes, K=4 suffices on 8 cores);
   **end-to-end** (same config as the 3509 s worker baseline + K=8 → **2412 s, −31%**, steps −65%,
   val healthy). Post-fix the 1-GPU per-step penalty grows 1.79×→2.81× → 1-GPU clients dead.
-- **WebShop decomposition (FIRST — corrects the docs' "env-latency-bound" inference):** 1-GPU step
+- **WebShop decomposition (FIRST, corrects the docs' "env-latency-bound" inference):** 1-GPU step
   225.2 s = gen 54.6 (24%) + GPU-compute 165.8 (74%) → **GPU-bound, the mirror image of ALFWorld**.
   Per-step 1-GPU penalty **2.41×** (old "1.37×" was 3-step-wall overhead dilution; 995≈3×202+390
-  reconciles). Levers: pool 16→64 alone HURTS (gen 44.1→50.1, GIL amplification — wave-throttle
-  hypothesis refuted); pool64+`webshop_replicas: 4` → step 93.4→**82.2 (−12%)** — real but garnish.
+  reconciles). Levers: pool 16→64 alone HURTS (gen 44.1→50.1, GIL amplification, wave-throttle
+  hypothesis refuted); pool64+`webshop_replicas: 4` → step 93.4→**82.2 (−12%)**: real but garnish.
 - **Production recipes:** ALFWorld 4×H100 = `cross_round + eval_mode=worker + alfworld_replicas: 8`;
   ALFWorld 1×H100 = `alfworld_replicas: 4` (−33%); WebShop = GPUs + optional replicas −12%.
 - Configs: `tools/verl08_migration/accel/{alfworld,webshop}/` (`*_r8/r4/r1n1/p64*` probes).
 
 ## Acceleration frontier study (2026-07-02)
 
-Answers "can we still accelerate / is more async useful / what does verl 0.8 still offer" —
+Answers "can we still accelerate / is more async useful / what does verl 0.8 still offer",
 full report: [`docs/acceleration_frontier_2026-07-02.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_frontier_2026-07-02.md).
 
-- **Frontier moved to plumbing:** phase-decomposed the 2412 s worker_r8 run — ~800–1000 s is
+- **Frontier moved to plumbing:** phase-decomposed the 2412 s worker_r8 run, ~800–1000 s is
   addressable (redundant per-round service restarts ~250 s, cold final-eval subprocess ~330 s,
   game-walk warm ~270 s → manifest cache, FedAvg+merge ~260 s → direct shard-load). Projects
   2412 → ~1300–1500 s (cumulative 3509 → ~1400 ≈ 2.5×).
 - **Within-step config surface CLOSED, two refutations:** `use_dynamic_bsz` made BOTH envs slower
   (ALF step 127.6→141.7 +11 %, WS 82.2→88.9 +8 %; the 218 ms/micro-batch reconciliation shows the
   GPU term was already FLOP-bound, and shape churn defeats compile/CUDA-graph reuse).
-  `use_fused_kernels` (triton): WS **−6.5 %** (olp −30 %, ref −22 % — bandwidth mechanism real),
+  `use_fused_kernels` (triton): WS **−6.5 %** (olp −30 %, ref −22 %, bandwidth mechanism real),
   ALF wash (+2 %). Config-key trap recorded: the knob is `model.fused_kernel_options.impl_backend`.
 - **Async verdict:** trajectory-level async is saturated (the bound is the episode critical path);
   remaining safe async ≈ 0 (all barriers are data dependencies); verl 0.8's production-ready
-  `one_step_off_policy` would give step→max(gen,GPU) ≈ −35 % but is **off-policy** — sign-off tier.
+  `one_step_off_policy` would give step→max(gen,GPU) ≈ −35 % but is **off-policy**: sign-off tier.
 - **verl 0.8 audit:** safe list now fully harvested/probed; sign-off tier = one-step-off,
-  rollout-logprob reuse (+IS correction), over-sampling (biased — do not use), LoRA/FP8.
+  rollout-logprob reuse (+IS correction), over-sampling (biased, do not use), LoRA/FP8.
 
-Same-day PM addendum (report §8) — completeness follow-ups:
+Same-day PM addendum (report §8), completeness follow-ups:
 
 - **fused equivalence PASSED:** TinyGuess full-loop off/on A/B (`accel/dev/fused_ab_{off,on}.yaml`,
   arms 1515/1560 s) → final-aggregate actor **max|Δ| = 1.116e-5** ≤ 1e-4 → the WS −6.5 % is
@@ -517,25 +517,25 @@ Same-day PM addendum (report §8) — completeness follow-ups:
   + `reproducing.md` was the retired concat design (both fixed). Measured: response mean ~100 tok,
   512-cap clip 0.13 % → the −57 %/−49 % ALFWorld results were at paper geometry all along.
 - **1×H100 @ paper caps** (`alf_scale_g1_paper_r1.yaml`): step **514 s** (gen 212 / olp 52 /
-  ref 105 / update 139) vs 534 s at 4096/6144 caps — cap choice immaterial (env-bound confirmed).
+  ref 105 / update 139) vs 534 s at 4096/6144 caps, cap choice immaterial (env-bound confirmed).
 - **Port-band rule (first live catch):** at 100 clients × K replicas the per-client service band is
-  `[base, base+100×K)` — place `*_val_port` beyond it (ALF 43100, WS 10700). Caught by the Tier-1
+  `[base, base+100×K)`, place `*_val_port` beyond it (ALF 43100, WS 10700). Caught by the Tier-1
   guard in 21 s on the first real paper-config launch.
-- **ALFWorld paper-config wiring run — first ever (rc=0, total 3719 s):** the REAL
+- **ALFWorld paper-config wiring run, first ever (rc=0, total 3719 s):** the REAL
   `uniform/1.5B/main/grpo/alfworld` config (100-client partition, 2/round, 3 epochs, min_goals 100,
   140-game valid_seen val) capped at 2 rounds, carrying the adopted stack (cross_round + worker +
   `alfworld_replicas: 8`, pool 64). Per-unit: round 1 (24-replica service warm + base eval +
   2 clients × 3 steps + r1 eval + FedAvg/merge) **1766 s**; round 2 (no base eval; includes the
   redundant service re-warm Tier-2 will remove) **1375 s**; final eval as cold subprocess **578 s**
   (1766 + 1375 + 578 = 3719 exact). Val moved the right way: success r0 0.0429 → r2 **0.1143**
-  (n=140). **70-round projection ≈ 27 h** (test_freq=5) ≈ 2.2× WebShop's 12 h — fits one node
+  (n=140). **70-round projection ≈ 27 h** (test_freq=5) ≈ 2.2× WebShop's 12 h, fits one node
   inside a 2-day allocation. Exercised & passed at paper scale: 100-client partition (drew clients
   81/14 then 4/36), replica port bands, G=8 memory at cap 2560, worker eval on 140 games.
 - **WebShop `paper_ws_wiring_r4.yaml`** (vs the old-stack 707/496/630 baseline): launched with the
-  leftover walltime and reclaimed by the allocation limit as expected — queued for the next 4-card
+  leftover walltime and reclaimed by the allocation limit as expected, queued for the next 4-card
   window (config ready, ports fixed).
 
-Same-day evening entry — Tier-2 optional knobs: implementation, validation, optimal combos
+Same-day evening entry, Tier-2 optional knobs: implementation, validation, optimal combos
 (doc: [`acceleration_tier2_2026-07-02.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_tier2_2026-07-02.md) + `_cn`, archive branch):
 
 - **All remaining levers shipped as optional knobs, default OFF (= byte-identical legacy):**
@@ -544,17 +544,17 @@ Same-day evening entry — Tier-2 optional knobs: implementation, validation, op
   `parallel_clients: N` (#3 lanes), `one_step_off` (ADDITIONAL OPTION, off-policy). Composition
   gates enforced at startup; every knob equivalence-gated.
 - **Reproducibility floor measured (new):** a same-config ALFWorld replicate (the accidentally
-  inert pre-fix cache arm) differs by **max|Δ| = 9.293e-5** — the GPU-nondeterminism floor sits
+  inert pre-fix cache arm) differs by **max|Δ| = 9.293e-5**: the GPU-nondeterminism floor sits
   just under the 1e-4 bar. Every knob arm landed AT or BELOW it: cache 9.199e-5 (wall −18 %),
   scope 9.090e-5 (−16 %), feval 9.241e-5 (−11 %), all-four 8.752e-5 (**−24 %**); TinyGuess rig:
   hf_export **8.825e-6** (shard-direct-load ≡ merge path), lanes **1.144e-5** via the round-2 HF
-  exports (`compare_hf_models.py`, NEW — ws2-vs-ws4 shards can't be diffed directly).
+  exports (`compare_hf_models.py`, NEW, ws2-vs-ws4 shards can't be diffed directly).
 - **sys.path shadowing bug found & fixed** (latent, independent): the conda env's editable
   verl-0.3.1 `.pth` put the ORIGINAL verl-agent repo ahead of the *appended* vendored engine
-  (namespace-package race) — ALFWorld services had always imported the un-vendored engine.
+  (namespace-package race), ALFWorld services had always imported the un-vendored engine.
   `service/server.py` now `sys.path.insert(0, _ENGINE)`. WebShop unaffected.
 - **WS r4 wiring re-run landed: 2802 s** (490/764/905/643). Steady-state insight: hot-engine
-  steps ~50 s (gen ~10 s) ≈ 3× cheaper than cold single-step probes (82/36) — cold-probe
+  steps ~50 s (gen ~10 s) ≈ 3× cheaper than cold single-step probes (82/36), cold-probe
   arithmetic is systematically pessimistic; replicas ≈ WASH at WS paper config (probe −12 %
   didn't survive).
 - **Optimal combos measured on the REAL paper configs (2 rounds):** ALFWorld combo
@@ -562,7 +562,7 @@ Same-day evening entry — Tier-2 optional knobs: implementation, validation, op
   eval 389 vs 578); WebShop combo (fused + 3 Tier-2) **2309 s vs 2802** (−17.6 %; steady round
   **402 vs 905**, hot eval 326 vs 643). **Lanes = wash on BOTH envs** (3136/2255 totals; the
   1.5B fit is GPU-bound so 2×2-GPU ≈ sequential 4-GPU, and the 2-GPU hot eval gives back the
-  overlap) — NOT adopted; small-model probe's −35 % joins replicas in the didn't-survive bin.
+  overlap), NOT adopted; small-model probe's −35 % joins replicas in the didn't-survive bin.
 - **70-round projections** (same formula both stacks, test_freq=5): ALFWorld 29.3 h → **16.7 h
   (−43 %)**; WebShop 20.4 h → **9.4 h (−54 %)**. Recommended recipes: cross_round + worker eval
   + scope=run + feval=worker + hf_export=final, plus manifest cache (ALF) / fused (WS).
@@ -594,7 +594,7 @@ PPO minibatch adjudicated against both trainers' sources):
 - **PPO actor `ppo_mini_batch_size` 64 → 8 (all 85 PPO paper configs + generator).** The fork's
   minibatch multiplier `actor_rollout_ref.rollout.n` was asserted `==1` (its main_ppo.py:168;
   G=8 grouping came from `env.rollout.n` and never scaled the minibatch), so the original
-  stepped in **64-row global minibatches** — PPO did **8 updates/step** over its 512-row batch
+  stepped in **64-row global minibatches**: PPO did **8 updates/step** over its 512-row batch
   (dp_actor.py `batch.split(64)`), GRPO 1. verl 0.8 multiplies mini by `rollout.n=8`
   (ray_trainer.py:1311), so the shipped 64 fused PPO's step batch into a single 8×-larger
   update. Corrected to `8` prompts (×8 = the original 64-row minibatch) via
@@ -612,7 +612,7 @@ PPO minibatch adjudicated against both trainers' sources):
 ### Round-2 additions (same audit, 2026-07-09)
 
 Adversarial verification of the round-1 findings (7 of 12 refuted, incl. the critic-minibatch
-claim — the fork's critic multiplier interpolates the asserted-`==1` actor `rollout.n`, so the
+claim, the fork's critic multiplier interpolates the asserted-`==1` actor `rollout.n`, so the
 shipped critic mini=8 was already faithful) plus a dedicated verl-agent-fork parity sweep
 surfaced three more items, all fixed:
 
@@ -634,16 +634,16 @@ surfaced three more items, all fixed:
   `trainer.test_freq=-1`; the aggregated model is evaled EVERY round). Comments/log/docs that
   attributed the figures' per-client circle marks to it are corrected: circles come ONLY from
   `client_end_eval: true`, now emitted (default false) in every paper config for
-  discoverability — decide BEFORE launching, per-client checkpoints are cleaned each round.
+  discoverability, decide BEFORE launching, per-client checkpoints are cleaned each round.
 - Also recorded: the renamed T=70xE=3 baselines' per-round Adam/KL-anchor resets + within-round
   goal replay are now disclosed in migration.md § Residual differences (docs-only; the change
-  direction — baselines matching the federated arms' dynamics — stands); the 3-seed axis is
+  direction, baselines matching the federated arms' dynamics, stands); the 3-seed axis is
   base_seed, not the original SHUFFLE_SEED (documented); the shipped hardness labels were
   BYTE-VERIFIED against the paper author's original artifacts
   (`/gpfs/projects/p33168/canyu/federated_agent{,_1}/inference_results/`, identical MD5s);
   concat-mode (opt-in) applies the invalid-action penalty to val reward_score (stock verl
   passes no `validate` into run(); paper metric traj_success unaffected; windowed default
-  gates correctly — noted in-code). Known limitations kept as roadmap items: no round-level
+  gates correctly, noted in-code). Known limitations kept as roadmap items: no round-level
   rerun-resume (running.md corrected accordingly), no in-run Ray/GPU crash hygiene between
   clients, summary written at run end only.
 
@@ -664,10 +664,10 @@ Notes: recurring `RuntimeError: DataLoader worker ... killed` tracebacks in the 
 are teardown noise (training completes, rc=0, metrics print after the traceback) under the
 shared 8-CPU/120G interactive job. Running services from a fresh checkout needs the WebShop
 Lucene index (gitignored artifact): symlinked `search_engine/indexes*` + `resources*` from the
-b1222 working copy — a fresh user builds it per installation.md.
+b1222 working copy, a fresh user builds it per installation.md.
 
 Follow-up (2026-07-10): all 176 `config/paper/**` configs now ship `client_end_eval: true`.
-Rationale: on the original stack the per-client evals were not optional — every client's verl
+Rationale: on the original stack the per-client evals were not optional, every client's verl
 run validated at its last local step (`trainer.test_freq=5` + `val_before_train=True` in
 `scripts/verl-agent/{grpo,ppo}/run_*.sh`), which is exactly where the figures' circle marks
 came from. So `true` is the paper protocol; the `run_fed.py` library default stays `false`

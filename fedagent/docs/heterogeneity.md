@@ -3,7 +3,7 @@
 FedAgent's scientific core is a **two-level heterogeneity suite**: a set of
 partition constructions that inject *controlled, measurable* statistical
 difference across the federated clients, split into two structurally distinct
-channels so the paper's headline claim can be **measured** rather than assumed —
+channels so the paper's headline claim can be **measured** rather than assumed:
 federated agent RL is **robust** to **task-level** heterogeneity (the task
 descriptor is in the prompt, so a single aggregated policy can condition on it)
 but **worst-case non-robust** to **environment-level** heterogeneity (the
@@ -15,7 +15,7 @@ descriptor `tau ~ D_tau` and rolls out under a transition kernel `P`. Cross-clie
 heterogeneity can enter through **either** channel, and the entire suite is
 organized to keep them separable:
 
-- A **task descriptor `tau`** enters the policy through its *input channel* — it
+- A **task descriptor `tau`** enters the policy through its *input channel*; it
   is literally part of the prompt. The policy can read it, so `tau` is
   **observable**, and FedAvg over task-heterogeneous clients converges to a
   policy that does well on the *union* of task distributions. This is the
@@ -49,13 +49,13 @@ for the config-to-figure mapping read [`./reproducing.md`](./reproducing.md).
 | Level | Channel perturbed | Observable to policy? | WebShop arms | ALFWorld arms |
 |---|---|---|---|---|
 | **Task** | goal distribution `D_tau` over a **shared, unperturbed** environment | **yes** (goal is in the prompt) | `preference`, `coverage`, `hardness`, plus the `task_disjoint` ablation | `preference`, `coverage`, `hardness` |
-| **Environment** | **transition kernel `P` / catalog** (the retrieval pipeline) | **no** (only via successor states) | `catalog_split` + 4 retrieval-pipeline variants (`bm25_field_subset`, `bm25_reweight`, `lookalike`, `rank_wrapper`) | *(none — WebShop-specific)* |
+| **Environment** | **transition kernel `P` / catalog** (the retrieval pipeline) | **no** (only via successor states) | `catalog_split` + 4 retrieval-pipeline variants (`bm25_field_subset`, `bm25_reweight`, `lookalike`, `rank_wrapper`) | *(none, WebShop-specific)* |
 
 Throughout the **task-level** sweep the transition kernel is held fixed (every
 client searches the **full 1000-product catalog**); throughout the
 **environment-level** sweep the task split is held **uniform** (100 goals/client,
 no goal skew). So divergence in each sweep is attributable to that level alone.
-Every arm — both levels — is scored on the **same shared unperturbed validation
+Every arm, both levels, is scored on the **same shared unperturbed validation
 service** (`WEBSHOP_SPLIT=val`, which ignores `PARTITION_STRATEGY`), which is what
 makes the cross-arm curves directly comparable.
 
@@ -74,7 +74,7 @@ the verl-0.8 remote env service. The shared Beta-sizing primitives
 (`default_r` / `generate_client_sizes` / `assign_with_overlap`) live in
 [`../hetero/_beta_sizing.py`](../hetero/_beta_sizing.py).
 
-> **One deliberate deviation — `hardness_partition`.** The Hardness body is the
+> **One deliberate deviation, `hardness_partition`.** The Hardness body is the
 > single exception to the verbatim rule. The original had an assembly bug (the
 > step-2 success-shortfall was recomputed *after* the step-1 picks were removed, so
 > it always fired and double-drew an extra `|Y_i|` items from the **unsuccessful**
@@ -82,7 +82,7 @@ the verl-0.8 remote env service. The shared Beta-sizing primitives
 > rate at the global rate `g` and shrank the realized inter-client difficulty
 > spread to ~25-59% of the intended `C_h/(xi'+1)`, with a drifting mean. The body now
 > implements the paper's `HardnessPartition` **literally**: `Y_i` is placed on the easy
-> bucket by `assign_with_overlap` (`Y_i <- CoveragePartition(Y, ..., xi', r)` — full
+> bucket by `assign_with_overlap` (`Y_i <- CoveragePartition(Y, ..., xi', r)`: full
 > easy-pool coverage + exact replica budget), then `X_i = Y_i ∪ F_i` fills the remainder
 > **only** from the hard bucket. So `rho_i = |Y_i|/L` and the control law +
 > mean-invariance hold. See [`bugfixes.md`](bugfixes.md).
@@ -110,7 +110,7 @@ a product field).
 > (`256`) is near-uniform; the **small** endpoint (`1`) is the extreme imbalance.
 > `omega` runs the natural way (`0.01` near-uniform, `0.99` extreme).
 
-### Preference — Dirichlet skew over goal categories
+### Preference: Dirichlet skew over goal categories
 
 [`../hetero/webshop_task.py`](../hetero/webshop_task.py),
 `_preference_partition_generic`. Each client's category mixture is drawn from a
@@ -137,7 +137,7 @@ redistribution loop and a top-up pass guarantee each client reaches
 `omega` (`omega` wins if both present); this `tau` is the *old name of the
 Preference knob*, unrelated to the MDP task descriptor `tau`.
 
-### Coverage — Beta-dispersed pool sizes with overlap
+### Coverage: Beta-dispersed pool sizes with overlap
 
 [`../hetero/webshop_coverage.py`](../hetero/webshop_coverage.py),
 `coverage_partition`, on top of
@@ -163,25 +163,25 @@ Inside `generate_client_sizes`, the Beta is reparameterized by a mean
 i.e. `Beta(mu*s, (1-mu)*s)`; samples are rescaled to hit `target_sum`, clipped to
 `[low, high]`, and rounded with largest-remainder + corrective passes so the
 integer sum is exact. `default_r` computes `r = clip(C*center/N, C*low/N,
-C*high/N)` — the average per-client size over the pool, clipped to the feasible
+C*high/N)`: the average per-client size over the pool, clipped to the feasible
 band. `assign_with_overlap` replicates each goal `k ~ {floor(r), ceil(r)}` times
 and hands the copies to distinct clients with probability proportional to
 remaining capacity (plus a shortfall top-up).
 
 > **Note (vs the original prose):** the `overlap_ratio=1.3` argument in
-> `coverage_partition`'s signature is an **unused legacy default** — the overlap
+> `coverage_partition`'s signature is an **unused legacy default**: the overlap
 > actually applied is the computed `r` from `default_r`, *not* a fixed `1.3`.
 > Larger `size_std` -> tighter Beta -> nearly equal pool sizes; `size_std=1` ->
 > heavy-tailed sizes -> extreme coverage imbalance.
 
-### Hardness — Beta-skewed easy/hard mix over success labels
+### Hardness: Beta-skewed easy/hard mix over success labels
 
 [`../hetero/webshop_hardness.py`](../hetero/webshop_hardness.py),
 `hardness_partition`. Goals are first bucketed by a **per-task success label**
 read from a `trajectories_file` (`task_id -> success`, produced by rolling a
 reference policy over the whole catalog); a Beta then sets each client's count of
 "success" (easy) goals, and the remainder of its fixed quota is filled with
-random goals. The number of goals per client stays constant — only the
+random goals. The number of goals per client stays constant; only the
 *difficulty mix* shifts:
 
 ```python
@@ -231,7 +231,7 @@ goals, others almost only hard ones).
 
 By construction each axis offers target control of its own dispersion, expected
 invariance of the other two measures, preservation of the global mixture in
-expectation, and joint configurability — so the three can be combined or varied
+expectation, and joint configurability, so the three can be combined or varied
 one at a time.
 
 ---
@@ -242,10 +242,10 @@ Clients share the (uniform) task split but differ in their **transition kernel
 `P_i`**. WebShop's retrieval pipeline factors into **four stages**, and the five
 environment variants perturb across them:
 
-1. **content** — *what is in the catalog* (the products search can return);
-2. **encoding** — *how a product becomes indexed text* (which fields feed BM25);
-3. **matching** — *how a query is scored* (the BM25 ranking function);
-4. **rendering** — *how the ranked page is presented* to the agent.
+1. **content**: *what is in the catalog* (the products search can return);
+2. **encoding**: *how a product becomes indexed text* (which fields feed BM25);
+3. **matching**: *how a query is scored* (the BM25 ranking function);
+4. **rendering**: *how the ranked page is presented* to the agent.
 
 | Variant (paper) | Stage(s) | `run_fed` strategy | Verbatim constructor | Config dir |
 |---|---|---|---|---|
@@ -266,7 +266,7 @@ Catalog Split partitions the **goal set** and returns per-client `goal_idxs`;
 Variants 2-5 keep the task split **uniform** and return only an `env_kwargs`
 fragment merged into `gym.make`. Per-client variant assignment for Variants 2-5
 is deterministic by `client_id` (`RandomState(42 + client_id)`, `chosen =
-pool[rng.randint(N)]`), so the same client keeps the same variant across rounds —
+pool[rng.randint(N)]`), so the same client keeps the same variant across rounds,
 required for FedAvg to average comparable policies.
 
 ### Catalog Split (Variant 1, content)
@@ -276,7 +276,7 @@ required for FedAvg to average comparable policies.
 per-client floor of **target** ASINs (so every client can still complete its own
 goals) plus a per-client **distractor** pool drawn so the catalogs diverge. The
 optimal "search -> click -> buy" behavior is unchanged by *which* extra products
-are present, so `pi*` stays largely invariant — this is the mildest env
+are present, so `pi*` stays largely invariant; this is the mildest env
 perturbation. The divergence math, knobbed by `env_div` and `keep_ratio`:
 
 ```python
@@ -304,24 +304,24 @@ task split consistent with the main experiment.
 ### Field-Subset Index (Variant 2, encoding) and BM25 Reweighting (Variant 3, matching)
 
 [`../hetero/webshop_env_variants.py`](../hetero/webshop_env_variants.py),
-**one** function `_bm25_variant_partition_webshop` serves both — the pool is
+**one** function `_bm25_variant_partition_webshop` serves both; the pool is
 selected by `variant_pool` (`"fields_only"` -> Variant 2; default -> Variant 3).
 Each client is deterministically assigned one `{fields, k1, b}` config, threaded
 into `env_kwargs['bm25_in_memory_config']`; the catalog, goals, and reward are
-identical across clients — only the search transition `T(s'|s,a)` differs.
+identical across clients; only the search transition `T(s'|s,a)` differs.
 
 - **Field-Subset Index** (`BM25_VARIANTS_FIELDS_ONLY`): all variants share
   `k1=1.2, b=0.75`; only the **indexed field subset** differs, so the same query
   ranks products differently and the agent must learn per-client query crafting.
   The `N=4` sweep is `full {name,Title,description,features,BulletPoints}`,
   `name {name,Title}`, `desc {description}`, `bullets {BulletPoints}` (entries
-  5-8 — `features`, `name_bullets`, `desc_features`, `no_name` — extend it for
+  5-8 (`features`, `name_bullets`, `desc_features`, `no_name`) extend it for
   `N=8`).
 - **BM25 Reweighting** (`BM25_VARIANTS_DEFAULT`): all variants index the **full**
   field set but use **extreme `(k1, b)` corners** that reshape TF saturation and
   length normalization. The `N=4` sweep is `(1.2, 0.75)` (default), `(1.2, 0.00)`,
-  `(0.3, 0.75)`, `(5.0, 0.75)` (entries 5-8 — `(0.1,0.75)`, `(1.2,1.00)`,
-  `(2.0,0.50)`, `(0.3,0.00)` — extend it for `N=8`).
+  `(0.3, 0.75)`, `(5.0, 0.75)` (entries 5-8 (`(0.1,0.75)`, `(1.2,1.00)`,
+  `(2.0,0.50)`, `(0.3,0.00)`) extend it for `N=8`).
 
 ### Lookalike Injection (Variant 4, content + matching)
 
@@ -376,11 +376,11 @@ Key facts this spectrum encodes:
   `env_div` knob slides it from the near-homogeneous floor (`0.0`, *stable*)
   through *degrade* (`0.3`, `0.7`) to *collapse* (`1.0`). The *encoding*/*matching*
   variants (`bm25_field_subset`, `bm25_reweight`) sit in *degrade* (real but
-  recoverable). The two strongest attacks — *content+matching* (`lookalike`) and
-  *rendering* (`rank_wrapper`) — reach *collapse* under GRPO.
+  recoverable). The two strongest attacks, *content+matching* (`lookalike`) and
+  *rendering* (`rank_wrapper`), reach *collapse* under GRPO.
 - **GRPO -> PPO rescue.** The two collapse-regime attacks (`lookalike`,
   `rank_wrapper`) that break naive GRPO aggregation are *rescued back toward the
-  degrade regime under PPO* — the critic absorbs the hidden-dynamics variance. This
+  degrade regime under PPO*; the critic absorbs the hidden-dynamics variance. This
   is why every env-het config has a `*_ppo` sibling: the paired runs produce the
   GRPO-vs-PPO halves of the env-heterogeneity figure. The
   `task_disjoint`/`catalog_split` pair is the matched control that attributes any
@@ -503,13 +503,13 @@ and the cross-arm curves comparable.
   task-level partitioners (`preference` / `coverage` / `hardness`) pick goals by
   **content** (category / size / hardness), so the WebShop service defers them and
   partitions the env's **real, seed-42-shuffled `server.goals`** once the env pool
-  is warmed (`_compute_task_partition` from `env.server.goals`) — the served goal
+  is warmed (`_compute_task_partition` from `env.server.goals`); the served goal
   at index *i* then carries exactly the property the partition selected. The
   environment-level arms are safe to compute at import: `catalog_split` /
   `task_disjoint` use an order-independent contiguous index range, and the
   bm25/lookalike/rank variants keep the goal split uniform and only return an
   `env_kwargs` fragment. Do **not** swap the deferred task partitions onto a
-  reconstructed-goal list — the offline fallback is not order-faithful and will
+  reconstructed-goal list; the offline fallback is not order-faithful and will
   not match a real labels file.
 
 ---

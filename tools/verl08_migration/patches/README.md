@@ -1,17 +1,17 @@
 # verl local patches
 
-FedAgent runs **stock verl 0.8 as a thin overlay — no fork**; the `others/verl` checkout stays
+FedAgent runs **stock verl 0.8 as a thin overlay, no fork**; the `others/verl` checkout stays
 pristine upstream. The one deliberate exception is captured here as a patch so the change is
 reproducible without forking verl. Apply it into the editable `others/verl` checkout after env setup.
 
 ## `verl_weight_transfer_jobid.patch`
 
 - **Base:** verl commit `7aed6b2` (`others/verl`), files
-  `verl/workers/rollout/vllm_rollout/{vllm_rollout.py, vllm_async_server.py}` — **2 lines**.
+  `verl/workers/rollout/vllm_rollout/{vllm_rollout.py, vllm_async_server.py}`, **2 lines**.
 - **Why:** verl derives the FSDP→vLLM weight-transfer **ZMQ IPC socket** path from the Ray job id
   (`ipc:///tmp/rl-colocate-zmq-<job_id>-replica-<r>-rank-<lr>.sock`) *specifically* to keep concurrent
   jobs disjoint. But FedAgent runs each client/eval as its **own isolated Ray cluster** (`RAY_TMPDIR`),
-  and every fresh cluster assigns the **same first job id `01000000`** — so concurrent clients/eval on
+  and every fresh cluster assigns the **same first job id `01000000`**, so concurrent clients/eval on
   one node compute the **same** `/tmp` socket path and the weight sync **deadlocks** (GPU-confirmed:
   two trainers hung 44 min at 0 % util in `update_weights`). See
   [archive acceleration.md §Lever #3 / §7.7](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md).

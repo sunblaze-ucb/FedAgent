@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://drive.google.com/file/d/1S13-8c382w8urNDCLwli1PNdc3ABnW1H/view?usp=sharing"><img src="https://img.shields.io/badge/🏆_Best_Paper_Award-AAAI_2026_TrustAgent_Workshop-FFB300?style=for-the-badge&labelColor=8B6914&logoColor=white" alt="Best Paper Award — AAAI 2026 Workshop on Trust and Control in Agentic AI"></a>
+  <a href="https://drive.google.com/file/d/1S13-8c382w8urNDCLwli1PNdc3ABnW1H/view?usp=sharing"><img src="https://img.shields.io/badge/🏆_Best_Paper_Award-AAAI_2026_TrustAgent_Workshop-FFB300?style=for-the-badge&labelColor=8B6914&logoColor=white" alt="Best Paper Award, AAAI 2026 Workshop on Trust and Control in Agentic AI"></a>
 </p>
 
 
@@ -26,17 +26,17 @@
 
 - **[Jul 2026]** **Reproduce the paper ×2.5–×3.5 faster.** Every one of the 176 paper configs
   now has a ready-made accelerated version under
-  [`fedagent/config/paper_accelerated/`](fedagent/config/paper_accelerated/) — to use it, just
+  [`fedagent/config/paper_accelerated/`](fedagent/config/paper_accelerated/); to use it, just
   swap `paper/` → `paper_accelerated/` in any run command. Same experiment, same results: the
   speedup comes from removing fixed overheads (per-round process restarts, engine cold starts,
   env-service reboots), not from changing the training, and every lever was verified to leave
-  the final model unchanged (differences ≤ 9.3e-5 — below GPU run-to-run noise). Which GPU
+  the final model unchanged (differences ≤ 9.3e-5, below GPU run-to-run noise). Which GPU
   count to use: [`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md); how each lever
   works and all measurements: [`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md).
 - **[Jul 2026]** FedAgent is now **fully migrated to stock [verl](https://github.com/volcengine/verl) 0.8**
   and no longer depends on [verl-agent](https://github.com/langfengQ/verl-agent): the trainer imports verl as a library (no fork) and the
   federation logic lives in the thin [`fedagent/`](fedagent/README.md) overlay. The paper's
-  original implementation — built on **verl-agent** (verl 0.3.1) — is preserved unchanged on the
+  original implementation, built on **verl-agent** (verl 0.3.1), is preserved unchanged on the
   [`paper-reproduce-verl-agent`](https://github.com/sunblaze-ucb/FedAgent/tree/paper-reproduce-verl-agent)
   branch; what changed and the fidelity record are in
   [`fedagent/docs/migration.md`](fedagent/docs/migration.md).
@@ -59,7 +59,7 @@
 FedAgent is a library for **federated RL training of LLM agents**. It implements a
 federated training loop with **FedAvg** aggregation (plus optional client-side
 **FedProx**), a **two-level heterogeneity suite** (task vs environment partitioning),
-and federated **PPO/GRPO** trainers — built as a **thin overlay on stock
+and federated **PPO/GRPO** trainers, built as a **thin overlay on stock
 [verl](https://github.com/volcengine/verl) 0.8** (no trainer fork: verl is imported as a
 library and driven through its public extension points). You can reproduce the paper's
 experiments or extend the framework with your own datasets, environments, and algorithms.
@@ -70,7 +70,7 @@ heterogeneity at two structurally distinct levels (task vs environment) and deri
 but worst-case non-robust to environment-level heterogeneity. See
 [`fedagent/docs/heterogeneity.md`](fedagent/docs/heterogeneity.md) for the full construction.
 
-> **The maintained code lives in [`fedagent/`](fedagent/README.md)** — this README and the
+> **The maintained code lives in [`fedagent/`](fedagent/README.md)**; this README and the
 > [`fedagent/docs/`](fedagent/docs/README.md) suite document it. The original
 > verl-agent-0.3.1 implementation is preserved on the
 > [`paper-reproduce-verl-agent`](https://github.com/sunblaze-ucb/FedAgent/tree/paper-reproduce-verl-agent)
@@ -80,25 +80,25 @@ but worst-case non-robust to environment-level heterogeneity. See
 
 ## Key Features
 
-- **Federated GRPO and PPO** on stock verl 0.8 — GRPO is the default (group size **G=8**
+- **Federated GRPO and PPO** on stock verl 0.8: GRPO is the default (group size **G=8**
   via `rollout.n=8`, no critic); PPO (`adv_estimator=gae`) additionally federates the value
   model alongside the actor each round.
-- **Two-level heterogeneity suite** — task-level (Preference / Coverage / Hardness) and
+- **Two-level heterogeneity suite**: task-level (Preference / Coverage / Hardness) and
   environment-level (Catalog-Split + 4 WebShop transition variants: BM25 field-subset,
   BM25 reweight, lookalike, rank-wrapper), the first systematic decomposition for agent FL.
 - **FedAvg aggregation** over FSDP-sharded checkpoints, plus optional client-side
   **FedProx** (a proximal term added to local training, injected non-fork via the repo-root
-  `sitecustomize.py` — not a server rule).
-- **Baselines built in** — `federated` (default), `centralized` (one client on pooled data),
+  `sitecustomize.py`, not a server rule).
+- **Baselines built in**: `federated` (default), `centralized` (one client on pooled data),
   and `local` (one pinned client, no federation), selectable from the same config.
-- **Fully configurable protocol** — clients `N`, clients/round `M`, local epochs `E`, rounds
-  `T`, tasks/client `|Xᵢ|` — with a ready-made **176-config paper matrix**.
-- **Verified acceleration, results unchanged** — optional speed levers (keep one trainer+vLLM
+- **Fully configurable protocol**: clients `N`, clients/round `M`, local epochs `E`, rounds
+  `T`, tasks/client `|Xᵢ|`, with a ready-made **176-config paper matrix**.
+- **Verified acceleration, results unchanged**: optional speed levers (keep one trainer+vLLM
   process alive across rounds instead of restarting it per client, evaluate on the
   already-loaded engine, keep env services warm, run ALFWorld's env service as parallel
   replicas) make paper runs **×2.5–×3.5 faster**; each lever was checked to leave the final
   model unchanged (≤ 9.3e-5, below GPU run-to-run noise). All 176 paper configs come
-  pre-accelerated in [`config/paper_accelerated/`](fedagent/config/paper_accelerated/) — see
+  pre-accelerated in [`config/paper_accelerated/`](fedagent/config/paper_accelerated/), see
   [`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md).
 - **Any HuggingFace backbone** (paper: Qwen2.5-1.5B/3B/7B-Instruct, Llama-3.2-3B-Instruct);
   **WebShop** and **ALFWorld** benchmarks out of the box, each behind a per-client HTTP env
@@ -106,7 +106,7 @@ but worst-case non-robust to environment-level heterogeneity. See
 - **FSDP** sharding (single-GPU to 4-GPU), W&B-free (metrics go to JSON / console).
 
 Within a round, clients train **sequentially by default** (one subprocess per client, then
-FedAvg) or **concurrently** with `parallel_clients: P` (each client on its own GPU slice —
+FedAvg) or **concurrently** with `parallel_clients: P` (each client on its own GPU slice,
 numerically identical: FedAvg is order-free and data seeds are client-indexed); the loop is
 verl-agnostic and resumable. Extension points for new datasets,
 environments, heterogeneity strategies, and aggregation rules are documented in
@@ -122,7 +122,7 @@ fedagent/                      ← the maintained verl-0.8 overlay (start here)
 ├── fed/                       federated round loop (run_fed.py) + JSON metrics logger
 ├── envs/                      BaseTextEnv contract + registry; tiny_guess + per-env packages:
 │   └── {webshop,alfworld}/    └── <env>_env.py (client) + service/ (HTTP backend) + engine/ (vendored sim)
-├── agent_loops/               GymTextAgentLoop — multi-turn rollout (verl AgentLoopBase)
+├── agent_loops/               GymTextAgentLoop, multi-turn rollout (verl AgentLoopBase)
 ├── hetero/                    two-level heterogeneity constructions (task + environment)
 ├── data/                      AgenticDataset (verl custom_cls) + per-client partitioning
 ├── config/                    Hydra base, agent registry, env specs, + the 176-config paper matrix (and its accelerated twins)
@@ -146,7 +146,7 @@ the file→role map are in [`fedagent/docs/architecture.md`](fedagent/docs/archi
 ## Installation
 
 FedAgent uses **three conda envs** because the trainer, WebShop, and ALFWorld have mutually
-conflicting dependencies — they communicate over HTTP, so each stays isolated:
+conflicting dependencies; they communicate over HTTP, so each stays isolated:
 
 | Env | Role | Key deps |
 |---|---|---|
@@ -156,7 +156,7 @@ conflicting dependencies — they communicate over HTTP, so each stays isolated:
 
 Full step-by-step setup (env creation, the JDK for WebShop, ALFWorld game files via
 `alfworld-download`) is in **[`fedagent/docs/installation.md`](fedagent/docs/installation.md)**.
-W&B logging is **removed** — no tracking account or key needed.
+W&B logging is **removed**: no tracking account or key needed.
 
 ---
 
@@ -168,9 +168,9 @@ already shipped inside the vendored env package
 sets are tracked under [`data/env_heterogeneity/`](data/env_heterogeneity/). Two things are
 fetched/generated separately:
 
-- **ALFWorld game files** — one-time `alfworld-download -f` → `~/.cache/alfworld/` (see
+- **ALFWorld game files**: one-time `alfworld-download -f` → `~/.cache/alfworld/` (see
   [`fedagent/docs/installation.md`](fedagent/docs/installation.md)).
-- **Hardness arm trajectories** — the Hardness heterogeneity configs require per-backbone
+- **Hardness arm trajectories**: the Hardness heterogeneity configs require per-backbone
   task-difficulty labels at `data/hardness/*.json`; generate them **before** any hardness run
   with `python tools/verl08_migration/gen_hardness_trajectories.py` (see
   [`fedagent/docs/reproducing.md`](fedagent/docs/reproducing.md)).
@@ -191,7 +191,7 @@ Run a FedAgent experiment **directly** with the federated runner, from the repo 
 the `fedagent-verl08` env (WebShop/ALFWorld runs also need their service env available):
 
 ```bash
-# 0) In-process smoke — verifies the federated loop end-to-end, no remote service
+# 0) In-process smoke, verifies the federated loop end-to-end, no remote service
 python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml
 
 # 1) WebShop, homogeneous, GRPO
@@ -201,7 +201,7 @@ python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/homog_l
 python -m fedagent.fed.run_fed \
   --config fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
 
-# 3) The same cell ACCELERATED — identical science, a fraction of the wall-clock
+# 3) The same cell ACCELERATED: identical science, a fraction of the wall-clock
 #    (swap paper/ -> paper_accelerated/ for any cell; see fedagent/docs/gpu_recipes.md)
 python -m fedagent.fed.run_fed \
   --config fedagent/config/paper_accelerated/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
@@ -226,7 +226,7 @@ python -m fedagent.fed.run_fed --config fedagent/config/paper/<family>/<...>.yam
 ```
 
 Every cell also has an **accelerated twin** at the same relative path under
-[`fedagent/config/paper_accelerated/`](fedagent/config/paper_accelerated/) — swap
+[`fedagent/config/paper_accelerated/`](fedagent/config/paper_accelerated/); swap
 `paper/` → `paper_accelerated/` for the same science at roughly ×2.5–×3.5 less wall-clock
 ([`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md)).
 
@@ -272,7 +272,7 @@ If you use FedAgent in your research, please cite:
 
 ## License
 
-This project is released under the **Apache License 2.0**: see [`LICENSE`](LICENSE).
+This project is released under the **Apache License 2.0**, see [`LICENSE`](LICENSE).
 
 ## Acknowledgements
 

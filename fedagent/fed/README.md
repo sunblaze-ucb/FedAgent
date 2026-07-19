@@ -1,9 +1,9 @@
-# `fed/` — the federated training spine for FedAgent on stock verl 0.8
+# `fed/`: the federated training spine for FedAgent on stock verl 0.8
 
 This package closes the FedAgent federated RL loop **on top of unmodified verl 0.8**.
 There is **no trainer fork**: each client is a plain training subprocess
 (`python -m fedagent.main_ppo_fed`) that runs verl's stock PPO/GRPO trainer with its
-native async agent-loop rollout. `fed/` orchestrates the rounds — select clients, run
+native async agent-loop rollout. `fed/` orchestrates the rounds: select clients, run
 each one, FedAvg their FSDP checkpoints, merge to HuggingFace, and re-enter the next
 round from the aggregated model.
 
@@ -54,7 +54,7 @@ Per-client environment services live in [`../envs/webshop/service/`](../envs/web
    --backend fsdp` to turn the aggregated shards into a complete HF model dir
    (`round_r/aggregated/hf`). This becomes the next round's `model.path`. **The loop
    closes here.**
-6. **(PPO only) Federate the critic too** — see [GRPO vs PPO](#grpo-vs-ppo-gae) below.
+6. **(PPO only) Federate the critic too**, see [GRPO vs PPO](#grpo-vs-ppo-gae) below.
 7. **Disk hygiene.** `cleanup_round_checkpoints(...)` deletes the consumed per-client and
    aggregated FSDP shard dirs (keeping every `training.log` and the merged HF), so peak
    disk stays roughly one round's worth instead of growing unbounded. Gated by
@@ -93,12 +93,12 @@ on the same goals each round. Stride 100 keeps the per-client offsets collision-
 If `val_env_spec` is set, `start_val_service` brings up **one shared, unperturbed**
 validation service (`PARTITION_STRATEGY=""`/`uniform`, held-out val split) so every arm is
 scored on the same fixed set. `eval_global(...)` runs a verl **val-only** pass
-(`trainer.val_only=true`, `adv_estimator=grpo` regardless of the train algorithm — eval is
+(`trainer.val_only=true`, `adv_estimator=grpo` regardless of the train algorithm, eval is
 generate-and-score, never a critic, and `FEDPROX_MU` is stripped) on the aggregated global
-model **every round** (`test_freq` is inert — kept for legacy name-parity); `val_before_train` also scores the
+model **every round** (`test_freq` is inert, kept for legacy name-parity); `val_before_train` also scores the
 base model as the round-0 point. `summarize_val_dump` reads verl's validation JSONL dump
 into `{n, success_rate, reward_mean}` (mean of `traj_success` / `score`). Eval failures
-log a warning and never abort the run — it is measurement, not the loop. Val sampling uses
+log a warning and never abort the run; it is measurement, not the loop. Val sampling uses
 `val_temperature` (paper: 0.4).
 
 ---
@@ -110,7 +110,7 @@ The mode is derived from the config (no separate flag) in `run()`:
 | Mode | Selected when | Behavior |
 |---|---|---|
 | **federated** | `total_clients > 1` and `local_client_id < 0` (default) | FedAvg across the selected clients each round. |
-| **centralized** | `total_clients == 1` | One model on the pooled data; FedAvg of a single client is the identity, so the loop is just `total_rounds × epochs_per_round` of continued central training (per-round fresh optimizer/KL-anchor — see migration.md § Residual differences). |
+| **centralized** | `total_clients == 1` | One model on the pooled data; FedAvg of a single client is the identity, so the loop is just `total_rounds × epochs_per_round` of continued central training (per-round fresh optimizer/KL-anchor, see migration.md § Residual differences). |
 | **local** | `local_client_id = k >= 0` | The paper's *Local Agent Training*: pin client `k` (its slice of the `total_clients`-way partition) every round and train it alone, no federation. |
 
 `participating_client_ids` / `select_clients` honor `local_client_id` by pinning that one
@@ -200,14 +200,14 @@ CLI flags override the result.
 | `local_client_id` | `-1` | `>= 0` selects the **local** baseline: train only this client of `total_clients`, no federation. |
 
 (`total_clients == 1` selects **centralized**; the default `total_clients > 1` with
-`local_client_id < 0` is **federated** — see [Baseline modes](#baseline-modes).)
+`local_client_id < 0` is **federated**, see [Baseline modes](#baseline-modes).)
 
 ### Evaluation
 
 | Key | Default | Meaning |
 |---|---|---|
 | `val_env_spec` | `""` | `""` disables eval; else the UNPERTURBED val env-spec to score the global model. |
-| `test_freq` | `5` | **Inert** — the aggregated model is evaled every round regardless (kept for legacy config name-parity). |
+| `test_freq` | `5` | **Inert**: the aggregated model is evaled every round regardless (kept for legacy config name-parity). |
 | `val_before_train` | `True` | Also eval the base model before round 1 (the round-0 point). |
 | `val_temperature` | `0.4` | Val sampling temperature. |
 | `webshop_val_port` | `8090` | Shared unperturbed WebShop val service port. |
@@ -225,7 +225,7 @@ client's environment. The proximal term is injected by the repo-root
 [`../../sitecustomize.py`](../../sitecustomize.py), which CPython auto-imports at startup in
 every process on `PYTHONPATH` (the client **and** its Ray workers) and, gated on
 `FEDPROX_MU`, patches `FSDPEngine.optimizer_step`. It is **not** a Ray
-`runtime_env.worker_process_setup_hook` — that hook clobbered verl's per-worker
+`runtime_env.worker_process_setup_hook`; that hook clobbered verl's per-worker
 `CUDA_VISIBLE_DEVICES`, breaking GPU isolation. `eval_global` always strips `FEDPROX_MU`.
 
 ---
@@ -284,7 +284,7 @@ config matrix.
 
 ---
 
-## `metrics_logger.py` — measurability without a verl fork
+## `metrics_logger.py`: measurability without a verl fork
 
 verl 0.8's stock console logger prints the full per-step metric dict to stdout (captured in
 each client's `training.log`). Since the overlay does not fork verl, this module re-parses
@@ -294,12 +294,12 @@ those lines into the FedAgent plot/loader schema:
 [ {"step": <int>, "metrics": {"<key>": <float>, ...}}, ... ]
 ```
 
-- **`parse_training_log(log_path)`** — regex-extracts each `step:<N> - k:v - k:v - …`
+- **`parse_training_log(log_path)`**: regex-extracts each `step:<N> - k:v - k:v - …`
   line into a `{"step", "metrics"}` entry, unwrapping `np.float64(...)`/`tensor(...)`
   values and keeping only lines with `>= 5` parsed keys (filters stray `step:N` mentions).
-- **`write_metrics_json(log_path, out_dir)`** — writes `<out_dir>/metrics.json`. `run_fed`
+- **`write_metrics_json(log_path, out_dir)`**: writes `<out_dir>/metrics.json`. `run_fed`
   calls this after each client round, producing `round_<r>/client_<c>/json_logs/metrics.json`.
-- **`summarize(entries)`** — one-line per-step reward string (prefers
+- **`summarize(entries)`**: one-line per-step reward string (prefers
   `critic/rewards/mean`, then `critic/score/mean`), echoed to the console after each client.
 
 It also runs standalone:

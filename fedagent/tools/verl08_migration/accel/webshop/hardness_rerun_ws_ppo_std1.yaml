@@ -1,0 +1,74 @@
+# TASK-HET hardness (xi'=1) | PPO | webshop | Qwen2.5-1.5B-Instruct  — CORRECTED-partition RE-RUN
+# = config/paper/task_heterogeneity/ppo/webshop/...p-hardness_success_std-1.yaml
+#   + acceleration stack (cross_round + worker eval + service_scope=run + final_eval worker,
+#     hf_export=every_round for resume) + WebShop fused kernels + local model + GPFS output_dir.
+# Purpose: regenerate Hardness xi'=1 PPO numbers with the FIXED hardness_partition
+#   (X_i = Y_i u F_i; docs/bugfixes.md 2026-07-19). PPO federates actor + critic.
+
+env_kind: webshop
+env_spec: config/envs/webshop_15_ppo.yaml
+val_env_spec: config/envs/webshop_15_val.yaml
+output_dir: /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent/runs/hardness_rerun/ppo_ws_std1
+model_path: /projects/b1222/.cache/huggingface/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+
+adv_estimator: gae                                  # PPO: federate actor + critic
+
+# --- federation protocol ---
+total_clients: 100
+clients_per_round: 2
+total_rounds: 70
+epochs_per_round: 3
+base_seed: 42
+
+# --- 4-GPU FSDP recipe + unperturbed validation ---
+n_gpus_per_node: 4
+total_training_steps: 0
+save_freq: 100000
+test_freq: 5
+val_before_train: true
+client_end_eval: true                               # paper protocol (per-client circle marks)
+val_temperature: 0.4
+wait_between_clients: 8
+min_goals_per_client: 100
+webshop_pool_size: 16
+webshop_base_port: 20496
+webshop_val_port: 20596
+search_return_n: 50
+
+# --- acceleration stack (docs/acceleration.md; all A/B-equivalent) ---
+cross_round: true
+eval_mode: worker
+service_scope: run
+final_eval_mode: worker
+hf_export: every_round                              # keep round-level resume (walltime safety)
+
+# --- heterogeneity (FIXED partition) ---
+partition_strategy: hardness
+success_std: 1
+trajectories_file: data/hardness/qwen2.5-1.5b_webshop_trajectories.json   # trained-checkpoint labels
+
+client_overrides:
+  - data.train_batch_size=64
+  - data.max_prompt_length=4096
+  - data.max_response_length=512
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=8
+  - actor_rollout_ref.rollout.prompt_length=4096
+  - actor_rollout_ref.rollout.response_length=512
+  - actor_rollout_ref.rollout.max_model_len=4608
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.5
+  - actor_rollout_ref.model.use_fused_kernels=True
+  - actor_rollout_ref.model.fused_kernel_options.impl_backend=triton
+  - actor_rollout_ref.actor.checkpoint.save_contents=[model]
+  - actor_rollout_ref.actor.optim.lr=1e-6
+  - actor_rollout_ref.actor.use_kl_loss=true
+  - actor_rollout_ref.actor.kl_loss_coef=0.01
+  - actor_rollout_ref.actor.kl_loss_type=low_var_kl
+  - actor_rollout_ref.actor.fsdp_config.optimizer_offload=true
+  - critic.optim.lr=1e-5
+  - critic.model.use_remove_padding=true
+  - critic.model.enable_gradient_checkpointing=true
+  - critic.fsdp.optimizer_offload=true
+  - critic.ppo_micro_batch_size_per_gpu=4
+  - critic.checkpoint.save_contents=[model]
+  - trainer.critic_warmup=0

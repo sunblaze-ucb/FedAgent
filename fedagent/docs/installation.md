@@ -1,8 +1,8 @@
 # Installation
 
-FedAgent is a **thin overlay on stock verl 0.8** (it imports verl as a library —
+FedAgent is a **thin overlay on stock verl 0.8** (it imports verl as a library,
 no fork; see [`../README.md`](../README.md)). It runs on **NVIDIA GPUs** (paper
-default: 4 × H100 80 GB; 2 GPUs suffice for the smokes — see
+default: 4 × H100 80 GB; 2 GPUs suffice for the smokes, see
 [`./running.md`](./running.md)).
 
 ## Why three conda environments
@@ -17,13 +17,13 @@ service packages document this directly:
 > trainer env). Kept separate from `fedagent.envs` so importing the package in the
 > trainer env never pulls WebShop's conflicting deps (gym 0.24 / pyserini / torch
 > 2.6). Only the HTTP client `fedagent.envs.webshop.WebShopEnv` is imported
-> trainer-side."* — [`../envs/webshop/service/__init__.py`](../envs/webshop/service/__init__.py)
+> trainer-side."*, [`../envs/webshop/service/__init__.py`](../envs/webshop/service/__init__.py)
 
 > *"ALFWorld remote env service ... Kept separate from `fedagent.envs` so importing
 > the package in the trainer env never pulls ALFWorld's heavy/conflicting deps
 > (alfworld / textworld / gymnasium / torch + torchvision pinned for the env).
 > Only the HTTP client `fedagent.envs.alfworld.AlfworldEnv` is imported
-> trainer-side."* — [`../envs/alfworld/service/__init__.py`](../envs/alfworld/service/__init__.py)
+> trainer-side."*, [`../envs/alfworld/service/__init__.py`](../envs/alfworld/service/__init__.py)
 
 The trainer therefore only ever imports the thin HTTP **client** for an
 environment; the heavy **engine** runs in its own env behind a FastAPI service, and
@@ -43,16 +43,16 @@ source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
 conda activate <env-name>
 ```
 
-## 1. Trainer env — `fedagent-verl08` (verl 0.8, Python 3.12)
+## 1. Trainer env: `fedagent-verl08` (verl 0.8, Python 3.12)
 
-This is **stock verl 0.8 imported as a library** — there is no maintained verl
+This is **stock verl 0.8 imported as a library**: there is no maintained verl
 fork; the single deliberate exception is **one 2-line setup patch** (captured at
 `tools/verl08_migration/patches/verl_weight_transfer_jobid.patch`, base commit
 `7aed6b2`) that hardens the FSDP→vLLM weight-transfer socket so concurrent
-same-node verl jobs don't collide — required only for client-parallel /
+same-node verl jobs don't collide, required only for client-parallel /
 eval-parallel runs (see [acceleration.md](./acceleration.md); details: [archive §7.7](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md)). Create a
 Python 3.12 env and install verl 0.8 with its FSDP inference stack (vLLM +
-flash-attn); FedAgent itself ships no `setup.py` — it is used in-place from the
+flash-attn); FedAgent itself ships no `setup.py`: it is used in-place from the
 repo with the repo root on `PYTHONPATH`.
 
 ```bash
@@ -81,11 +81,11 @@ git -C /path/to/verl apply /path/to/fedagent/tools/verl08_migration/patches/verl
   a bare `torch` dependency and can pull a mismatched CUDA build that breaks the
   env. The known-good torch for this stack is **2.8.0+cu128** (vLLM 0.11.0's pin;
   alongside sglang 0.5.2 + flashinfer 0.3.1).
-- **CUDA-13-era `nvidia-*-cu13` pip packages clobber the cu12 `.so`s** — they share
+- **CUDA-13-era `nvidia-*-cu13` pip packages clobber the cu12 `.so`s**: they share
   the `nvidia/<lib>/lib/` namespace and last-installed wins, so torch ends up
   loading NCCL 2.29 on a CUDA-12.8 driver and FSDP param-broadcast dies with
   `ncclUnhandledCudaError`. Fix: uninstall the cu13 orphans and
-  `--force-reinstall` the torch trio **with deps** from the cu128 index — the deps are
+  `--force-reinstall` the torch trio **with deps** from the cu128 index; the deps are
   what rewrite the clobbered cu12 `.so`s (recovery script preserved at
   `tools/verl08_migration/archived_diagnostics/_fix_nvidia_stack.sh`).
 - **Pin `numpy==2.2.6`** in this env: sglang pulls numpy 2.4, which breaks vLLM's
@@ -96,7 +96,7 @@ repo root to `PYTHONPATH` themselves and import `verl` from the active env
 (`fedagent/fed/run_fed.py` sets `PYTHONPATH=<repo root>` and resolves verl's stock
 config dir via `import verl`).
 
-## 2. WebShop service env — `verl-agent-webshop` (Python 3.10)
+## 2. WebShop service env: `verl-agent-webshop` (Python 3.10)
 
 [`../envs/webshop/service/run_service.sh`](../envs/webshop/service/run_service.sh) does
 `conda activate verl-agent-webshop` and launches the service with `uvicorn`. The
@@ -119,7 +119,7 @@ pip install -r webshop_requirements.txt      # repo root; pins the WebShop stack
   and pre-warms a pool of `WebAgentTextEnv` instances (each `gym.make` is ~26 s,
   JVM + index startup), so the trainer never imports WebShop.
 
-## 3. ALFWorld service env — `verl-agent-alfworld` (Python 3.10)
+## 3. ALFWorld service env: `verl-agent-alfworld` (Python 3.10)
 
 [`../envs/alfworld/service/run_service.sh`](../envs/alfworld/service/run_service.sh) does
 `conda activate verl-agent-alfworld`, exports `ALFWORLD_DATA`, and launches the
@@ -147,19 +147,19 @@ alfworld-download -f
   install. The service builds the `AlfredTWEnv` interface once and pools
   single-instance textworld envs; the trainer never imports ALFWorld.
 
-## 4. Vendored engines — `fedagent/envs/<name>/engine/`
+## 4. Vendored engines: `fedagent/envs/<name>/engine/`
 
 The real WebShop and ALFWorld engines (and the original action parsers / partition
 code) are **vendored in-tree**, each beside its service:
-- WebShop: [`../envs/webshop/engine/`](../envs/webshop/engine/) — `web_agent_site` +
+- WebShop: [`../envs/webshop/engine/`](../envs/webshop/engine/), `web_agent_site` +
   the shipped catalog data.
-- ALFWorld: [`../envs/alfworld/engine/`](../envs/alfworld/engine/) — the `AlfredTWEnv`
+- ALFWorld: [`../envs/alfworld/engine/`](../envs/alfworld/engine/), the `AlfredTWEnv`
   wrapper under a preserved `agent_system/environments/` import anchor, plus
   `partition_strategy.py`.
 
 They are **not fetched from PyPI** and need **no editable install**. At runtime each
 service injects its engine onto `sys.path` and loads the action parser in isolation.
-The vendored `agent_system/environments/__init__.py` is intentionally **empty** — the
+The vendored `agent_system/environments/__init__.py` is intentionally **empty**: the
 upstream one imported verl-agent's `env_manager` (→ the old verl 0.3.x); neutralised so
 the engines carry **no verl-agent dependency**. Nothing here needs a separate install
 step beyond the `-r *_requirements.txt` above.
@@ -168,7 +168,7 @@ step beyond the `-r *_requirements.txt` above.
 
 Backbones are specified as **HuggingFace model ids** (the paper configs set
 `actor_rollout_ref.model.path` to ids such as `Qwen/Qwen2.5-1.5B-Instruct`), so
-they **auto-download** from the Hub on first run — no manual step for the default
+they **auto-download** from the Hub on first run, no manual step for the default
 setup.
 
 - **Cache / disk.** Models land in `~/.cache/huggingface` (override with `HF_HOME`).
@@ -179,7 +179,7 @@ setup.
 - **Offline / air-gapped clusters.** Pre-fetch on a login node
   (`huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct`), then export
   `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` on the compute node and point the
-  config at a local snapshot — either override `actor_rollout_ref.model.path` in
+  config at a local snapshot, either override `actor_rollout_ref.model.path` in
   the YAML or pass `--model-path /path/to/snapshot` to `run_fed.py`. (Strip any
   trailing `/` from the snapshot path; verl's `copy_to_local` rejects it.)
 

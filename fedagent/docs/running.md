@@ -1,6 +1,6 @@
 # Running FedAgent
 
-How to run the federated loop with [`fed/run_fed.py`](../fed/README.md) — the spine of the
+How to run the federated loop with [`fed/run_fed.py`](../fed/README.md), the spine of the
 **thin overlay on stock verl 0.8**. There is no trainer fork: each client is a plain
 subprocess (`python -m fedagent.main_ppo_fed`); the driver orchestrates the rounds. For the
 config-key reference see [configuration.md](./configuration.md); for the env/conda setup see
@@ -15,11 +15,11 @@ handful of CLI flags override the most-swapped keys (seed, ports, rounds, FedPro
 python -m fedagent.fed.run_fed --config fedagent/config/<name>.yaml
 ```
 
-> **Single node.** This runner is **single-node** — `n_gpus_per_node` is the FSDP world
+> **Single node.** This runner is **single-node**: `n_gpus_per_node` is the FSDP world
 > size on one box; there is **no multi-node (`nnodes`) wiring** in `run_fed.py`. Within a
 > round the selected clients train **sequentially by default** (the driver loops
 > `for c in selected:` and waits for each subprocess before the next); set
-> `parallel_clients: P` to train them **concurrently** on disjoint GPU slices — see
+> `parallel_clients: P` to train them **concurrently** on disjoint GPU slices, see
 > [Sequential vs parallel clients](#sequential-vs-parallel-clients) and
 > [Honest scope](#honest-scope) before planning for parallelism or multiple nodes.
 
@@ -27,10 +27,10 @@ python -m fedagent.fed.run_fed --config fedagent/config/<name>.yaml
 
 Run the driver inside the **`fedagent-verl08`** conda env, on a GPU node, from the repo root.
 For WebShop/ALFWorld, `run_fed.py` **launches the per-client env services itself** (one
-service per client, each in its own service conda env) and tears them down at the end — you
+service per client, each in its own service conda env) and tears them down at the end; you
 do not start them manually. TinyGuess runs in-process (no service). The mode (federated /
 centralized / local) and the algorithm (GRPO / PPO) are **implied by the config**, not by a
-flag — see [Run-mode matrix](#run-mode-matrix) and [Algorithm: GRPO vs PPO](#algorithm-grpo-vs-ppo).
+flag, see [Run-mode matrix](#run-mode-matrix) and [Algorithm: GRPO vs PPO](#algorithm-grpo-vs-ppo).
 
 The hand-written smoke configs under `fedagent/config/examples/`
 (`examples/tinyguess_2cl_2rd.yaml`, `examples/webshop/`, `examples/alfworld/`) are small
@@ -40,12 +40,12 @@ smokes for wiring checks; the paper grid lives under `fedagent/config/paper/`. S
 ## CLI flags → config keys
 
 Every flag overrides the matching key from the YAML (which itself overrides the
-[`DEFAULTS`](../fed/run_fed.py) in `run_fed.py`). Only these flags exist — everything else is
+[`DEFAULTS`](../fed/run_fed.py) in `run_fed.py`). Only these flags exist; everything else is
 set in the YAML or via `client_overrides`.
 
 | Flag | Config key it overrides | Default (in `DEFAULTS`) | Use |
 |---|---|---|---|
-| `--config <yaml>` | — | — | the federated config (you almost always pass this) |
+| `--config <yaml>` | - | - | the federated config (you almost always pass this) |
 | `--model-path <dir>` | `model_path` | `""` → auto-discover Qwen2.5-0.5B | base model for round 1 (offline: a local HF snapshot) |
 | `--output-dir <dir>` | `output_dir` | `/tmp/...tinyguess` | where `round_*/`, logs, checkpoints, summary land |
 | `--rounds <T>` | `total_rounds` | `2` | shorten/lengthen the run |
@@ -59,7 +59,7 @@ set in the YAML or via `client_overrides`.
 
 > `--port-base` overrides **only** `webshop_base_port`. For ALFWorld, set
 > `alfworld_base_port` (and the val ports `webshop_val_port` / `alfworld_val_port`) in the
-> YAML if you need to deconflict concurrent runs — there is no CLI flag for those.
+> YAML if you need to deconflict concurrent runs; there is no CLI flag for those.
 
 ## Run-mode matrix
 
@@ -75,7 +75,7 @@ The mode is selected by the config, not a flag. `run_fed.py` derives it as: `loc
 **Launch each:**
 
 ```bash
-# Federated (the default — any multi-client config)
+# Federated (the default: any multi-client config)
 python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/coverage.yaml
 
 # Centralized (total_clients=1 baked into the config)
@@ -95,15 +95,15 @@ returns `[k]`), so it is cheaper than the matching federated arm.
 
 Set by `adv_estimator` in the config (no flag):
 
-- **GRPO** (default, `adv_estimator: grpo`) — group-relative advantage, **no critic**. The
+- **GRPO** (default, `adv_estimator: grpo`), group-relative advantage, **no critic**. The
   group size is the rollout `n` (set per config in `client_overrides`, e.g. `rollout.n=2`
   for smokes, `8` for the paper recipe).
-- **PPO** (`adv_estimator: gae`) — the value model (critic) is **federated alongside the
+- **PPO** (`adv_estimator: gae`), the value model (critic) is **federated alongside the
   actor** each round. Round-1 critic = the base model (random value head on the backbone);
   thereafter the aggregated critic carries forward via `critic.model.path`. PPO configs
   carry the critic block in `client_overrides` (e.g.
   [`examples/webshop/scaled/ppo.yaml`](../config/examples/webshop/scaled/ppo.yaml)). If any selected
-  client fails to emit a critic checkpoint, the round aborts — keep
+  client fails to emit a critic checkpoint, the round aborts; keep
   `critic.checkpoint.save_contents=[model]` in the overrides.
 
 ```bash
@@ -117,7 +117,7 @@ aggregation: the FedAvg step launches `torchrun --nproc_per_node=<world_size>` t
 saved shard layout (`model_world_size_<ws>_rank_*.pt`), so the value you train with and the
 value you aggregate with are the same key. The paper recipe is **4 GPUs on one node**. Memory
 sizing (rollout length, batch, pool, offload) is set per config in `client_overrides`. There
-is no separate tensor-parallel knob in the overlay's spine — the per-client subprocess uses
+is no separate tensor-parallel knob in the overlay's spine; the per-client subprocess uses
 verl's stock FSDP rollout under this world size.
 
 | `n_gpus_per_node` | Typical use | Notes |
@@ -126,9 +126,9 @@ verl's stock FSDP rollout under this world size.
 | `2` | the smoke default (`DEFAULTS`) | TinyGuess / WebShop smokes on a 2-GPU slice |
 | `4` | **the paper recipe** | Qwen2.5-1.5B @ 15 turns; GRPO and PPO both validated here |
 
-Per-environment best practice for each count — which env actually speeds up with GPUs, which
+Per-environment best practice for each count (which env actually speeds up with GPUs, which
 wants env-service replicas instead, and the pre-accelerated paper matrix
-(`config/paper_accelerated/`) — is in [gpu_recipes.md](./gpu_recipes.md).
+(`config/paper_accelerated/`)) is in [gpu_recipes.md](./gpu_recipes.md).
 
 ### CPU offload and GPU memory (via `client_overrides`)
 
@@ -143,7 +143,7 @@ not by a flag. The keys that matter for fitting a run:
 | `actor_rollout_ref.rollout.gpu_memory_utilization` | vLLM KV-cache fraction of GPU mem | lower it when the actor (and critic, for PPO) crowd the rollout; PPO uses `0.5`, GRPO ~`0.6` |
 | `critic.fsdp.param_offload` / `critic.fsdp.optimizer_offload` | PPO critic offload | **verl 0.8** puts the critic FSDP config at `critic.fsdp.*` (not `critic.model.fsdp_config`) |
 
-Example — turn on actor offload and lower the KV fraction for a tighter run:
+Example, turn on actor offload and lower the KV fraction for a tighter run:
 
 ```yaml
 client_overrides:
@@ -152,7 +152,7 @@ client_overrides:
   - actor_rollout_ref.rollout.gpu_memory_utilization=0.4
 ```
 
-`client_overrides` is **YAML-only** — `run_fed`'s CLI takes no positional overrides (an
+`client_overrides` is **YAML-only**: `run_fed`'s CLI takes no positional overrides (an
 extra token aborts argparse). To change it for one run, edit the config or a copy of it.
 
 ## FedProx
@@ -174,9 +174,9 @@ strip `FEDPROX_MU`, so validation never enables the term. A ready pair is
 
 `base_seed` (or `--base-seed`) threads two places, both deterministic on resume:
 
-- **Client selection** — `select_clients` seeds its RNG with `base_seed + round − 1`, so the
+- **Client selection**: `select_clients` seeds its RNG with `base_seed + round − 1`, so the
   per-round sample is reproducible.
-- **Per-client env instance** — each client subprocess gets
+- **Per-client env instance**: each client subprocess gets
   `FEDAGENT_BASE_SEED = base_seed + round*100 + client_id`, so a client re-draws goals from
   its **fixed** shard every round (covering the shard over `T` rounds) while staying distinct
   from other clients.
@@ -187,19 +187,19 @@ Three-seed replication is just the same config three times with `--base-seed 42 
 ## Validation / eval
 
 Eval is **off** unless `val_env_spec` is set (back-compat default `""`). When set, the driver
-starts **one shared, unperturbed** val service (`partition_strategy` forced empty / uniform —
+starts **one shared, unperturbed** val service (`partition_strategy` forced empty / uniform,
 no client skew) and scores the aggregated **global** model:
 
 | Key | Effect | Default |
 |---|---|---|
 | `val_env_spec` | the unperturbed val env-spec; `""` → no eval | `""` |
-| `test_freq` | **inert** (client jobs pin `trainer.test_freq=-1`; kept for legacy config name-parity) — the aggregated global model is scored **every round** regardless | `5` |
+| `test_freq` | **inert** (client jobs pin `trainer.test_freq=-1`; kept for legacy config name-parity), the aggregated global model is scored **every round** regardless | `5` |
 | `val_before_train` | also eval the **base** model before round 1 (the round-0 point) | `true` |
 | `client_end_eval` | also eval **each selected client's** post-training model per round → the paper figures' per-client "circle" marks (`client_curve` in the summary); costs +M evals/round. All `config/paper/**` configs ship `true` (paper protocol) | `false` |
 | `val_temperature` | val sampling temperature (`val_kwargs.temperature`) | `0.4` |
 
 The round → success/reward curve is written to `federated_summary.json` (`val_curve`). A
-failed eval logs a warning and continues — it never aborts the run.
+failed eval logs a warning and continues; it never aborts the run.
 
 ## Concurrent runs on one node
 
@@ -212,7 +212,7 @@ python -m fedagent.fed.run_fed --config <...> --base-seed 21 --port-base 8120 --
 ```
 
 For ALFWorld, set `alfworld_base_port` in each YAML (no CLI flag). Remember both jobs share
-the node's GPUs — with the 4-GPU recipe, two full runs will not both fit; concurrency is for
+the node's GPUs; with the 4-GPU recipe, two full runs will not both fit; concurrency is for
 small/offloaded runs or different GPU slices.
 
 ## Sequential vs parallel clients
@@ -224,13 +224,13 @@ own `n_gpus_per_node / P` GPU slice (2 clients × 2 GPUs on the 4-GPU recipe):
 - **Requirements** (enforced at startup): `cross_round: true`; eval disabled or
   `eval_mode: worker`; `P` must divide `n_gpus_per_node`; not combinable with
   `client_end_eval` or `one_step_off`.
-- **Numerically identical to sequential** — FedAvg is order-free and the per-client data
+- **Numerically identical to sequential**: FedAvg is order-free and the per-client data
   seed is client-indexed (`base_seed + round·100 + client`), so lane order can't change the
   result. GPU-validated: HF-level max\|Δ\| = 1.144e-5 vs sequential (TinyGuess equivalence
   rig); the 1.5B lane runs validated coexistence + wall-clock (archive §Lever #3).
 - **When it pays:** small models, or lanes on separate GPU pools. On one 4-GPU node at the
   1.5B paper config it is **−35 % vs the plain subprocess baseline**, but a **wash on top of
-  the recommended acceleration stack** (`cross_round` + worker eval + Tier-2) — see
+  the recommended acceleration stack** (`cross_round` + worker eval + Tier-2), see
   [acceleration.md](./acceleration.md) (full analysis: [archive §Lever #3 / §10.3](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md)).
 - Per-lane isolation (env-service ports, Ray tmpdirs, the FSDP→vLLM weight-transfer socket
   via `VERL_RAY_JOB_ID`) is handled automatically.
@@ -240,7 +240,7 @@ own `n_gpus_per_node / P` GPU slice (2 clients × 2 GPUs on the 4-GPU recipe):
 - **Clients run sequentially within a round by default.** The driver loops
   `for c in selected:` and blocks on each client's subprocess (`stream(...)` waits via
   `proc.wait()`), with a `wait_between_clients`-second pause between them to let Ray/GPU
-  fully release — a round's wall-clock is the sum of its clients. **Parallel execution is
+  fully release; a round's wall-clock is the sum of its clients. **Parallel execution is
   opt-in**, not the default: `parallel_clients: P` (previous section) trains the round's
   clients concurrently under the constraints listed there.
 - **Single-node only.** `n_gpus_per_node` is the FSDP world size on **one** box. There is no
@@ -252,7 +252,7 @@ own `n_gpus_per_node / P` GPU slice (2 clients × 2 GPUs on the 4-GPU recipe):
 
 ## Running on SLURM (srun)
 
-The driver is a normal Python process — you do not `sbatch` a special script. Get an
+The driver is a normal Python process; you do not `sbatch` a special script. Get an
 interactive GPU allocation (or attach to an existing job) and run the driver on the node with
 `srun --overlap`. Everything runs inside the **`fedagent-verl08`** env; the WebShop/ALFWorld
 **services are launched by the driver itself** in their own service envs
@@ -260,7 +260,7 @@ interactive GPU allocation (or attach to an existing job) and run the driver on 
 do not activate them by hand. See [installation.md](./installation.md) for the three envs.
 
 The real pattern (mirrors [`fedagent/scripts/run_smoke.sh`](../scripts/run_smoke.sh) and
-[EXPERIMENTS.md](../EXPERIMENTS.md)) — attach to a running job `<JID>`:
+[EXPERIMENTS.md](../EXPERIMENTS.md)), attach to a running job `<JID>`:
 
 ```bash
 # 1) get / identify a GPU allocation
@@ -289,7 +289,7 @@ Notes:
   driver inside a job whose main step is idle/holding the node).
 - `CUDA_HOME`, the offline flags, `PYTHONPATH`, and `VERL_CFG` are required (the smoke scripts
   set exactly these); `VERL_CFG` points Hydra at verl's stock `trainer/config`.
-- Federated checkpoints land on the **compute node's** `/tmp` by default — inspect them with
+- Federated checkpoints land on the **compute node's** `/tmp` by default; inspect them with
   another `srun --jobid=<JID> --overlap ls ...`.
 - The wrapper scripts in [`fedagent/scripts/`](../scripts) (`run_smoke.sh`,
   `run_tinyguess_fed_smoke.sh`, `run_webshop_fed_smoke.sh CFG …`) bake all of the above and
@@ -301,7 +301,7 @@ The hand-written smoke configs under `fedagent/config/examples/` are small (e.g.
 a few rounds) for fast wiring checks:
 
 ```bash
-# In-process, no service — fastest end-to-end check of the federated loop
+# In-process, no service: fastest end-to-end check of the federated loop
 python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml
 
 # WebShop smoke (driver launches 2 services), shortened to 2 rounds
@@ -346,7 +346,7 @@ python -m fedagent.fed.run_fed \
 Re-running the same `--output-dir` **continues at the round after the last completed one**
 (default `resume: true`; pass `--fresh` or set `resume: false` to start over at round 1).
 Completion is detected from the artifacts themselves: `round_k/aggregated/hf` (plus
-`critic_hf` for PPO — a round with an actor but no merged critic counts as incomplete) is
+`critic_hf` for PPO, a round with an actor but no merged critic counts as incomplete) is
 written only after a successful all-clients round + FedAvg + merge and survives checkpoint
 cleanup, so a crash mid-round never resumes from partial state. The continuation is faithful
 by construction: client selection (`base_seed + round − 1`) and the env data seed
@@ -355,7 +355,7 @@ state, so a resumed run reproduces exactly the schedule an uninterrupted run wou
 Each client's per-run verl auto-resume stays disabled (`trainer.resume_mode=disable`) so a
 crashed in-flight round never FedAvgs partial weights.
 
-Notes: the resumed process's `federated_summary.json` is **complete** — the pre-resume
+Notes: the resumed process's `federated_summary.json` is **complete**: the pre-resume
 rounds' `val_curve` / `client_curve` / `rounds` entries are carried over from the original
 run's summary, and any round the summary is missing (e.g. the original run crashed before
 writing it) is rebuilt from the on-disk `round_<k>/eval/val_samples` dumps, which survive
@@ -363,7 +363,7 @@ checkpoint cleanup; if the resume-anchor round completed but crashed **before it
 no dump exists either), the resumed run scores that aggregate itself before continuing
 (`resumed_from_round` records the boundary). Plotting therefore always works off the final
 summary alone. Under `hf_export: final` there are no per-round HF dirs, so the scan
-finds nothing and the run starts fresh — resume is an `every_round`-export feature. Consumed
+finds nothing and the run starts fresh; resume is an `every_round`-export feature. Consumed
 FSDP shards are deleted after each merge to keep peak disk to ~one round (toggle with
 `cleanup_checkpoints`; an 8-round run otherwise grew to 367 GB).
 
@@ -373,20 +373,20 @@ Under `output_dir/`:
 
 - `round_*/client_*/training.log` + `round_*/client_*/json_logs/metrics.json` (per-client
   reward curve in FedAgent plot format)
-- `round_*/aggregated/hf` — the round's global model (HF format; the next round's starting
+- `round_*/aggregated/hf`: the round's global model (HF format; the next round's starting
   point)
-- `<env>_service_client*.log`, `<env>_val_service.log` — per-service logs
-- `federated_summary.json` — round history, mode/algorithm, final model, and (if eval on)
+- `<env>_service_client*.log`, `<env>_val_service.log`: per-service logs
+- `federated_summary.json`: round history, mode/algorithm, final model, and (if eval on)
   the unperturbed `val_curve`
 
 See [architecture.md](./architecture.md#outputs) and [`../fed/README.md`](../fed/README.md).
 
 ## See also
 
-- [installation.md](./installation.md) — the three conda envs (`fedagent-verl08` trainer +
+- [installation.md](./installation.md), the three conda envs (`fedagent-verl08` trainer +
   `verl-agent-webshop` / `verl-agent-alfworld` services).
-- [configuration.md](./configuration.md) — the full config-key reference and filename decoder.
-- [reproducing.md](./reproducing.md) — the paper grid and seeds.
-- [heterogeneity.md](./heterogeneity.md) — the task-level and environment-level partition
+- [configuration.md](./configuration.md), the full config-key reference and filename decoder.
+- [reproducing.md](./reproducing.md), the paper grid and seeds.
+- [heterogeneity.md](./heterogeneity.md), the task-level and environment-level partition
   strategies.
-- [`../fed/README.md`](../fed/README.md) — the driver internals (round loop, FedAvg, merge).
+- [`../fed/README.md`](../fed/README.md), the driver internals (round loop, FedAvg, merge).

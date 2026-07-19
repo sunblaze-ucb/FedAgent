@@ -1,6 +1,6 @@
-# `config/` — every config FedAgent layers on stock verl 0.8
+# `config/`: every config FedAgent layers on stock verl 0.8
 
-FedAgent is a **thin overlay on unmodified verl 0.8** — there is no trainer fork. This
+FedAgent is a **thin overlay on unmodified verl 0.8**: there is no trainer fork. This
 folder holds *all* of the configuration that turns stock verl into a federated agent
 trainer: the Hydra training config layered on verl's `ppo_trainer`, the agent-loop
 registry, the environment specs, the federated-runner configs that drive
@@ -47,7 +47,7 @@ client per round, injecting `data.train_files=<env_spec>`, the model path, and t
 
 ---
 
-## `fedagent_ppo.yaml` — the Hydra base config
+## `fedagent_ppo.yaml`: the Hydra base config
 
 Composes verl's **stock `ppo_trainer`** config, resolved through `hydra.searchpath` ->
 verl's `trainer/config` dir (exported as `$VERL_CFG`; `run_fed` falls back to
@@ -67,25 +67,25 @@ It then overrides only the FedAgent-specific leaves. Notable defaults:
 - **Algorithm: GRPO.** `algorithm.adv_estimator: grpo`, `use_kl_in_reward: false`.
 - **GRPO group size.** `actor_rollout_ref.rollout.n: 4` in the base; the runner's
   `client_overrides` re-pin `rollout.n` per arm (paper arms = 8, smokes = 2). PPO arms
-  switch to `adv_estimator: gae` and federate a critic — see below.
+  switch to `adv_estimator: gae` and federate a critic, see below.
 - **Async multi-turn rollout:** `rollout.name: vllm`, `mode: async`,
   `multi_turn.enable: true`, with `agent.default_agent_loop: gym_text` and
   `agent_loop_config_path` (-> `agent.yaml`) supplied on the CLI.
 - **Paper actor objective on every arm:** `actor.use_kl_loss: true`,
-  `kl_loss_coef: 0.01`, `kl_loss_type: low_var_kl`, `entropy_coeff: 0.001` — set in the
+  `kl_loss_coef: 0.01`, `kl_loss_type: low_var_kl`, `entropy_coeff: 0.001`, set in the
   base because verl 0.8's defaults differ, so GRPO smokes, the paper matrix, and PPO all
   inherit the correct loss.
 - **Custom dataset:** `data.custom_cls.name: AgenticDataset` (its `path` is set on the CLI).
 - **`reward_model.enable: false`** (reward comes from the env), and `trainer.logger: [console]`.
 
-Machine/run-specific leaves — `model.path`, `data.{train,val}_files`,
-`data.custom_cls.path`, `agent_loop_config_path`, `trainer.default_local_dir` — and the
+Machine/run-specific leaves (`model.path`, `data.{train,val}_files`,
+`data.custom_cls.path`, `agent_loop_config_path`, `trainer.default_local_dir`) and the
 struct-additive `+actor_rollout_ref.model.override_config.attn_implementation` are **not
 pinned here**; `run_fed` / the smoke launcher supply them on the CLI.
 
 ---
 
-## `agent.yaml` — the agent-loop registry
+## `agent.yaml`: the agent-loop registry
 
 A list mapping `agent_name` (a column on each dataset row) to the agent-loop class verl
 instantiates per rollout:
@@ -99,7 +99,7 @@ instantiates per rollout:
 
 ---
 
-## `envs/` — environment specs
+## `envs/`: environment specs
 
 Each spec lists one or more env pools; `AgenticDataset` emits **`n_envs` rows per pool**,
 each a distinct episode (distinct seed). `data.train_files` and `data.val_files` both
@@ -123,13 +123,13 @@ client by `run_fed`), so it is **not** pinned in the spec.
 
 ---
 
-## `examples/` — hand-written federated-runner configs
+## `examples/`: hand-written federated-runner configs
 
 These are inputs to `python -m fedagent.fed.run_fed --config config/examples/<...>.yaml`. Every
 key corresponds to an entry in `run_fed.py`'s `DEFAULTS` dict; anything omitted falls back to
 the default. Most configs under `examples/` are fast **smokes** (typically 2 clients x 4
-rounds); the full paper-scale runs live under `paper/` (a couple — `webshop/*_long`,
-`alfworld/paper` — are longer demos, noted below).
+rounds); the full paper-scale runs live under `paper/` (a couple, `webshop/*_long`,
+`alfworld/paper`, are longer demos, noted below).
 
 Representative keys (see [`../fed/README.md`](../fed/README.md) for the **full** reference):
 
@@ -162,15 +162,15 @@ client_overrides:                 # extra `key=value` Hydra overrides applied to
 
 **Families under `examples/`** (all smokes unless noted):
 
-- **`examples/tinyguess_2cl_2rd.yaml`** — in-process wiring smoke.
-- **`examples/webshop/`** — `homog_long`, `envhet_long`, `probe_signal`, `fedprox_test`,
+- **`examples/tinyguess_2cl_2rd.yaml`**: in-process wiring smoke.
+- **`examples/webshop/`**: `homog_long`, `envhet_long`, `probe_signal`, `fedprox_test`,
   `2cl_catalog_split`: early WebShop smokes / probes.
-- **`examples/webshop/scaled/`** — the scaled WebShop arms at the 15-turn budget:
+- **`examples/webshop/scaled/`**: the scaled WebShop arms at the 15-turn budget:
   `homog` (IID anchor), `task`/`pref` (task-het), `coverage`, `hardness`, `catalog`
   (env-het), `envhet_fedprox`, `local`, `centralized`, `lookalike`, `rank`, `bm25field`,
-  `bm25reweight`, `ppo`, `ppo_lookalike`. (`hardness` requires a `trajectories_file` —
+  `bm25reweight`, `ppo`, `ppo_lookalike`. (`hardness` requires a `trajectories_file`;
   generate one with `tools/verl08_migration/gen_hardness_trajectories.py`.)
-- **`examples/alfworld/`** — `smoke.yaml` and `paper.yaml`
+- **`examples/alfworld/`**: `smoke.yaml` and `paper.yaml`
   (game-shard env-het, `partition_strategy: env_disjoint`, 8 clients x 70 rounds).
 
 Baseline modes are selected via the same schema: **Centralized** = `total_clients: 1`;
@@ -179,11 +179,11 @@ Baseline modes are selected via the same schema: **Centralized** = `total_client
 
 ---
 
-## `paper/` — the generated paper config matrix
+## `paper/`: the generated paper config matrix
 
 `paper/` holds the **full paper-scale runs** (federated `N=100 / M=2 / E=3 / T=70`, 4-GPU
 FSDP, unperturbed validation). It mirrors the **original FedAgent `config/` tree 1:1 in
-structure + naming** — the four experiment families and the descriptive
+structure + naming**: the four experiment families and the descriptive
 `fed_<env>_<algo>_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-<strategy>_<knobs>.yaml`
 filenames; only the file *contents* are verl-0.8 `run_fed.py` configs (the migration changed
 the runner, not the experiment design). **176 configs** total:
@@ -208,7 +208,7 @@ paper/
 - ALFWorld appears only where it has an analogue (uniform, task-het, decentralized); the
   env-het arms perturb the WebShop catalog + search engine and have no ALFWorld counterpart.
 - One deliberate divergence from the original filenames: `centralized`/`local_client*` encode
-  `rd-70_ep-3` (not the original `rd-1_ep-210`) — the verl-0.8 runner draws goal variety from
+  `rd-70_ep-3` (not the original `rd-1_ep-210`); the verl-0.8 runner draws goal variety from
   *rounds*, so 210 local epochs are spread over 70 rounds to re-draw goals each round.
 
 **Regenerate** the whole matrix with one command:
@@ -225,12 +225,12 @@ Per-table reproduction recipes (which config → which paper number) are in
 
 ---
 
-## `paper_accelerated/` — the accelerated twins
+## `paper_accelerated/`: the accelerated twins
 
 Every `paper/**` cell has an **accelerated twin at the same relative path** under
 `paper_accelerated/`: the same science (partition, seeds, federation protocol, eval cadence),
 plus the adopted A/B-equivalent acceleration stack from
-[`../docs/acceleration.md`](../docs/acceleration.md) — `cross_round` + worker eval + warm
+[`../docs/acceleration.md`](../docs/acceleration.md), `cross_round` + worker eval + warm
 env services + worker final-eval, ALFWorld replica sharding + manifest cache, and the WebShop
 fused kernels on the Qwen2.5-1.5B backbone (where the A/B ran). Final aggregated models match
 the plain path within the measured 9.3e-5 GPU-nondeterminism floor, at roughly ×2.5
@@ -239,5 +239,5 @@ the plain path within the measured 9.3e-5 GPU-nondeterminism floor, at roughly �
 Two things to know before launching: the twins keep `hf_export: every_round` so round-level
 resume works (`final` is faster if the run fits one walltime), and they sit on **disjoint port
 bands** from `paper/` (WebShop `25000+`, ALFWorld `52224+`), so a cell and its twin can share
-a host. Generated, never hand-edited — regenerate with `--accel` (above). Per-GPU-count
+a host. Generated, never hand-edited; regenerate with `--accel` (above). Per-GPU-count
 guidance: [`../docs/gpu_recipes.md`](../docs/gpu_recipes.md).

@@ -20,16 +20,16 @@ client as a **Hydra override** in the `client_overrides:` list (each entry is a
 reference is in [configuration.md](./configuration.md).
 
 ## Contents
-1. [Algorithms — federated GRPO & PPO](#1-algorithms)
-2. [Models — any HuggingFace backbone](#2-models)
-3. [Environments — WebShop & ALFWorld](#3-environments)
+1. [Algorithms, federated GRPO & PPO](#1-algorithms)
+2. [Models, any HuggingFace backbone](#2-models)
+3. [Environments, WebShop & ALFWorld](#3-environments)
 4. [Two-level heterogeneity](#4-two-level-heterogeneity)
-5. [Aggregation — FedAvg / FedProx](#5-aggregation)
-6. [Baselines — federated / centralized / local](#6-baselines)
+5. [Aggregation, FedAvg / FedProx](#5-aggregation)
+6. [Baselines, federated / centralized / local](#6-baselines)
 7. [Federation protocol](#7-federation-protocol)
 8. [FSDP & scaling](#8-fsdp--scaling)
 9. [Evaluation](#9-evaluation)
-10. [Logging — W&B-free](#10-logging)
+10. [Logging, W&B-free](#10-logging)
 11. [Extensibility](#11-extensibility)
 
 ---
@@ -49,8 +49,8 @@ rollouts and no critic; PPO adds a value model that is federated alongside the a
 | Algorithm select | `adv_estimator: grpo` (default) or `gae` | `run_fed.py` DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
 | GRPO group size **G** | `actor_rollout_ref.rollout.n=8` | `client_overrides` (paper arms = 8; base default 4) | [`config/fedagent_ppo.yaml`](../config/fedagent_ppo.yaml) |
 | GRPO actor loss | `actor_rollout_ref.actor.use_kl_loss=true`, `kl_loss_coef=0.01`, `kl_loss_type=low_var_kl`, `entropy_coeff=0.001` | base config (inherited by every arm) | [`config/fedagent_ppo.yaml`](../config/fedagent_ppo.yaml) |
-| PPO — federate the critic | `adv_estimator: gae` (+ `critic.*` overrides) | DEFAULTS + `client_overrides` | [`fed/run_fed.py`](../fed/run_fed.py) |
-| Per-client trainer entry | `python -m fedagent.main_ppo_fed` (runs verl's stock `run_ppo`) | — | [`main_ppo_fed.py`](../main_ppo_fed.py) |
+| PPO, federate the critic | `adv_estimator: gae` (+ `critic.*` overrides) | DEFAULTS + `client_overrides` | [`fed/run_fed.py`](../fed/run_fed.py) |
+| Per-client trainer entry | `python -m fedagent.main_ppo_fed` (runs verl's stock `run_ppo`) | - | [`main_ppo_fed.py`](../main_ppo_fed.py) |
 | Multi-turn rollout | `actor_rollout_ref.rollout.agent.default_agent_loop: gym_text` | base config + [`config/agent.yaml`](../config/agent.yaml) | [`agent_loops/gym_text_agent_loop.py`](../agent_loops/gym_text_agent_loop.py) |
 
 For **PPO** (`adv_estimator: gae`), `run_fed.py` enables the value model, sets
@@ -112,7 +112,7 @@ knobs. The driver forwards them to each client's env service via env vars
 (`PARTITION_STRATEGY`, `OMEGA`, `SIZE_STD`, …); the service dispatches to the matching
 module under [`fedagent/hetero/`](../hetero/).
 
-**Task-level** — clients differ in their *task distribution* (observable through the prompt):
+**Task-level**: clients differ in their *task distribution* (observable through the prompt):
 
 | `partition_strategy` | Knob key(s) | Source |
 |---|---|---|
@@ -121,7 +121,7 @@ module under [`fedagent/hetero/`](../hetero/).
 | `hardness` | `success_std`, `trajectories_file` (required) | [`hetero/webshop_hardness.py`](../hetero/webshop_hardness.py) |
 | `task_disjoint` | (disjoint goal slice, full catalog) | [`hetero/webshop_catalog_split.py`](../hetero/webshop_catalog_split.py) |
 
-**Environment-level** — clients differ in the *transition kernel* (hidden from the policy):
+**Environment-level**: clients differ in the *transition kernel* (hidden from the policy):
 
 | `partition_strategy` | Knob key(s) | Source |
 |---|---|---|
@@ -144,27 +144,27 @@ clients' FSDP shards). The aggregator runs under a matched-world-size process gr
 (`torchrun --nproc_per_node = save-time world_size`): each rank averages its own rank
 shard across clients in place and writes it back byte-structurally identical to a verl
 save. (Real verl-0.8 checkpoints hold `DTensor` params that would also load
-single-process — matched-PG write-back is kept for structural identity and wrap-layout
+single-process; matched-PG write-back is kept for structural identity and wrap-layout
 safety, not out of necessity; see extending.md "The shape (and why)".) **FedProx** keeps each client near the round's global
-model by adding a `μ·(w − w_t)` term to the actor gradient on every optimizer step —
+model by adding a `μ·(w − w_t)` term to the actor gradient on every optimizer step;
 it changes the **client** update; the server still aggregates by FedAvg.
 
 **Configure**
 
 | Capability | Key | Where | Source |
 |---|---|---|---|
-| FedAvg (default) | (no key — always runs each round) | — | [`tools/verl08_migration/aggregate_fedavg_fsdp.py`](../../tools/verl08_migration/aggregate_fedavg_fsdp.py) |
-| FedAvg weights | `weights` (`""` → uniform; else comma-separated, sums to 1) | DEFAULTS (YAML only — no CLI flag) | [`tools/verl08_migration/aggregate_fedavg_fsdp.py`](../../tools/verl08_migration/aggregate_fedavg_fsdp.py) |
-| Merge shards → HF | (auto — `verl.model_merger merge --backend fsdp`) | — | [`fed/run_fed.py`](../fed/run_fed.py) (`merge_to_hf`) |
+| FedAvg (default) | (no key, always runs each round) | - | [`tools/verl08_migration/aggregate_fedavg_fsdp.py`](../../tools/verl08_migration/aggregate_fedavg_fsdp.py) |
+| FedAvg weights | `weights` (`""` → uniform; else comma-separated, sums to 1) | DEFAULTS (YAML only, no CLI flag) | [`tools/verl08_migration/aggregate_fedavg_fsdp.py`](../../tools/verl08_migration/aggregate_fedavg_fsdp.py) |
+| Merge shards → HF | (auto, `verl.model_merger merge --backend fsdp`) | - | [`fed/run_fed.py`](../fed/run_fed.py) (`merge_to_hf`) |
 | FedProx | `fedprox_mu` (>0 enables; `0` ≡ FedAvg) | DEFAULTS → `--fedprox-mu` | [`fedagent/fedprox.py`](../fedprox.py) |
 
 FedProx is injected **without** a Ray `runtime_env` hook (which would clobber verl's
 per-worker `CUDA_VISIBLE_DEVICES`): the driver sets `FEDPROX_MU` in each client's
-environment, and the repo-root [`sitecustomize.py`](../../sitecustomize.py) — auto-imported
-at interpreter startup in every process on `PYTHONPATH` — calls
+environment, and the repo-root [`sitecustomize.py`](../../sitecustomize.py) (auto-imported
+at interpreter startup in every process on `PYTHONPATH`) calls
 `fedagent.fedprox.install_deferred_patch()` (fail-closed when `verl` is present). That arms a
 `sys.meta_path` hook which monkeypatches `FSDPEngine.optimizer_step` the moment verl first
-imports its FSDP-engine module — i.e. **after** the Ray worker has its per-rank
+imports its FSDP-engine module, i.e. **after** the Ray worker has its per-rank
 `CUDA_VISIBLE_DEVICES` set. (Importing `FSDPEngine` eagerly at interpreter startup instead
 pulls in torch/verl before device assignment and breaks per-rank GPU isolation at multi-GPU,
 "Duplicate GPU detected".) Eval passes scrub `FEDPROX_MU` so the proximal term never fires
@@ -198,11 +198,11 @@ DEFAULTS):
 | `E` | `epochs_per_round` | local epochs per selected client (`trainer.total_epochs`) |
 | `\|Xᵢ\|` | `min_goals_per_client` | tasks per client |
 | seed | `base_seed` | deterministic client→data + client-selection seed |
-| — | `total_training_steps` | per-client-round step cap (`> 0` for smokes; `<= 0` → full `E` epochs) |
-| — | `save_freq` | checkpoint cadence within a client round |
-| — | `wait_between_clients` | seconds to let Ray/GPU release between clients |
-| — | `parallel_clients` | `1` = **sequential** clients within a round (default); `P>1` trains the round's clients **concurrently**, each on a `1/P` GPU slice — numerically identical (FedAvg is order-free, data seeds are client-indexed); needs `cross_round` + worker/off eval. See running.md § Sequential vs parallel clients |
-| — | `cleanup_checkpoints` | delete consumed FSDP shards after each merge (keeps HF + logs) |
+| - | `total_training_steps` | per-client-round step cap (`> 0` for smokes; `<= 0` → full `E` epochs) |
+| - | `save_freq` | checkpoint cadence within a client round |
+| - | `wait_between_clients` | seconds to let Ray/GPU release between clients |
+| - | `parallel_clients` | `1` = **sequential** clients within a round (default); `P>1` trains the round's clients **concurrently**, each on a `1/P` GPU slice, numerically identical (FedAvg is order-free, data seeds are client-indexed); needs `cross_round` + worker/off eval. See running.md § Sequential vs parallel clients |
+| - | `cleanup_checkpoints` | delete consumed FSDP shards after each merge (keeps HF + logs) |
 
 Paper config filenames encode the protocol
 (e.g. `…total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100…`); the decoder
@@ -236,14 +236,14 @@ hardware / scaling matrix → [running.md](./running.md).
 The aggregated **global** model is scored **every round** on a shared,
 **unperturbed** validation service (full env, held-out split), so every arm is measured
 on the same fixed set. Eval is a verl val-only pass (generate + score, no training, no
-critic) and never aborts the loop — a failed eval logs a warning and continues.
+critic) and never aborts the loop; a failed eval logs a warning and continues.
 
 **Configure**
 
 | Capability | Key | Where | Source |
 |---|---|---|---|
 | Enable eval | `val_env_spec` (`""` → no eval) | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) (`eval_global`) |
-| Eval cadence | every round (unconditional); `test_freq` is **inert** — kept for legacy config name-parity | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
+| Eval cadence | every round (unconditional); `test_freq` is **inert**, kept for legacy config name-parity | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
 | Round-0 baseline | `val_before_train` (also eval the base model before round 1) | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
 | Sampling temp | `val_temperature` (paper = 0.4) | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
 | Shared val service ports | `webshop_val_port`, `alfworld_val_port`, `alfworld_val_split` | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) (`start_val_service`) |
@@ -256,7 +256,7 @@ into `federated_summary.json` (`val_curve`). The val env-spec files are
 
 ## 10. Logging
 
-Weights & Biases is **removed** — no tracking account or key is needed. verl logs to
+Weights & Biases is **removed**: no tracking account or key is needed. verl logs to
 console only (`trainer.logger: [console]` in the base config), and the driver
 post-processes each client's `training.log` into the FedAgent metrics schema.
 
@@ -270,8 +270,8 @@ post-processes each client's `training.log` into the FedAgent metrics schema.
 | Per-client / service / eval logs | `training.log`, `*_service_client*.log`, `eval.log` under `output_dir` | [`fed/run_fed.py`](../fed/run_fed.py) |
 
 `write_metrics_json()` parses verl's per-step console dump into
-`[{"step": int, "metrics": {...}}, …]` — the same schema the FedAgent plotting tools
-consume — with no verl modification.
+`[{"step": int, "metrics": {...}}, …]` (the same schema the FedAgent plotting tools
+consume) with no verl modification.
 
 ## 11. Extensibility
 

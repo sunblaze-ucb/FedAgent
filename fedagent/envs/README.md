@@ -1,4 +1,4 @@
-# `envs/` — async multi-turn text environments for FedAgent
+# `envs/`: async multi-turn text environments for FedAgent
 
 The environments a FedAgent agent-loop drives, one **instance per dataset row**. Every env
 implements a single async contract (`BaseTextEnv`) and is selected by name through a small
@@ -6,7 +6,7 @@ registry. The smoke env (`TinyGuess`) runs fully in-process; the research envs (
 `ALFWorld`) are **thin HTTP clients** to per-client remote services that wrap the heavy real
 environments (whose engines are vendored under `envs/<name>/engine/` and ship their own conflicting deps).
 
-This package is a thin overlay on stock verl 0.8 — see [`../README.md`](../README.md) for the
+This package is a thin overlay on stock verl 0.8, see [`../README.md`](../README.md) for the
 project overview, and [`../agent_loops/`](../agent_loops/) for the loop that drives these envs.
 
 ## Layout
@@ -17,9 +17,9 @@ out-of-process backend:
 
 | Path | Role |
 | --- | --- |
-| [`base.py`](base.py) | `BaseTextEnv` — the async `reset`/`step`/`system_prompt`/`close` contract every env implements |
+| [`base.py`](base.py) | `BaseTextEnv`: the async `reset`/`step`/`system_prompt`/`close` contract every env implements |
 | [`registry.py`](registry.py) | `ENV_REGISTRY` (`env_name` → class) + `make_env(env_name, env_config)` factory |
-| [`tiny_guess.py`](tiny_guess.py) | `TinyGuessEnv` — dependency-free in-process smoke env (guess-the-number) |
+| [`tiny_guess.py`](tiny_guess.py) | `TinyGuessEnv`: dependency-free in-process smoke env (guess-the-number) |
 | [`webshop/`](webshop/) | WebShop package: client [`webshop/webshop_env.py`](webshop/webshop_env.py) (`WebShopEnv`) + its [`webshop/service/`](webshop/service/) backend |
 | [`alfworld/`](alfworld/) | ALFWorld package: client [`alfworld/alfworld_env.py`](alfworld/alfworld_env.py) (`AlfworldEnv`) + its [`alfworld/service/`](alfworld/service/) backend |
 
@@ -78,7 +78,7 @@ envs:
       timeout: 180.0
 ```
 
-## `tiny_guess.py` — in-process smoke env
+## `tiny_guess.py`: in-process smoke env
 
 `TinyGuessEnv` is a dependency-free guess-the-number game used to validate the verl-0.8 wiring
 end-to-end; it is **not** part of the research suite. A secret integer lives in `[lo, hi]`
@@ -87,9 +87,9 @@ across the dataset). Each turn the model replies `<answer>N</answer>`; the env a
 / `"lower"`, or `"Correct!"` on a hit. **Reward** is `1.0` on the correct guess and `0.0`
 otherwise; `done` once solved or `turn >= max_turns`; `info = {"success": solved, "turns": ...}`.
 
-## `webshop/` & `alfworld/` — env client + remote service
+## `webshop/` & `alfworld/`: env client + remote service
 
-Both env clients run in the trainer env (`fedagent-verl08`) and hold no environment state — the
+Both env clients run in the trainer env (`fedagent-verl08`) and hold no environment state; the
 real gym envs (and their conflicting deps: WebShop's Lucene/Java/pyserini, ALFWorld's
 alfworld/textworld/torchvision pins) live behind FastAPI services in
 [`webshop/service/`](webshop/service/) and [`alfworld/service/`](alfworld/service/).
@@ -116,16 +116,16 @@ Every method POSTs JSON keyed by `session_id`:
 
 | Method | Request | Response keys read |
 | --- | --- | --- |
-| `system_prompt()` | *(local; returns the static `WEBSHOP_SYSTEM` / `ALFWORLD_SYSTEM` text)* | — |
+| `system_prompt()` | *(local; returns the static `WEBSHOP_SYSTEM` / `ALFWORLD_SYSTEM` text)* | - |
 | `reset(seed)` | `/create {session_id}` then `/reset {session_id, seed}` | `obs`; WebShop: `available_actions`, `goal_id`; ALFWorld: `admissible_commands` |
-| `step(action_str)` | `/step {session_id, text, step_id}` | `obs`, `reward`, `done`, `success`, `is_action_valid`, `action` (windowed history); actions as above. (The WebShop response also carries `task_score` — a server-side diagnostic the client ignores.) |
-| `close()` | `/close {session_id}` then closes the client | — |
+| `step(action_str)` | `/step {session_id, text, step_id}` | `obs`, `reward`, `done`, `success`, `is_action_valid`, `action` (windowed history); actions as above. (The WebShop response also carries `task_score`, a server-side diagnostic the client ignores.) |
+| `close()` | `/close {session_id}` then closes the client | - |
 
 **Reliability contract (exactly-once against mutable env state).** Under load, a plain
 retry can replay a `/step` out of order and corrupt the episode. The clients therefore
 send an idempotency key: `step_id` starts at 0 per episode (`reset` restarts it on both
 sides), the server applies each id **exactly once** and replays the cached response on a
-duplicate, and the client increments only **after** a success — so the in-flight id is the
+duplicate, and the client increments only **after** a success, so the in-flight id is the
 only one that can ever be re-sent. Retries (bounded backoff + jitter) fire on **transport
 errors only**; HTTP 4xx/5xx surface loudly instead of being retried. `/create` blocks with
 the read-timeout disabled (no timeout → no re-send → no duplicate session borrow), and the
@@ -145,7 +145,7 @@ The clients pass `reward` through verbatim; the actual values are produced by th
 
 - **WebShop** ([`webshop/service/server.py`](webshop/service/server.py) `/step`): the env's
   graded score in `[0,1]` is kept as `task_score` (diagnostic), but the per-step **`reward` is
-  binary `{0, 10}`** — `10.0` iff `done and task_score == 1.0` (a perfect match), else `0.0`. This
+  binary `{0, 10}`**: `10.0` iff `done and task_score == 1.0` (a perfect match), else `0.0`. This
   matches verl-agent's sparse training reward (`envs.py:32-40`).
 - **ALFWorld** ([`alfworld/service/server.py`](alfworld/service/server.py) `/step`):
   **`reward = 10.0 * won`** (i.e. `{0, 10}`), `won` being the episode-success flag.
@@ -153,13 +153,13 @@ The clients pass `reward` through verbatim; the actual values are produced by th
 The **per-invalid-action penalty** is applied not by the env but by the agent-loop: it counts
 steps where `info["is_action_valid"]` is false and computes the episode reward as
 `sum(env_rewards) - coef * n_invalid`, with `coef = FEDAGENT_INVALID_ACTION_PENALTY_COEF`
-(default `0.1`, `0` disables) — mirroring verl-agent's `apply_invalid_action_penalty`. The env's
+(default `0.1`, `0` disables), mirroring verl-agent's `apply_invalid_action_penalty`. The env's
 sole job here is to surface `is_action_valid`. See
 [`../agent_loops/gym_text_agent_loop.py`](../agent_loops/gym_text_agent_loop.py).
 
 ## See also
 
-- [`../README.md`](../README.md) — project overview
-- [`../agent_loops/`](../agent_loops/) — the loop that drives these envs
-- [`webshop/service/`](webshop/service/) / [`alfworld/service/`](alfworld/service/) — the remote env service backends
-- [`../config/envs/`](../config/envs/) — env-spec YAMLs that select an env by name
+- [`../README.md`](../README.md), project overview
+- [`../agent_loops/`](../agent_loops/), the loop that drives these envs
+- [`webshop/service/`](webshop/service/) / [`alfworld/service/`](alfworld/service/), the remote env service backends
+- [`../config/envs/`](../config/envs/), env-spec YAMLs that select an env by name

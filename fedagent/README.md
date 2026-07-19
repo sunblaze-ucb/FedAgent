@@ -1,13 +1,13 @@
-# `fedagent/` — FedAgent on stock verl 0.8
+# `fedagent/`: FedAgent on stock verl 0.8
 
 The verl-0.8 home for FedAgent: federated reinforcement learning for LLM agents.
-A **thin overlay** — it imports **stock verl 0.8** as a library and adds only what
+A **thin overlay**: it imports **stock verl 0.8** as a library and adds only what
 FedAgent needs on top of verl's **stock PPO/GRPO trainer** and **native async
 agent-loop rollout**. **No trainer fork**, no patched verl tree.
 
-Everything FedAgent contributes — environments, the multi-turn agent loop, the
+Everything FedAgent contributes (environments, the multi-turn agent loop, the
 dataset adapter, the two-level heterogeneity suite, FedProx, the JSON metrics
-logger, and the federated round loop — lives in this package and is wired into
+logger, and the federated round loop) lives in this package and is wired into
 verl through its public extension points (`data.custom_cls`, the agent-loop
 registry, Hydra `searchpath`).
 
@@ -18,7 +18,7 @@ registry, Hydra `searchpath`).
 | **Federated control plane** | [`fed/run_fed.py`](fed/) | The round loop: one training subprocess per (client, round) → FedAvg the FSDP checkpoints → merge → re-enter the next round from the aggregated model. verl-agnostic (never imports verl). |
 | **In-framework hooks** | [`envs/`](envs/), [`agent_loops/`](agent_loops/), [`data/`](data/), [`fedprox.py`](fedprox.py) | Plugged into verl's stock trainer/rollout via its extension points. |
 | **Heterogeneity suite** | [`hetero/`](hetero/) | The two-level (task vs environment) partitioning that is the paper's core contribution. |
-| **Remote env services** | [`envs/webshop/service/`](envs/webshop/service/), [`envs/alfworld/service/`](envs/alfworld/service/) | One HTTP env service per client — each owns that client's environment / data shard. Co-located with its trainer-side client under `envs/<name>/`. |
+| **Remote env services** | [`envs/webshop/service/`](envs/webshop/service/), [`envs/alfworld/service/`](envs/alfworld/service/) | One HTTP env service per client, each owns that client's environment / data shard. Co-located with its trainer-side client under `envs/<name>/`. |
 | **verl 0.8** | installed package | Used as a library: trainer, FSDP engine, async rollout, model merger. Unmodified. |
 
 The single verl-side entry a client runs is `python -m fedagent.main_ppo_fed`
@@ -51,33 +51,33 @@ Each subfolder has its own `README.md` (linked above). For end-to-end guides see
 
 ## What's implemented
 
-- **Algorithms** — **GRPO** (default; `adv_estimator=grpo`, group size **G=8** via
+- **Algorithms**: **GRPO** (default; `adv_estimator=grpo`, group size **G=8** via
   `rollout.n=8`) and **PPO** (`adv_estimator=gae`, which federates the value model
   alongside the actor each round).
-- **Federation** — FedAvg over FSDP-sharded checkpoints, with optional client-side
+- **Federation**: FedAvg over FSDP-sharded checkpoints, with optional client-side
   **FedProx** (proximal term, enabled by `fedprox_mu>0`). Configurable protocol:
   clients `N`, clients/round `M`, local epochs `E`, rounds `T`, tasks/client.
-- **Baselines** — `federated` (default), `centralized` (`total_clients=1`), and
+- **Baselines**: `federated` (default), `centralized` (`total_clients=1`), and
   `local` (`local_client_id>=0`: one pinned client, no federation).
-- **Environments** — `tinyguess` (in-process smoke), **WebShop** and **ALFWorld**
+- **Environments**: `tinyguess` (in-process smoke), **WebShop** and **ALFWorld**
   (remote HTTP env services, one per client).
-- **Two-level heterogeneity** — environment-level (`catalog_split`, `task_disjoint`)
+- **Two-level heterogeneity**: environment-level (`catalog_split`, `task_disjoint`)
   and task-level (`preference`/`omega`, `coverage`/`size_std`, `hardness`/`success_std`),
   plus WebShop env-variant arms (`bm25_field_subset`, `bm25_reweight`, `lookalike`,
   `rank_wrapper`). See [`docs/heterogeneity.md`](docs/heterogeneity.md).
-- **Evaluation** — a shared **unperturbed** validation service scores the aggregated
+- **Evaluation**: a shared **unperturbed** validation service scores the aggregated
   global model every `test_freq` rounds (plus the base model at round 0).
-- **Backbones** — any HuggingFace causal-LM id (paper: Qwen2.5-1.5B/3B/7B-Instruct,
+- **Backbones**: any HuggingFace causal-LM id (paper: Qwen2.5-1.5B/3B/7B-Instruct,
   Llama-3.2-3B-Instruct).
 
 ## Quick start
 
 Run inside the **`fedagent-verl08`** conda env on a GPU node. WebShop and ALFWorld
-additionally need their own service env (`verl-agent-webshop` / `verl-agent-alfworld`)
-— see [`docs/installation.md`](docs/installation.md).
+additionally need their own service env (`verl-agent-webshop` / `verl-agent-alfworld`),
+see [`docs/installation.md`](docs/installation.md).
 
 ```bash
-# 1) In-process smoke (no remote service) — verifies the federated loop end-to-end
+# 1) In-process smoke (no remote service): verifies the federated loop end-to-end
 python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2rd.yaml
 
 # 2) WebShop, homogeneous, GRPO

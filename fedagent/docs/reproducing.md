@@ -1,7 +1,7 @@
 # Reproducing the paper
 
 This is the per-experiment reproduction guide for the FedAgent **verl-0.8
-overlay** — the thin layer that re-runs the paper's config matrix on
+overlay**: the thin layer that re-runs the paper's config matrix on
 **unmodified verl 0.8**. Every cell of the matrix is a single YAML under
 [`../config/paper/`](../config/paper/), and every cell runs with one command:
 
@@ -11,14 +11,14 @@ python -m fedagent.fed.run_fed --config fedagent/config/paper/<...>.yaml
 
 Read this together with [`../config/README.md`](../config/README.md) (the four
 config types and the `paper/` naming convention), [`../fed/README.md`](../fed/README.md)
-(the runner internals — the round loop, FedAvg, baselines, eval),
+(the runner internals, the round loop, FedAvg, baselines, eval),
 [`./heterogeneity.md`](./heterogeneity.md) (the two-level heterogeneity suite the
 het arms instantiate), and [`./running.md`](./running.md) (the hardware knobs and
-CLI overrides). This is **scientific-equivalence** reproduction, not bit-identical
-— see [the fidelity note](#scientific-equivalence-not-bit-identical).
+CLI overrides). This is **scientific-equivalence** reproduction, not bit-identical,
+see [the fidelity note](#scientific-equivalence-not-bit-identical).
 
 > **Faster, same science.** Every cell below also ships an **accelerated twin** at the same
-> relative path under [`../config/paper_accelerated/`](../config/paper_accelerated/) — the
+> relative path under [`../config/paper_accelerated/`](../config/paper_accelerated/), the
 > A/B-equivalent acceleration stack baked in (one hot trainer process for the whole run,
 > hot-engine eval, warm env services; ALFWorld replica sharding + manifest cache; WebShop
 > fused kernels on the 1.5B backbone). Final aggregated models match the plain path within
@@ -46,16 +46,16 @@ CLI overrides). This is **scientific-equivalence** reproduction, not bit-identic
 >
 > The **task-heterogeneity Hardness** configs (`p-hardness_success_std-*`) are the
 > **only** cells with a required external input: each references a
-> `trajectories_file` — a `task_id`→success-label map from a reference policy.
-> **These ship in `data/hardness/`** (the original **trained-checkpoint** labels —
+> `trajectories_file`: a `task_id`→success-label map from a reference policy.
+> **These ship in `data/hardness/`** (the original **trained-checkpoint** labels,
 > Qwen2.5-1.5B fine-tuned, full train pool: WebShop 6,402 goals / 27.8 % easy,
 > ALFWorld 3,553 games / 59.4 % easy), so the Hardness cells run out of the box.
 >
-> The eight Hardness configs reference exactly two paths —
+> The eight Hardness configs reference exactly two paths,
 > `data/hardness/qwen2.5-1.5b_webshop_trajectories.json` and
 > `data/hardness/qwen2.5-1.5b_alfworld_trajectories.json` (the het backbone is
 > Qwen2.5-1.5B for both envs). To regenerate with a different backbone, use a
-> **trained** checkpoint as the reference (NOT the base instruct model — zero-shot
+> **trained** checkpoint as the reference (NOT the base instruct model, zero-shot
 > strictly succeeds on only ~1.4 % of WebShop goals, which collapses the easy/hard
 > split):
 >
@@ -70,12 +70,12 @@ CLI overrides). This is **scientific-equivalence** reproduction, not bit-identic
 > schema is `{"trajectories": [{"task_info": {"task_id": ...}, "traj_info":
 > {"success": ...}}, ...]}`. See
 > [`../data/hardness/README.md`](../data/hardness/README.md) and
-> [`./heterogeneity.md`](./heterogeneity.md#hardness--beta-skewed-easyhard-mix-over-success-labels).
+> [`./heterogeneity.md`](./heterogeneity.md#hardness-beta-skewed-easyhard-mix-over-success-labels).
 
 - **ALFWorld arms** drive episodes at `max_turns: 50` (the original
   `max_steps=50`) with the **bounded windowed prompt** (default
   `rollout_mode=windowed`, `history_length=2`): every turn is its own row, so
-  context does not grow with turn count and the paper caps are small —
+  context does not grow with turn count and the paper caps are small,
   `prompt 2048 / response 512 / max_model_len 2560` (`gen_paper_configs.py`).
   GPU-verified 2026-07-02: response mean ≈100 tokens, 512-cap clip ratio 0.13 %,
   no OOM on 4×H100 or 1×H100. (An older widened window `max_model_len=16384,
@@ -105,7 +105,7 @@ python -m fedagent.fed.run_fed --config \
 python -m fedagent.fed.run_fed --config \
   fedagent/config/paper/task_heterogeneity/grpo/webshop/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-preference_omega-0.99.yaml
 
-# PPO arm (federates the critic too — adv_estimator: gae):
+# PPO arm (federates the critic too: adv_estimator: gae):
 python -m fedagent.fed.run_fed --config \
   fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/main/ppo/fed_webshop_ppo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
 
@@ -124,7 +124,7 @@ The federation protocol is baked into the `paper/` configs and matches the paper
 **N = 100** clients (`total_clients`), **M = 2** sampled per round
 (`clients_per_round`), **T = 70** rounds (`total_rounds`), **E = 3** local epochs
 (`epochs_per_round`). Each round trains the selected clients from the previous
-round's merged FedAvg model, re-aggregates, and (every round — `test_freq` is inert
+round's merged FedAvg model, re-aggregates, and (every round, `test_freq` is inert
 on this stack) scores
 the global model on the shared unperturbed val set.
 
@@ -145,8 +145,8 @@ heterogeneity and decentralized families are run on a single backbone
 | **[Task heterogeneity](#3-task-level-heterogeneity-the-robust-study)** | `task_heterogeneity/{grpo,ppo}/{webshop,alfworld}/` | The task-het figure, 6 sub-type × benchmark panels (robust) | Qwen2.5-1.5B | 24 |
 | **[Decentralized](#4-decentralized-protocol-ablations)** | `decentralized/{ep_per_round_change,samples_change,selected_cl_change}/{grpo,ppo}/` | The protocol-sensitivity ablation figure | Qwen2.5-1.5B | 24 |
 
-The `uniform/` family (112) is the four backbones — `Qwen2.5-1.5B-Instruct`,
-`Qwen2.5-3B-Instruct`, `Qwen2.5-7B-Instruct`, `Llama-3.2-3B-Instruct` — each with
+The `uniform/` family (112) is the four backbones, `Qwen2.5-1.5B-Instruct`,
+`Qwen2.5-3B-Instruct`, `Qwen2.5-7B-Instruct`, `Llama-3.2-3B-Instruct`: each with
 7 run kinds (`main`, `main_seed1`, `main_seed2`, `centralized`, `local_client1-3`)
 × `{grpo, ppo}` × `{webshop, alfworld}`. The het / decentralized families are
 Qwen2.5-1.5B only. `config/paper/` mirrors the original tree's structure and
@@ -173,8 +173,8 @@ fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-
 
 ## 1. Uniform: the main table
 
-**Backs:** the headline table — the **FedAgent**, **Centralized**, and **Local
-Agent** rows, for all four backbones, on both benchmarks, under both algorithms —
+**Backs:** the headline table, the **FedAgent**, **Centralized**, and **Local
+Agent** rows, for all four backbones, on both benchmarks, under both algorithms,
 plus the training-dynamics validation-success curve (FedAgent vs Centralized on
 Qwen2.5-1.5B).
 
@@ -219,7 +219,7 @@ under the deterministic partition.
 > **70 rounds** reproduces the same goal coverage at the same 210-epoch budget;
 > the per-round FedAvg of one client/shard is a no-op. Note these baselines
 > thereby also restart Adam state and re-anchor the KL reference each round, and
-> replay each round's goal draw across its 3 epochs — unlike the original single
+> replay each round's goal draw across its 3 epochs, unlike the original single
 > 210-epoch run (see migration.md § Residual differences). See
 > [`../fed/README.md`](../fed/README.md#baseline-modes).
 
@@ -265,8 +265,8 @@ python -m fedagent.fed.run_fed --config \
 ## 2. Environment-level heterogeneity: the worst-case-non-robust study
 
 **Backs:** the WebShop env-variant figure (GRPO and PPO side by side).
-Environment-level heterogeneity enters through the **transition kernel / catalog**
-— the policy only senses it through successor states, *not* from the prompt — so
+Environment-level heterogeneity enters through the **transition kernel / catalog**,
+the policy only senses it through successor states, *not* from the prompt, so
 the federated objective is **worst-case non-robust** to it (the paper's negative
 result). The task partition is held **uniform** across every env-level run, so any
 divergence is attributable to the transition perturbation alone. **WebShop only**
@@ -284,7 +284,7 @@ perturb across them.
 
 That is 11 GRPO + 5 PPO = **16** configs. Note the asymmetry: the GRPO
 directories sweep multiple points, but every `*_ppo` directory holds only the
-**single most-divergent point** used for the GRPO-vs-PPO contrast — do not expect
+**single most-divergent point** used for the GRPO-vs-PPO contrast, do not expect
 a full PPO sweep. The directory/filename token (e.g. `bm25_reweighting`,
 `field_subset_index`) mirrors the original paper name; the value `run_fed`
 actually consumes is the short strategy id (`bm25_reweight`, `bm25_field_subset`,
@@ -325,7 +325,7 @@ python -m fedagent.fed.run_fed --config \
 
 ## 3. Task-level heterogeneity: the robust study
 
-**Backs:** the task-het figure — **6 panels**, one per (sub-type × benchmark):
+**Backs:** the task-het figure, **6 panels**, one per (sub-type × benchmark):
 **Preference**, **Coverage**, **Hardness**, each on WebShop and ALFWorld. Task-
 level heterogeneity enters the policy **through the prompt** (the task descriptor
 is observable), so the federated objective is **robust** to it (the paper's
@@ -354,7 +354,7 @@ Each leaf holds the two endpoints of each sub-type:
 > **unrelated** to the paper's symbol $\tau$ (the observable task descriptor).
 > Prefer `omega` everywhere. See [`./heterogeneity.md`](./heterogeneity.md).
 
-> **Hardness needs the labels file** — generate
+> **Hardness needs the labels file**: generate
 > `data/hardness/qwen2.5-1.5b_<env>_trajectories.json` first; see the
 > [prerequisites callout](#ℹ️-the-hardness-arm-uses-a-shipped-reference-labels-file).
 > The other two sub-types need no external input.
@@ -430,7 +430,7 @@ python -m fedagent.fed.run_fed --config \
 ### Notes
 
 - The **baseline point** of each sweep (`M=2`, `E=3`, `|X_i|=100`) is *not*
-  duplicated here — it is the corresponding `uniform/Qwen2.5-1.5B-Instruct/main`
+  duplicated here, it is the corresponding `uniform/Qwen2.5-1.5B-Instruct/main`
   run from [§1](#1-uniform-the-main-table).
 - `ep_per_round_change/` scales `total_rounds` inversely with `epochs_per_round`
   to hold the total local-epoch budget near 210, isolating the round/epoch
@@ -441,8 +441,8 @@ python -m fedagent.fed.run_fed --config \
 
 ## Three-seed replication
 
-The main table reports three seeds. They are already **separate configs** —
-`main`, `main_seed1`, `main_seed2` — differing only in `base_seed`:
+The main table reports three seeds. They are already **separate configs**,
+`main`, `main_seed1`, `main_seed2`: differing only in `base_seed`:
 
 | Run kind | `base_seed` |
 |---|---|
@@ -466,7 +466,7 @@ The het / decentralized families ship a single seed (`base_seed: 42`); rerun wit
 
 ## Baselines (centralized & local) vs federated
 
-The runner derives the mode from the config — there is no separate flag (see
+The runner derives the mode from the config, there is no separate flag (see
 [`../fed/README.md`](../fed/README.md#baseline-modes)):
 
 | Mode | Selected by | Behavior |
@@ -490,7 +490,7 @@ federated arms' total. The original paper ran the baselines as 1 round × 210
 epochs; in this overlay the per-round FedAvg of a single client/shard is a no-op,
 but **goal variety is drawn per round** (the round-threaded data seed re-draws
 each client's goals every round), so the runner keeps **70 rounds** to reproduce
-that variety — same total epochs, same goal coverage.
+that variety, same total epochs, same goal coverage.
 
 ---
 
@@ -508,7 +508,7 @@ Per-config (single seed) estimates, on the default 4 × H100 node:
 
 GPU-hours = wall-clock × 4 GPUs. Multiply by **3 seeds** for each reported
 mean ± std cell, and by the number of sweep points / backbones in a given figure
-or table block. The table is the plain `config/paper/` path — the **accelerated
+or table block. The table is the plain `config/paper/` path, the **accelerated
 twins** (`config/paper_accelerated/`, same science) cut wall-clock by roughly
 ×2.5 (ALFWorld) – ×3.5 (WebShop), measured on the 1.5B cells
 ([`./acceleration.md`](./acceleration.md), [`./gpu_recipes.md`](./gpu_recipes.md)).
@@ -522,22 +522,22 @@ fewer GPUs with `--n-gpus`; see [`./running.md`](./running.md).
 
 Each run writes everything under the config's `output_dir`:
 
-- **`federated_summary.json`** — per-round provenance (clients selected, the model
+- **`federated_summary.json`**: per-round provenance (clients selected, the model
   each round started from, aggregated actor + HF paths, the critic chain for PPO)
   plus the `mode`, `partition_strategy`, final model, and the **`val_curve`**.
-- **Per-round logs** — `round_<r>/client_<c>/training.log`,
+- **Per-round logs**: `round_<r>/client_<c>/training.log`,
   `round_<r>/aggregated/{aggregate,merge}_*.log`, and the per-service logs
   (`webshop_service_client<c>.log` / `alfworld_service_client<c>.log`).
-- **`round_<r>/client_<c>/json_logs/metrics.json`** — each client's `training.log`
+- **`round_<r>/client_<c>/json_logs/metrics.json`**: each client's `training.log`
   re-parsed into the FedAgent plot schema (`[{"step", "metrics"}, ...]`).
-- **The unperturbed val success curve** — `eval_global` scores the aggregated
+- **The unperturbed val success curve**: `eval_global` scores the aggregated
   global model on the shared unperturbed val service **every round** (the paper's
   per-round "server-aggregated" red line, one point per round), with
   `val_before_train: true` adding the base model as the round-0 point and
   `val_temperature: 0.4`. One eval of the round's aggregated model on the shared
   val set is the per-round point: since every client of the round starts from the
   *same* aggregate, this single eval equals the expectation of the paper's
-  per-client `val_before_train`(step-0) average — same curve, a fraction of the
+  per-client `val_before_train`(step-0) average, same curve, a fraction of the
   rollout cost. `test_freq: 5` is **inert** on this stack (client jobs pin
   `trainer.test_freq=-1`; it is kept only for name-parity with the legacy
   configs). The figures' per-client **circle marks** come from
@@ -545,13 +545,13 @@ Each run writes everything under the config's `output_dir`:
   original stack, where each client's verl run always validated at its last
   step): it adds `clients_per_round` unperturbed-val evals per round and writes
   `client_curve` into `federated_summary.json`. If you don't need the circles,
-  set it to `false` **before** launching — per-client checkpoints are cleaned
+  set it to `false` **before** launching, per-client checkpoints are cleaned
   up each round, so circles cannot be recomputed from a finished run. (The
   library-wide default in `run_fed.py` remains `false`.) Render the figures with
   `tools/plotting/plot_training_dynamics.py <run_dir> [--with-clients]`: on this
   stack it auto-reads `federated_summary.json` (`val_curve` red line +
   `client_curve` circles, x-stride = `epochs_per_round`) and stays
-  resume-safe — a resumed run's summary carries the pre-resume rounds. The
+  resume-safe, a resumed run's summary carries the pre-resume rounds. The
   legacy per-client `json_logs` mode (`--client-logs`) still covers
   paper-reproduce-branch run dirs. The aggregated
   curve lands in `federated_summary.json` (`val_curve`) and the round-`r` eval
@@ -567,10 +567,10 @@ Each run writes everything under the config's `output_dir`:
 
 ## Scientific-equivalence, not bit-identical
 
-This overlay reproduces the paper's **science** — the same federation protocol
+This overlay reproduces the paper's **science**: the same federation protocol
 (N/M/T/E), the same algorithms (GRPO G = 8, PPO/GAE with a federated critic), the
-same heterogeneity construction, and the same unperturbed-val measurement — on
+same heterogeneity construction, and the same unperturbed-val measurement, on
 **stock verl 0.8** with no trainer fork. It is **not** bit-for-bit identical to
 the original verl-agent 0.3.1 stack (different rollout engine, FSDP checkpoint
-layout, and RNG threading). For the full fidelity record — what is preserved,
-what changed, and why — see [`./migration.md`](./migration.md).
+layout, and RNG threading). For the full fidelity record, what is preserved,
+what changed, and why, see [`./migration.md`](./migration.md).

@@ -1,7 +1,7 @@
 # Configuration
 
-FedAgent is a **thin overlay on near-stock verl 0.8** (one 2-line setup patch — see
-[installation.md](./installation.md)) — there is no trainer fork. Every
+FedAgent is a **thin overlay on near-stock verl 0.8** (one 2-line setup patch, see
+[installation.md](./installation.md)); there is no trainer fork. Every
 run is driven by configuration: a flat YAML the federated runner reads, a Hydra base that
 composes verl's stock `ppo_trainer`, an agent-loop registry, and per-episode env specs.
 This page is the **config-file decoder** and the **federated-runner key reference**: every
@@ -16,7 +16,7 @@ See the package overview in [`../README.md`](../README.md), the folder map in
 [`./reproducing.md`](./reproducing.md).
 
 > **No legacy schema.** This is the verl-0.8 runner. The original FedAgent's nested
-> `federated:` / `verl:` / `data_preprocess:` blocks are gone — that schema lives only on
+> `federated:` / `verl:` / `data_preprocess:` blocks are gone; that schema lives only on
 > the `paper-reproduce-verl-agent` branch and is **not** read by anything here. A FedAgent config is a
 > **flat** key/value file whose keys are `run_fed.py`'s `DEFAULTS`; per-client verl knobs
 > are passed through `client_overrides` (see [§ client_overrides](#client_overrides-and-adv_estimator)).
@@ -37,7 +37,7 @@ services, then shells out to `main_ppo_fed` (which loads `fedagent_ppo.yaml`) **
 client per round**, injecting `data.train_files=<env_spec>`, the model path, and the
 `client_overrides` as Hydra CLI overrides.
 
-### `fedagent_ppo.yaml` — the Hydra base
+### `fedagent_ppo.yaml`: the Hydra base
 
 Composes verl's **stock `ppo_trainer`**, resolved through `hydra.searchpath` -> verl's
 `trainer/config` dir (exported as `$VERL_CFG`; `run_fed` falls back to
@@ -54,11 +54,11 @@ hydra:
 
 It overrides only FedAgent leaves: **GRPO** (`algorithm.adv_estimator: grpo`,
 `use_kl_in_reward: false`), **group size** (`rollout.n: 4` in the base; every arm re-pins
-it via `client_overrides` — paper=`8`, smokes=`2`), **async multi-turn rollout**
+it via `client_overrides`: paper=`8`, smokes=`2`), **async multi-turn rollout**
 (`rollout.name: vllm`, `mode: async`, `multi_turn.enable: true`,
 `agent.default_agent_loop: gym_text`), the **paper actor objective on every arm**
 (`use_kl_loss: true`, `kl_loss_coef: 0.01`, `kl_loss_type: low_var_kl`,
-`entropy_coeff: 0.001` — verl 0.8 defaults differ), the **custom dataset**
+`entropy_coeff: 0.001`, verl 0.8 defaults differ), the **custom dataset**
 (`data.custom_cls.name: AgenticDataset`), `reward_model.enable: false`, and
 `trainer.logger: [console]`. Machine/run-specific leaves (`model.path`,
 `data.{train,val}_files`, `custom_cls.path`, `agent_loop_config_path`,
@@ -76,7 +76,7 @@ instantiates the right loop per rollout.
 
 ---
 
-## Env specs — the row schema and how `AgenticDataset` consumes them
+## Env specs: the row schema and how `AgenticDataset` consumes them
 
 An env spec (`config/envs/*.yaml`) declares **one or more env pools** under a top-level
 `envs:` list. `run_fed` points **both** `data.train_files` and `data.val_files` at the
@@ -97,16 +97,16 @@ envs:
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `name` | str | `TinyGuess` | Env id. Becomes the row's `env_name` and `data_source` (lowercased); selects the env class in the agent loop. |
-| `n_envs` | int | `64` | Number of dataset rows emitted for this pool — **one row per episode** (distinct seed). |
+| `n_envs` | int | `64` | Number of dataset rows emitted for this pool, **one row per episode** (distinct seed). |
 | `max_turns` | int | `6` | Per-episode turn cap, forwarded to the agent loop (`WebShop=15`, `ALFWorld=50`). |
 | `agent_name` | str | `gym_text` | Agent-loop key (must exist in `agent.yaml`). |
-| `config` | map | `{}` | Per-env kwargs (e.g. `timeout`, or `{lo, hi}` for TinyGuess) passed to the env. WebShop/ALFWorld do **not** pin a service URL here — it comes from the `WEBSHOP_SERVICE_URL` / `ALFWORLD_SERVICE_URL` env var that `run_fed` sets per client. |
+| `config` | map | `{}` | Per-env kwargs (e.g. `timeout`, or `{lo, hi}` for TinyGuess) passed to the env. WebShop/ALFWorld do **not** pin a service URL here; it comes from the `WEBSHOP_SERVICE_URL` / `ALFWORLD_SERVICE_URL` env var that `run_fed` sets per client. |
 
 ### How `AgenticDataset` turns a spec into rows
 
 [`data/agentic_dataset.py`](../data/agentic_dataset.py) is verl's `custom_cls` dataset. It
 loads the spec (`data.train_files[0]`), reads its `envs:` list, and for each pool emits
-`n_envs` rows — each a **distinct env instance with a distinct seed**:
+`n_envs` rows, each a **distinct env instance with a distinct seed**:
 
 ```python
 seed = base_seed * 100_000 + spec_index * 1_000 + episode_index
@@ -117,7 +117,7 @@ seed = base_seed * 100_000 + spec_index * 1_000 + episode_index
 each client re-draws goals from its fixed shard every round (covering the shard over `T`
 rounds) while staying reproducible. Each row carries `env_name`, `seed`, `config`,
 `max_turns`, `agent_name`, `data_source`, a placeholder `raw_prompt`, and a single dummy
-tensor `ds_dummy` (the row carries **no** `input_ids`/`attention_mask`/`position_ids` — the
+tensor `ds_dummy` (the row carries **no** `input_ids`/`attention_mask`/`position_ids`: the
 agent loop generates those; the dummy tensor exists only for batch sizing, because stock
 verl `_get_gen_batch` does not pop tensor keys before unioning the agent-loop output back
 onto the batch). GRPO grouping is **not** done here: verl's `rollout.n` repeats each row
@@ -132,7 +132,7 @@ onto the batch). GRPO grouping is **not** done here: verl's `rollout.n` repeats 
 data.train_files=<env_spec>   data.val_files=<env_spec>   data.custom_cls.path=<custom_cls_path>
 ```
 
-So `data.train_files` is the **env-spec YAML path**, not a parquet file — the verl-0.8
+So `data.train_files` is the **env-spec YAML path**, not a parquet file; the verl-0.8
 overlay replaced parquet preprocessing with on-the-fly env enumeration.
 
 ### Shipped specs
@@ -149,7 +149,7 @@ overlay replaced parquet preprocessing with on-the-fly env enumeration.
 
 ---
 
-## Filename decoder — the `paper/` tree
+## Filename decoder: the `paper/` tree
 
 `config/paper/` holds the full paper-scale runs in a family tree that **mirrors the
 original FedAgent** `config/` (176 configs). Every leaf is a flat runner config whose name
@@ -179,23 +179,23 @@ decentralized ablations vary exactly one of these tokens.
 
 > **The `p-<strategy>` token is the only one that is not a verbatim copy of the runner
 > value.** The filename uses the *paper's* spelling; the YAML `partition_strategy` uses the
-> code's dispatch key. They diverge for the WebShop env-variant arms — verify the YAML, not
+> code's dispatch key. They diverge for the WebShop env-variant arms; verify the YAML, not
 > the filename:
 
 | Filename `p-...` | `partition_strategy` (YAML) | Knob keys (YAML) | Axis / paper name |
 |---|---|---|---|
 | `p-uniform` | `""` | (none) | IID (homogeneous) |
-| `p-preference_omega-<ω>` | `preference` | `omega` | task — Preference |
-| `p-coverage_std-<s>` | `coverage` | `size_std` | task — Coverage |
-| `p-hardness_success_std-<s>` | `hardness` | `success_std`, `trajectories_file` | task — Hardness |
-| `p-catalog_split_div-<d>_keep-<r>` | `catalog_split` | `env_div`, `keep_ratio` | env — Catalog Split |
-| `p-field_subset_index_N-<n>` | **`bm25_field_subset`** | `variant_n` | env — Field-Subset Index |
-| `p-bm25_reweighting_N-<n>` | **`bm25_reweight`** | `variant_n` | env — BM25 Reweighting |
-| `p-lookalike_injection_N-<n>` | **`lookalike`** | `variant_n` | env — Lookalike Injection |
-| `p-rank_wrapper_N-<n>` | `rank_wrapper` | `variant_n` | env — Rank Wrapper |
+| `p-preference_omega-<ω>` | `preference` | `omega` | task, Preference |
+| `p-coverage_std-<s>` | `coverage` | `size_std` | task, Coverage |
+| `p-hardness_success_std-<s>` | `hardness` | `success_std`, `trajectories_file` | task, Hardness |
+| `p-catalog_split_div-<d>_keep-<r>` | `catalog_split` | `env_div`, `keep_ratio` | env, Catalog Split |
+| `p-field_subset_index_N-<n>` | **`bm25_field_subset`** | `variant_n` | env, Field-Subset Index |
+| `p-bm25_reweighting_N-<n>` | **`bm25_reweight`** | `variant_n` | env, BM25 Reweighting |
+| `p-lookalike_injection_N-<n>` | **`lookalike`** | `variant_n` | env, Lookalike Injection |
+| `p-rank_wrapper_N-<n>` | `rank_wrapper` | `variant_n` | env, Rank Wrapper |
 
 The ALFWorld env-het analogue (not in the filename grammar above; used in the hand-written
-`examples/alfworld/paper.yaml`) is `partition_strategy: env_disjoint` — disjoint per-client game
+`examples/alfworld/paper.yaml`) is `partition_strategy: env_disjoint`, disjoint per-client game
 shards. Its WebShop task-only sibling is `task_disjoint` (disjoint goals, full catalog).
 
 ### Sweep endpoints
@@ -299,7 +299,7 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | `partition_strategy` | str | `""` | `""` (IID) \| `catalog_split`/`task_disjoint` (WebShop env/task) \| `env_disjoint` (ALFWorld env) \| `preference`/`coverage`/`hardness` (task) \| `bm25_field_subset`/`bm25_reweight`/`lookalike`/`rank_wrapper` (WebShop env variants). |
 | `env_div` | float | `0.7` | catalog-split heterogeneity strength. |
 | `keep_ratio` | float | `0.7` | catalog-split distractor density. |
-| `omega` | float | `0.5` | **preference** (task-het) Dirichlet spread ω — larger ω = more skew. |
+| `omega` | float | `0.5` | **preference** (task-het) Dirichlet spread ω, larger ω = more skew. |
 | `size_std` | float | `1.0` | **coverage** (task-het) Beta dispersion ξ. |
 | `success_std` | float | `1.0` | **hardness** (task-het) Beta dispersion ξ′. |
 | `variant_n` | int | `0` | env-variant arms (bm25/lookalike/rank): # variants in the pool (`0` => fn default 2/4). Filename token `N-<n>`. |
@@ -325,8 +325,8 @@ is the identity, so the loop is `T*E` epochs of centralized training); **Local**
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `val_env_spec` | path | `""` | `""` => **no eval**; else the UNPERTURBED val env-spec. |
-| `test_freq` | int | `5` | **Inert on this stack** (client jobs pin `trainer.test_freq=-1`; the aggregated model is evaled **every round** regardless) — kept for legacy config name-parity. |
-| `val_before_train` | bool | `True` | Also eval the base model before round 1 (the round-0 point). One central eval — clients never validate locally. |
+| `test_freq` | int | `5` | **Inert on this stack** (client jobs pin `trainer.test_freq=-1`; the aggregated model is evaled **every round** regardless), kept for legacy config name-parity. |
+| `val_before_train` | bool | `True` | Also eval the base model before round 1 (the round-0 point). One central eval, clients never validate locally. |
 | `client_end_eval` | bool | `False` | Also eval **each selected client's** post-training model per round → the figures' per-client circle marks (`client_curve` in the summary); +M evals/round. All `config/paper/**` ship `true`. |
 | `val_temperature` | float | `0.4` | Val sampling temperature (paper `val_kwargs.temperature=0.4`). |
 | `webshop_val_port` | int | `8090` | Shared unperturbed WebShop val service port. |
@@ -336,7 +336,7 @@ is the identity, so the loop is `T*E` epochs of centralized training); **Local**
 Eval scores the **global** model (base on round 0, else the round's aggregated HF) on one
 shared unperturbed val service via a verl `val_only` pass (`adv_estimator=grpo`, no critic,
 FedProx off), so every arm is measured on the same fixed set. A failed eval never aborts
-the run — it is measurement, not the loop.
+the run; it is measurement, not the loop.
 
 ### FedProx
 
@@ -346,7 +346,7 @@ the run — it is measurement, not the loop.
 
 `fedprox_mu>0` is bridged to each client (and its Ray workers) via the env var
 `FEDPROX_MU`, which `sitecustomize.py` reads at interpreter startup to patch
-`FSDPEngine.optimizer_step` with the proximal term — chosen over a Ray `runtime_env` hook
+`FSDPEngine.optimizer_step` with the proximal term, chosen over a Ray `runtime_env` hook
 so verl's per-worker `CUDA_VISIBLE_DEVICES` isolation is preserved.
 
 ### Rollout, lifecycle & acceleration
@@ -372,7 +372,7 @@ runtime behavior: `running.md`).
 | `alfworld_replicas` / `webshop_replicas` | int | `1` | Tier-1 lock/GIL sharding: K service processes per client (ALFWorld's big lever; WebShop ≈ wash). |
 | `alfworld_manifest_cache` (+`_dir`) | bool | `False` | Cache the pre-shuffle game walk (self-validating; degrades to the full walk on mismatch). |
 | `prewarm_next_round_services` | bool | `False` | Lever #2: launch round r+1's services during round r (ignored under `service_scope: run`). |
-| `parallel_clients` | int | `1` | #3 lanes: the round's clients train concurrently on GPU slices — multi-node lever; wash at 1.5B single-node (§10.3). |
+| `parallel_clients` | int | `1` | #3 lanes: the round's clients train concurrently on GPU slices, multi-node lever; wash at 1.5B single-node (§10.3). |
 | `one_step_off` | bool | `False` | ADDITIONAL OPTION, **off-policy** (verl `one_step_off_policy`); subprocess path only. Not used for paper runs. |
 
 ---
@@ -419,7 +419,7 @@ client_overrides:
 **GRPO vs PPO:** GRPO (the default, `rollout.n=G=8`, no critic) leaves the client command
 byte-identical to the verified path. PPO (`adv_estimator=gae`) flips `need_critic` on; the
 runner federates the value model **alongside the actor every round** (round-1 critic = the
-base model, thereafter the aggregated critic), reusing the same FedAvg + merge machinery —
+base model, thereafter the aggregated critic), reusing the same FedAvg + merge machinery;
 the merger auto-detects `...ForTokenClassification` vs `...ForCausalLM` from the shard's
 `huggingface/config.json`.
 
@@ -429,7 +429,7 @@ the merger auto-detects `...ForTokenClassification` vs `...ForCausalLM` from the
 
 The single-word arm names hide a few traps. Keep these straight when reading a config:
 
-- **Which knob per task-het axis** — each task axis has its own knob; passing the wrong one
+- **Which knob per task-het axis**: each task axis has its own knob; passing the wrong one
   silently no-ops (the service forwards only the key its strategy needs):
   - **Preference** -> `omega` (Dirichlet spread ω; larger = more skew).
   - **Coverage** -> `size_std` (Beta dispersion ξ).
@@ -443,7 +443,7 @@ The single-word arm names hide a few traps. Keep these straight when reading a c
   applies only to `bm25_field_subset` / `bm25_reweight` / `lookalike` / `rank_wrapper`;
   `0` => the function's built-in default (2 or 4).
 - **`ppo_mini_batch_size` lives in `client_overrides`** (a verl actor leaf, multiplied by
-  `rollout.n` internally), not in the filename or the top-level runner keys — see the box
+  `rollout.n` internally), not in the filename or the top-level runner keys, see the box
   above.
 - **`env_disjoint` (ALFWorld) vs `catalog_split`/`task_disjoint` (WebShop)** are the
   env-level partitions; the ALFWorld one is named differently because it shards game files,

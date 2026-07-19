@@ -1,4 +1,4 @@
-# `hetero/` — FedAgent's two-level heterogeneity suite
+# `hetero/`: FedAgent's two-level heterogeneity suite
 
 The scientific core of FedAgent. This package builds **per-client data shards** that
 inject controlled heterogeneity into the federated WebShop loop, separated into two
@@ -18,14 +18,14 @@ bit-identical to the 0.3.1 baseline. The only *additions* are the thin public
 service ([`../envs/webshop/service/`](../envs/webshop/service/)).
 
 > **Exception: `hardness_partition` is corrected, not verbatim.** The upstream body
-> had an assembly bug — the step-2 success-shortfall was recomputed *after* the
+> had an assembly bug: the step-2 success-shortfall was recomputed *after* the
 > step-1 picks were removed from the easy bucket, so it always fired and double-drew
 > an extra `|Y_i|` items from the **unsuccessful** pool, then filled from a **mixed**
 > pool. That floored each client's success rate at the global rate `g` and cut the
 > realized inter-client difficulty spread `Delta^2_hard` to ~25-59% of the intended
 > `C_h/(xi'+1)` with a drifting mean. It now implements the paper's `HardnessPartition`
 > **literally**: `Y_i` is placed on the easy pool by `assign_with_overlap` (the box's
-> `Y_i <- CoveragePartition(Y, ..., xi', r)` — full easy-pool coverage + exact cross-client
+> `Y_i <- CoveragePartition(Y, ..., xi', r)`: full easy-pool coverage + exact cross-client
 > replica budget, vs ~6-9% orphaned by an independent draw), then `X_i = Y_i ∪ F_i` fills
 > the remainder **only** from the hard pool. So `rho_i = |Y_i|/L` and the D1/D3 guarantees
 > hold. Beta sizing, seeds, and `base_seed=42` are unchanged. See
@@ -62,7 +62,7 @@ catalog filter, so any divergence isolates the environment effect.
 This is the load-bearing correctness invariant. The three task-level wrappers
 (`preference_for_client` / `coverage_for_client` / `hardness_for_client`) take an
 `env_goals` argument and partition the env's **actual** `server.goals` list at
-runtime — the seed-42 shuffled goal dicts (each carrying `category`, `asin`,
+runtime, the seed-42 shuffled goal dicts (each carrying `category`, `asin`,
 `goal_options`, `instruction_text`). The original verl-agent partitions exactly this
 list (`partition_dataset(data=goals, ...)` then `goals.index(goal)`), so the served
 goal at index *i* carries the property the partition selected. The WebShop service
@@ -78,7 +78,7 @@ trajectories file.
 
 ## The strategies
 
-### `webshop_catalog_split.py` — environment level (Variant 1)
+### `webshop_catalog_split.py`: environment level (Variant 1)
 
 - `catalog_split_for_client(client_id, client_num, *, env_div=0.7, keep_ratio=0.7, min_goals_per_client=100, holdout_file=None, base_seed=42, data_dir=None) -> (catalog_asins, client_goal_idxs)`
 - Wraps the verbatim `_distractor_disjoint_partition_webshop_v5`. Cuts a ~100-goal
@@ -87,11 +87,11 @@ trajectories file.
   `e = (1-env_div)·u + env_div·v` keeping the top `keep_ratio·|pool|`. `env_div`
   controls cross-client catalog divergence; `keep_ratio` controls distractor density.
 - `task_disjoint` reuses this function and **discards the catalog** (full catalog kept,
-  goal slice retained) — see `../envs/webshop/service/server.py`.
+  goal slice retained), see `../envs/webshop/service/server.py`.
 - Also exports `load_webshop_data(data_dir=None)` and `_generate_goal_asins_for_partition(...)`,
   reused by the task-level modules' offline fallback.
 
-### `webshop_task.py` — task level: **Preference** (knob `omega`)
+### `webshop_task.py`: task level: **Preference** (knob `omega`)
 
 - `preference_for_client(client_id, client_num, *, omega=0.5, min_goals_per_client=100, start_idx=500, env_goals=None, data_dir=None) -> List[int]`
 - Wraps verbatim `_preference_partition_generic`: draws `q_i ~ Dir(pi·(1-omega)/omega)`
@@ -99,7 +99,7 @@ trajectories file.
   `omega`. Partitions the train pool `goals[start_idx:]` by `category`; returns absolute
   goal indices.
 
-### `webshop_coverage.py` — task level: **Coverage** (knob `size_std`)
+### `webshop_coverage.py`: task level: **Coverage** (knob `size_std`)
 
 - `coverage_for_client(client_id, client_num, *, size_std, min_goals_per_client=100, start_idx=500, env_goals=None, data_dir=None) -> List[int]`
 - Wraps verbatim `coverage_partition`. Draws each client's goal **count** from a Beta
@@ -107,7 +107,7 @@ trajectories file.
   cross-client overlap so the union covers the pool while individual slices are unequal.
   Uses all three `_beta_sizing` helpers.
 
-### `webshop_hardness.py` — task level: **Hardness** (knob `success_std`, needs a labels file)
+### `webshop_hardness.py`: task level: **Hardness** (knob `success_std`, needs a labels file)
 
 - `hardness_for_client(client_id, client_num, *, success_std, trajectories_file, min_goals_per_client=100, start_idx=500, env_goals=None, data_dir=None) -> List[int]`
 - Wraps the **corrected** `hardness_partition` (see the exception note at the top).
@@ -116,43 +116,43 @@ trajectories file.
   count of easy ("success") goals `|Y_i|`; the remainder of the fixed quota `L` is filled
   **only from the hard (low-success) bucket**, so `rho_i = |Y_i|/L`. `task_id` is derived
   as `f"{asin}_{md5(goal_options)}"`
-  (with `instruction_text` / bare-`asin` fallbacks) — the **same** formula the labelling
-  pass records — so the lookup resolves only against real goal dicts.
+  (with `instruction_text` / bare-`asin` fallbacks), the **same** formula the labelling
+  pass records, so the lookup resolves only against real goal dicts.
 - **`trajectories_file` is required**: there is no usable default in this package, so
   the wrapper raises if it is missing/absent (the verbatim body also raises
   `FileNotFoundError`). The module-level `path_cfg` stand-in exists solely so the
   verbatim body imports cleanly; its default-path branch is never taken here.
 
-### `webshop_env_variants.py` — environment level: variant arms 2–5
+### `webshop_env_variants.py`: environment level: variant arms 2–5
 
 Ports paper Variants 2–5; each `*_for_client` returns the **env_kwargs fragment** the
-service merges into `gym.make` (no goal partition — the task split stays uniform):
+service merges into `gym.make` (no goal partition, the task split stays uniform):
 
-- `bm25_variant_for_client(client_id, client_num, *, N=4, variant_pool=None, ...) -> {'bm25_in_memory_config': {...}}`
-  — one function serves **both** `bm25_reweight` (Variant 3, default `k1`/`b` pool) and
+- `bm25_variant_for_client(client_id, client_num, *, N=4, variant_pool=None, ...) -> {'bm25_in_memory_config': {...}}`,
+  one function serves **both** `bm25_reweight` (Variant 3, default `k1`/`b` pool) and
   `bm25_field_subset` (Variant 2, `variant_pool='fields_only'`, set via the
   `BM25_VARIANT_POOL` env var). SimServer routes through `InMemoryBM25Searcher`.
-- `lookalike_injection_for_client(client_id, client_num, *, N=2, project_root=None, ...) -> {'extra_products': [...]}`
-  — Variant 4: injects adversarial lookalike products (price/color/...) appended to the
+- `lookalike_injection_for_client(client_id, client_num, *, N=2, project_root=None, ...) -> {'extra_products': [...]}`,
+  Variant 4: injects adversarial lookalike products (price/color/...) appended to the
   catalog before indexing.
-- `rank_wrapper_for_client(client_id, client_num, *, N=4, ...) -> {'search_engine_variant': {...}}`
-  — Variant 5: swaps the search-engine **type** (`bm25_default` / `bm25_shuffle` /
+- `rank_wrapper_for_client(client_id, client_num, *, N=4, ...) -> {'search_engine_variant': {...}}`,
+  Variant 5: swaps the search-engine **type** (`bm25_default` / `bm25_shuffle` /
   `bm25_invert` / `bm25_partial`), with a per-client `seed`.
 
 Each client is deterministically assigned one of `N` variants via
 `RandomState(base_seed + client_id)`. `N` defaults match the service:
 `bm25_*`→4, `lookalike`→2, `rank_wrapper`→4 (overridable with `VARIANT_N`).
 
-## `_beta_sizing.py` — shared Beta-sizing helpers
+## `_beta_sizing.py`: shared Beta-sizing helpers
 
 Verbatim helpers used by the Beta-based task partitioners:
 
-- `default_r(N, C, low, center, high)` — overlap coefficient (assignments / samples),
+- `default_r(N, C, low, center, high)`: overlap coefficient (assignments / samples),
   clipped to the feasible band.
-- `generate_client_sizes(C, low, center, high, dispersion_s, target_sum, rng)` — draws
+- `generate_client_sizes(C, low, center, high, dispersion_s, target_sum, rng)`: draws
   `C` per-client sizes from a Beta reparameterized by mean + `dispersion_s`, rescaled to
   `target_sum` and integer-rounded to match the sum exactly.
-- `assign_with_overlap(N, sizes, r, rng)` — hands samples to clients with cross-client
+- `assign_with_overlap(N, sizes, r, rng)`: hands samples to clients with cross-client
   overlap (`Coverage` only).
 
 **Coverage** uses all three; **Hardness** uses `default_r` + `generate_client_sizes`

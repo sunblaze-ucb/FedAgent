@@ -1,9 +1,9 @@
-# `envs/webshop/service/` — one HTTP WebShop env per federated client
+# `envs/webshop/service/`: one HTTP WebShop env per federated client
 
 A small [FastAPI](https://fastapi.tiangolo.com/) service that wraps the heavy,
 in-process WebShop gym env (`WebAgentTextEnv`) behind a handful of HTTP routes.
 The federated runner ([`../../../fed/run_fed.py`](../../../fed/run_fed.py)) launches **one
-service per client** — but **lazily per round**, only for that round's selected clients
+service per client**, but **lazily per round**, only for that round's selected clients
 (at most `clients_per_round` concurrently), tearing them down per round before
 aggregation; only the shared val service persists to the end of the run. Each service
 builds its *entire* env pool with that client's heterogeneity variant. So the design
@@ -41,7 +41,7 @@ at import time) precisely so the trainer env can import the *client*
 
 At startup `server.py` `sys.path`-injects the vendored WebShop engine from
 `../engine/webshop/` and loads the original action parser
-(`webshop_projection`) **in isolation** — bypassing the `agent_system` package
+(`webshop_projection`) **in isolation**, bypassing the `agent_system` package
 `__init__` (which would pull verl-0.3.1 / torch). The lifespan handler then
 pre-warms a **pool** of `WebAgentTextEnv` instances (`gym.make` is ~26 s each, JVM
 + index startup) so episodes never pay that cost.
@@ -106,14 +106,14 @@ top-K is read by the underlying engine (see the last section).
 
 ## Goal / data-shard logic
 
-Every pooled env shares the same `env.unwrapped.server.goals` — a **seed-42
+Every pooled env shares the same `env.unwrapped.server.goals`: a **seed-42
 reproducible shuffle** of the catalog's goals (the catalog filter does not
 perturb that RNG, GPU-verified), so all envs and all clients see an identical
 goal order. The split is positional:
 
 - **train** (`WEBSHOP_SPLIT=train`, default): goals `[VAL_SIZE:]` (val holdout
   is offset out so a uniform/centralized client never leaks val goals).
-- **val** (`WEBSHOP_SPLIT=val`): the shared **unperturbed** validation env —
+- **val** (`WEBSHOP_SPLIT=val`): the shared **unperturbed** validation env,
   ignores any partition and draws from goals `[0:VAL_SIZE]` on the full catalog,
   so every arm is scored on the same fixed set.
 
@@ -127,10 +127,10 @@ goals* by calling [`../../../hetero/`](../../../hetero/):
 | `preference` | task | `preference_for_client` | Dirichlet over goal `category` (ω). |
 | `coverage` | task | `coverage_for_client` | Beta-sized overlapping slices (ξ). |
 | `hardness` | task | `hardness_for_client` | Beta-skewed easy/hard goals (ξ′, needs `TRAJECTORIES_FILE`). |
-| `bm25_field_subset` | env | `bm25_variant_for_client(...fields_only)` | Variant 2 — field-subset BM25 index. |
-| `bm25_reweight` | env | `bm25_variant_for_client` | Variant 3 — BM25 `k1`/`b` reweighting. |
-| `lookalike` | env | `lookalike_injection_for_client` | Variant 4 — adversarial lookalike products. |
-| `rank_wrapper` | env | `rank_wrapper_for_client` | Variant 5 — shuffled/inverted/partial-random ranking. |
+| `bm25_field_subset` | env | `bm25_variant_for_client(...fields_only)` | Variant 2, field-subset BM25 index. |
+| `bm25_reweight` | env | `bm25_variant_for_client` | Variant 3, BM25 `k1`/`b` reweighting. |
+| `lookalike` | env | `lookalike_injection_for_client` | Variant 4, adversarial lookalike products. |
+| `rank_wrapper` | env | `rank_wrapper_for_client` | Variant 5, shuffled/inverted/partial-random ranking. |
 
 `catalog_split`/`task_disjoint` and the env-variant strategies are resolved at
 **import** (their indices are order-independent). The content-dependent task
@@ -153,7 +153,7 @@ the first few); otherwise (unsharded service, e.g. val or standalone) the full t
 
 **Reward shape (sparse).** `/step` mirrors verl-agent's `envs.py` exactly: the
 env's graded score in `[0,1]` is returned only as `task_score` (diagnostic),
-while the training `reward` is binary **`{0, 10}`** — `10` iff the episode ends
+while the training `reward` is binary **`{0, 10}`**: `10` iff the episode ends
 with a perfect match (`done and score == 1.0`), else `0`. Each step also reports
 `is_action_valid`; the small **per-invalid-action penalty** (`coef × #invalid`,
 default `0.1`) is applied downstream by the agent loop
@@ -162,7 +162,7 @@ not by the service.
 
 ---
 
-## `WEBSHOP_SEARCH_RETURN_N` — why it matters
+## `WEBSHOP_SEARCH_RETURN_N`: why it matters
 
 This knob is **not** read in `server.py`; it is read by the vendored WebShop
 engine (`engine.py`: `SEARCH_RETURN_N = int(os.environ.get('WEBSHOP_SEARCH_RETURN_N', 50))`),
@@ -170,8 +170,8 @@ which the service process inherits. It is the BM25 **top-K** that a `search[...]
 returns before per-client filtering. The engine then drops any ASIN not in this
 client's `catalog_filter_asins`, so under env-level heterogeneity the legacy
 default **`50` can filter out the target item entirely** (no reward signal). The
-paper — and the runner default in `run_fed.py` (`search_return_n: 200`, exported
-as `WEBSHOP_SEARCH_RETURN_N`) — uses **`200`** so the target survives filtering.
+paper, and the runner default in `run_fed.py` (`search_return_n: 200`, exported
+as `WEBSHOP_SEARCH_RETURN_N`), uses **`200`** so the target survives filtering.
 
 ---
 
@@ -194,8 +194,8 @@ curl -s localhost:8081/health   # -> {"ok":true,..,"partition":"catalog_split","
 
 ## See also
 
-- [`../../../README.md`](../../../README.md) — FedAgent overview.
-- [`../webshop_env.py`](../webshop_env.py) — the trainer-side HTTP client.
-- [`../../../hetero/`](../../../hetero/) — the partition functions this service calls.
-- [`../../../fed/run_fed.py`](../../../fed/run_fed.py) — `start_webshop_services()` launches one per client.
-- [`../../../docs/heterogeneity.md`](../../../docs/heterogeneity.md) — the two-level taxonomy.
+- [`../../../README.md`](../../../README.md), FedAgent overview.
+- [`../webshop_env.py`](../webshop_env.py), the trainer-side HTTP client.
+- [`../../../hetero/`](../../../hetero/), the partition functions this service calls.
+- [`../../../fed/run_fed.py`](../../../fed/run_fed.py), `start_webshop_services()` launches one per client.
+- [`../../../docs/heterogeneity.md`](../../../docs/heterogeneity.md), the two-level taxonomy.

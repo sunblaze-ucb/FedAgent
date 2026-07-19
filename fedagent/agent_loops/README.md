@@ -1,20 +1,20 @@
-# `agent_loops/` — multi-turn text rollout on verl 0.8's native agent-loop
+# `agent_loops/`: multi-turn text rollout on verl 0.8's native agent-loop
 
 FedAgent's rollout seam. Two `verl.experimental.agent_loop.AgentLoopBase`
 subclasses drive a multi-turn text episode of the policy against one
 [`BaseTextEnv`](../envs/base.py) instance per dataset row: **`GymTextAgentLoop`**
-(concat — the whole trajectory as one verl `AgentLoopOutput`) and
+(concat, the whole trajectory as one verl `AgentLoopOutput`) and
 **`WindowedGymTextAgentLoop`** (the paper's sliding per-turn window, one training
-sample per turn — the **default**: `rollout_mode: windowed`, injected together with
+sample per turn, the **default**: `rollout_mode: windowed`, injected together with
 `WindowedAgentLoopManager`). This is a thin overlay: it
 plugs into verl's **stock** PPO/GRPO trainer and **native** async agent-loop
-rollout — there is no trainer fork (see [`../README.md`](../README.md)).
+rollout; there is no trainer fork (see [`../README.md`](../README.md)).
 
 ```
 fedagent/agent_loops/
 ├── __init__.py                 # package marker
 ├── gym_text_agent_loop.py      # GymTextAgentLoop (@register("gym_text"))
-├── windowed_agent_loop.py      # WindowedGymTextAgentLoop (@register("gym_text_windowed")) — default
+├── windowed_agent_loop.py      # WindowedGymTextAgentLoop (@register("gym_text_windowed")), default
 └── windowed_manager.py         # WindowedAgentLoopManager/Worker (fans per-turn samples into the batch)
 ```
 
@@ -33,12 +33,12 @@ The dataset adapter [`../data/agentic_dataset.py`](../data/agentic_dataset.py)
 puts the per-row fields into `extra_info`, and verl forwards them as `**kwargs` to
 `run`. The loop reads:
 
-- **`env_name`** (default `"TinyGuess"`) — looked up in
+- **`env_name`** (default `"TinyGuess"`), looked up in
   [`../envs/registry.py`](../envs/registry.py) via `make_env(env_name, config)`
   (`TinyGuess` / `WebShop` / `ALFWorld`).
-- **`config`** (default `{}`) — env config dict passed to the env constructor.
-- **`seed`** (default `0`) — deterministic episode seed for `env.reset(seed=...)`.
-- **`max_turns`** (default `6`) — hard cap on generate→step iterations.
+- **`config`** (default `{}`), env config dict passed to the env constructor.
+- **`seed`** (default `0`), deterministic episode seed for `env.reset(seed=...)`.
+- **`max_turns`** (default `6`), hard cap on generate→step iterations.
 
 ## How verl discovers it
 
@@ -55,7 +55,7 @@ carried on each row to an `AgentLoopBase` `_target_`:
   _target_: fedagent.agent_loops.windowed_agent_loop.WindowedGymTextAgentLoop
 ```
 
-The federated runner wires this for both training and the val pass — see
+The federated runner wires this for both training and the val pass, see
 `cfg.agent_config_path` (= `fedagent/config/agent.yaml`) and the
 `...agent.agent_loop_config_path={cfg.agent_config_path}` CLI override in
 [`../fed/run_fed.py`](../fed/run_fed.py). `gym_text` is the default `agent_name`
@@ -96,7 +96,7 @@ in the dataset adapter, so rows need not set it explicitly.
    `finally` (e.g. to return a pooled remote WebShop session).
 
 So one `AgentLoopOutput` carries the full concat trajectory with a response mask
-that is 1 on the agent's actions and 0 on environment text — outcome credit is
+that is 1 on the agent's actions and 0 on environment text; outcome credit is
 assigned over action tokens only. GRPO groups come from verl's `rollout.n`
 repeats per row.
 
@@ -110,20 +110,20 @@ reward_score = sum(env_rewards) - invalid_penalty * n_invalid
 ```
 
 `invalid_penalty` is `FEDAGENT_INVALID_ACTION_PENALTY_COEF` (default `0.1`; set
-`0` to disable) — stock verl 0.8 has no such hook, so the loop applies it here.
+`0` to disable); stock verl 0.8 has no such hook, so the loop applies it here.
 
 Per-sample fields are tagged in `extra_fields["reward_extra_info"]` so they land
 in verl's validation JSONL dump:
 
-- **`traj_success`** — `float(success)`, always present.
-- **`goal_id` / `task_type`** — added only when the env surfaces them
+- **`traj_success`**: `float(success)`, always present.
+- **`goal_id` / `task_type`**: added only when the env surfaces them
   (string-valued; kept in the val dump but skipped by metric aggregation). Used
   by the WebShop hardness-labelling pass and the ALFWorld eval breakdown.
 
 The val pass in [`../fed/run_fed.py`](../fed/run_fed.py)
 (`summarize_val_dump`) reads this dump and reports
 `success_rate = mean(traj_success)` and `reward_mean = mean(score)` (`score` is
-verl's name for `reward_score` in the dump) — FedAgent's headline
+verl's name for `reward_score` in the dump), FedAgent's headline
 `val/success_rate`.
 
 ## Config keys it reads

@@ -1,4 +1,4 @@
-# `data/` — the verl dataset adapter for FedAgent's agentic environments
+# `data/`: the verl dataset adapter for FedAgent's agentic environments
 
 This folder is the **dataset seam** between FedAgent's agentic environments and
 [verl 0.8](../README.md)'s data pipeline. FedAgent is a *thin overlay* on stock
@@ -7,8 +7,8 @@ feeding verl a table of static prompts, we hand it a tiny custom `Dataset` whose
 rows are **env specs**: each row tells the [agent-loop](../agent_loops/) which
 environment to instantiate and which task instance to run.
 
-- **`agentic_dataset.py`** — the `AgenticDataset` class (the `custom_cls`).
-- **`__init__.py`** — package marker / one-line description.
+- **`agentic_dataset.py`**: the `AgenticDataset` class (the `custom_cls`).
+- **`__init__.py`**: package marker / one-line description.
 
 ---
 
@@ -159,7 +159,7 @@ def _partition_specs(self, specs):
 ```
 
 This is deliberate. For the paper's two real benchmarks (**WebShop** and
-**ALFWorld**), the client's data shard is **not** chosen here — it is selected
+**ALFWorld**), the client's data shard is **not** chosen here, it is selected
 **server-side by the remote env service**:
 
 - This dataset only decides *how many* episodes to run, *how long*, and *with what
@@ -186,10 +186,10 @@ client-side, but it is not on the WebShop/ALFWorld path. See
 
 ### See also
 
-- [`../README.md`](../README.md) — FedAgent overview (thin overlay on verl 0.8).
-- [`../config/envs/`](../config/envs/) — the env-spec YAMLs consumed here.
-- [`../fed/run_fed.py`](../fed/run_fed.py) — sets `data.custom_cls.path`,
+- [`../README.md`](../README.md), FedAgent overview (thin overlay on verl 0.8).
+- [`../config/envs/`](../config/envs/), the env-spec YAMLs consumed here.
+- [`../fed/run_fed.py`](../fed/run_fed.py), sets `data.custom_cls.path`,
   `data.train_files`, and `FEDAGENT_BASE_SEED` per round/client.
-- [`../agent_loops/`](../agent_loops/) — consumes the row kwargs
+- [`../agent_loops/`](../agent_loops/), consumes the row kwargs
   (`env_name` / `seed` / `config` / `max_turns`) in `AgentLoop.run`.
-- [`../envs/`](../envs/) — the environment clients (WebShop / ALFWorld / TinyGuess).
+- [`../envs/`](../envs/), the environment clients (WebShop / ALFWorld / TinyGuess).
