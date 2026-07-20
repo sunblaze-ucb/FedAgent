@@ -802,9 +802,11 @@ def start_val_service(cfg, env_base: dict) -> List[dict]:
 
 
 def summarize_val_dump(dump_dir: Path) -> Optional[dict]:
-    """Read verl's validation_data_dir JSONL dump -> {n, success_rate, reward_mean}. The
-    agent loop tags each val sample with traj_success (1.0 if the episode succeeded) and
-    score (episode reward), so the mean over samples is the val success / reward."""
+    """Read verl's validation_data_dir JSONL dump -> {n, success_rate, reward_mean, task_score_mean}.
+    The agent loop tags each val sample with traj_success (1.0 if the episode succeeded), score
+    (episode reward, the 0/10 binarized signal), and (WebShop only) task_score (the partial-credit
+    [0,1] goal-match score). Means over samples give val success / reward / task-score; task_score_mean
+    is None for envs/runs that don't emit task_score (e.g. ALFWorld, or pre-existing dumps)."""
     files = sorted(Path(dump_dir).glob("*.jsonl"))
     if not files:
         return None
@@ -822,7 +824,8 @@ def summarize_val_dump(dump_dir: Path) -> Optional[dict]:
         vals = [float(r[key]) for r in rows if r.get(key) is not None]
         return round(sum(vals) / len(vals), 4) if vals else None
 
-    return {"n": len(rows), "success_rate": mean("traj_success"), "reward_mean": mean("score")}
+    return {"n": len(rows), "success_rate": mean("traj_success"), "reward_mean": mean("score"),
+            "task_score_mean": mean("task_score")}
 
 
 WINDOWED_MANAGER_FQN = "fedagent.agent_loops.windowed_manager.WindowedAgentLoopManager"

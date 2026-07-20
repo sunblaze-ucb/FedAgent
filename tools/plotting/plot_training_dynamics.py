@@ -144,6 +144,7 @@ def aggregated_curve(data: Experiment, metric: str) -> List[Tuple[int, float]]:
 _SUMMARY_METRIC = {
     "val/success_rate": "success_rate", "success_rate": "success_rate",
     "val/reward_mean": "reward_mean", "reward_mean": "reward_mean", "reward": "reward_mean",
+    "val/task_score": "task_score_mean", "task_score": "task_score_mean",
 }
 
 

@@ -46,6 +46,7 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
         env_rewards: List[float] = []
         turn_invalid: List[float] = []   # per-turn 1.0 if THAT turn's action was invalid, else 0.0
         success = False
+        task_score_val = None    # WebShop partial-credit score [0,1] (info['task_score']); stays None if the env doesn't expose it (e.g. ALFWorld)
         traj_uid = uuid4().hex   # one id per trajectory (broadcast advantage groups by it)
         try:
             init_obs, _ = await env.reset(seed=seed)
@@ -65,6 +66,8 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
                 obs, reward, done, info = await env.step(text)
                 env_rewards.append(float(reward))
                 success = bool(info.get("success", success))
+                if info.get("task_score") is not None:
+                    task_score_val = float(info["task_score"])   # last (terminal) turn carries the episode's partial-credit score
                 turn_invalid.append(0.0 if info.get("is_action_valid", True) else 1.0)
                 resp = action_ids[: self.response_length]
                 # rollout log-probs (present iff rollout.calculate_log_probs=true), sliced with
@@ -102,4 +105,6 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
             penalty = 0.0 if validate else self._invalid_penalty * inv
             o.reward_score = base_return - penalty
             o.extra_fields["reward_extra_info"]["traj_success"] = float(success)
+            if task_score_val is not None:
+                o.extra_fields["reward_extra_info"]["task_score"] = task_score_val
         return outputs

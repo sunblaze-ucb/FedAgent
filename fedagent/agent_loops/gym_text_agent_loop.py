@@ -155,6 +155,8 @@ class GymTextAgentLoop(AgentLoopBase):
         # hardness-trajectories labelling pass) / task_type (ALFWorld, for the eval breakdown).
         # Present only when the env provides them (gated env-side), so normal runs are unchanged.
         reward_extra_info = {"traj_success": float(success)}
+        if info.get("task_score") is not None:
+            reward_extra_info["task_score"] = float(info["task_score"])   # WebShop partial-credit score [0,1]
         for tag in ("goal_id", "task_type"):
             if info.get(tag) is not None:
                 reward_extra_info[tag] = info[tag]
