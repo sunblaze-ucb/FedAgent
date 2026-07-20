@@ -56,6 +56,7 @@ from typing import Dict, List, Optional, Tuple
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 import numpy as np
 
 StepData = Dict[str, object]
@@ -292,6 +293,10 @@ def plot_training_dynamics(
     x_max = max(xs) if xs else 0
     if x_max >= 60:
         ax.set_xticks(list(range(0, int(x_max) + 1, 30)))
+    else:
+        # Small ranges: tick on real round boundaries (multiples of the ep-per-round stride)
+        # instead of matplotlib's default "nice" spacing, which lands on non-data epochs (2.5).
+        ax.xaxis.set_major_locator(MultipleLocator(max(stride, 1)))
     ax.set_xlim(left=0)
     ax.set_ylabel(metric + (" (%)" if as_percent else ""), fontsize=14)
     ax.set_title(title or Path(folder).name, fontsize=14, fontweight="bold")
