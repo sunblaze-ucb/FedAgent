@@ -1,7 +1,9 @@
 # WebShop env-spec for PPO arms (15-step budget). Identical to webshop_15.yaml EXCEPT
 # n_envs=64 == the original PPO train_data_size (config/uniform/.../ppo/*.yaml:119). With the
-# PPO data.train_batch_size=64 this is 1 optimizer step/epoch, so E=3 epochs => 3 local
-# updates/round (matches the original PPO recipe; PPO deliberately used batch 64 vs GRPO 8).
+# PPO data.train_batch_size=64 this is 1 verl step/epoch, so E=3 epochs => 3 steps/round,
+# same as GRPO. PPO deliberately used batch 64 vs GRPO 8 -- but UNGROUPED (rollout.n=1;
+# 2026-07-20 fix, docs/bugfixes.md: the original's env.rollout.n was a dead key for PPO), so
+# both algos collect 64 trajectories/step (PPO 64x1, GRPO 8x8).
 # Goals are drawn per (round,client) via the round-threaded FEDAGENT_BASE_SEED (run_fed).
 envs:
   - name: WebShop

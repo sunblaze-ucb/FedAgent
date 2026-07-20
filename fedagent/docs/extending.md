@@ -377,7 +377,10 @@ if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
   the critic shard dir alongside the actor (`critic_dir_for`), FedAvgs **both**
   components, merges each to HF, and carries the federated value model forward
   (`critic.model.path` is set per round; round 1's critic = the base model, a random
-  value head on the backbone). For this to work the PPO config **must** include
+  value head on the backbone). PPO rollouts are **ungrouped** (`rollout.n=1`; the critic is
+  the baseline — the original's `env.rollout.n` never applied to PPO; 2026-07-20 fix, see
+  `docs/bugfixes.md`), with `ppo_mini_batch_size=64` + `critic.ppo_mini_batch_size=64` (the
+  64-row minibatch). For this to work the PPO config **must** include
   `critic.checkpoint.save_contents=[model]` (and `...actor.checkpoint.save_contents=[model]`)
   in `client_overrides`, so the aggregator finds the value-model weights. See
   `fedagent/config/examples/webshop/scaled/ppo.yaml`.

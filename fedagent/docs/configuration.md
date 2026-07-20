@@ -386,7 +386,7 @@ leaves at smoke defaults. The key ones:
 
 | Override | Role |
 |---|---|
-| `actor_rollout_ref.rollout.n=8` | **GRPO group size G** (8 in the paper). |
+| `actor_rollout_ref.rollout.n=8` (PPO: `=1`) | **GRPO group size G** (8 in the paper); PPO is **ungrouped** — the original's `env.rollout.n` was a dead key on the PPO path (2026-07-20 fix, `bugfixes.md`). |
 | `data.train_batch_size=8` (PPO: `64`) | Prompts per optimizer step; pair with `actor_rollout_ref.actor.ppo_mini_batch_size`. |
 | `data.max_prompt_length` / `max_response_length` (WebShop `4096` / `512`; ALFWorld `2048` / `512`) | Token budgets; mirror on `rollout.prompt_length` / `response_length`. |
 | `actor_rollout_ref.rollout.max_model_len` (WebShop `4608`; ALFWorld `2560`) | vLLM context window. |
@@ -396,7 +396,8 @@ leaves at smoke defaults. The key ones:
 > keys.** It is a verl actor knob (`actor_rollout_ref.actor.ppo_mini_batch_size`), so it
 > rides in `client_overrides`. verl multiplies it by `rollout.n` internally to form the
 > per-update sample count, which is why the paper pairs `ppo_mini_batch_size=8` with
-> `rollout.n=8` (GRPO) and `=64` with `rollout.n=8` (PPO). Do not confuse it with
+> `rollout.n=8` (GRPO) and `=64` with `rollout.n=1` (PPO) — both realize the original's
+> **64-row minibatch** (2026-07-20 fix, `bugfixes.md`). Do not confuse it with
 > `min_goals_per_client` (a federation/sharding knob) or `data.train_batch_size` (prompts
 > per step).
 
@@ -411,6 +412,7 @@ client_overrides:
   - critic.model.use_remove_padding=true
   - critic.model.enable_gradient_checkpointing=true
   - critic.fsdp.optimizer_offload=true
+  - critic.ppo_mini_batch_size=64
   - critic.ppo_micro_batch_size_per_gpu=4
   - critic.checkpoint.save_contents=[model]
   - trainer.critic_warmup=0

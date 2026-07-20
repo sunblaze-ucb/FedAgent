@@ -29,18 +29,23 @@ Three migration fidelity fixes are baked in (see fedagent/docs/migration.md):
       non-het baselines match the 0.3.1 numbers. (run_fed default is 200; we set it explicitly.)
   (2) ALFWorld max_turns=50 (the env-spec config/envs/alfworld*.yaml carries it) -- the paper
       ran 50-turn episodes; a smaller cap can only lower ALFWorld success.
-  (3) ALFWorld rollout.n=G (=8 by default; matches the WebShop group size) + a larger context
-      window (max_model_len) sized for 50-turn transcripts.  GPU-VERIFY: confirm no OOM /
-      prompt truncation at max_turns=50; raise max_model_len if episodes truncate.
+  (3) ALFWorld GRPO rollout.n=G (=8 by default; matches the WebShop group size) + a larger
+      context window (max_model_len) sized for 50-turn transcripts.  GPU-VERIFY: confirm no
+      OOM / prompt truncation at max_turns=50; raise max_model_len if episodes truncate.
 
-NOTE on ppo_mini_batch_size: stock verl-0.8 multiplies it by rollout.n internally
-(ray_trainer.py:1311 actor, :1340 critic), while verl-agent 0.3.1 multiplied by
-actor_rollout_ref.rollout.n == 1 (asserted in its main_ppo.py:168; the G=8 grouping came from
-env.rollout.n, which did NOT scale the minibatch). The original therefore always used a 64-ROW
-global minibatch: GRPO 8 prompts x G=8 = 64 rows -> 1 update/step; PPO 64 prompts x G=8 = 512
-rows -> 8 updates/step of 64 rows each. On verl-0.8 that same 64-row minibatch is
-ppo_mini_batch_size=8 PROMPTS (x rollout.n=8) for BOTH algos — NOT 64 for PPO, which would fuse
-the 512-row batch into a single update (8x fewer/larger steps than the paper runs).
+NOTE on rollout.n / ppo_mini_batch_size (2026-07-20 FIX, docs/bugfixes.md): stock verl-0.8
+multiplies ppo_mini_batch_size by rollout.n internally (ray_trainer.py:1311 actor, :1340
+critic), while verl-agent 0.3.1 multiplied by actor_rollout_ref.rollout.n == 1 (asserted in
+its main_ppo.py:168); its G=8 grouping came from env.rollout.n. Crucially, env.rollout.n=8
+was a DEAD key on the PPO path: the fork's default is -1 = "disable env grouping"
+(ppo_trainer.yaml:293), the PPO base scripts never set it (scripts/verl-agent/ppo/*.sh:
+"PPO has no GRPO/GiGPO group dimension"), and the fed orchestrator
+(core/fed/script_builder.py) only regex-rewrites keys already present in the script. So the
+original PPO ran UNGROUPED: 64 prompts x group_n=1 = 64 trajectories/step -- the SAME
+per-step trajectory budget and 64-ROW minibatch as GRPO (8 x 8). On verl-0.8 that is
+rollout.n=1 + ppo_mini_batch_size=64 PROMPTS for PPO, rollout.n=8 + 8 PROMPTS for GRPO.
+(The pre-fix tree emitted rollout.n=8 for PPO = 512 traj/step, 8x the paper's rollout
+volume; see the bugfixes entry for the full evidence chain.)
 
 --accel emits the SAME 176-config matrix into fedagent/config/paper_accelerated/ with the
 adopted acceleration stack added (fedagent/docs/acceleration.md): cross_round + worker eval +
@@ -187,13 +192,19 @@ def client_overrides(is_ppo, group_size, env_kind):
         prompt, resp, max_model_len = 4096, 512, 4608   # WebShop pages are long (== legacy 4096)
         gpu_mem = "0.5" if is_ppo else "0.6"
     batch = 64 if is_ppo else 8
-    mini = 8   # PROMPTS, both algos: x rollout.n=8 = the original's 64-ROW minibatch (see header NOTE)
+    # 2026-07-20 FIX (docs/bugfixes.md): the original PPO ran UNGROUPED -- env.rollout.n was a
+    # DEAD key on the PPO path (fork default -1 = no grouping; the PPO base scripts never set it
+    # and script_builder.py only rewrites keys already present) -- so PPO collects 64 prompts x
+    # n=1 = 64 traj/step, GRPO 8 x G = 64. mini is PROMPTS (verl-0.8 multiplies by rollout.n):
+    # 64//group_n keeps the original 64-ROW minibatch for both algos (G must divide 64).
+    group_n = 1 if is_ppo else group_size
+    mini = 64 // group_n
     ov = [
         f"data.train_batch_size={batch}",
         f"data.max_prompt_length={prompt}",
         f"data.max_response_length={resp}",
-        f"actor_rollout_ref.actor.ppo_mini_batch_size={mini}",   # PROMPTS; verl-0.8 x rollout.n=8 => 64-row minibatch (== FedAgent; GRPO 1 update/step, PPO 8)
-        f"actor_rollout_ref.rollout.n={group_size}",             # FedAgent group size G (env.rollout.n=8)
+        f"actor_rollout_ref.actor.ppo_mini_batch_size={mini}",   # PROMPTS x rollout.n = the original's 64-row minibatch (see header NOTE)
+        f"actor_rollout_ref.rollout.n={group_n}",                # GRPO group G; PPO ungrouped (=1, == original)
         f"actor_rollout_ref.rollout.prompt_length={prompt}",
         f"actor_rollout_ref.rollout.response_length={resp}",
         f"actor_rollout_ref.rollout.max_model_len={max_model_len}",
@@ -211,6 +222,7 @@ def client_overrides(is_ppo, group_size, env_kind):
             "critic.model.use_remove_padding=true",
             "critic.model.enable_gradient_checkpointing=true",
             "critic.fsdp.optimizer_offload=true",   # verl 0.8: critic FSDP at critic.fsdp
+            "critic.ppo_mini_batch_size=64",        # base body pins 8 PROMPTS (GRPO-sized); x rollout.n=1 would be 8 rows -- pin the 64-row minibatch
             "critic.ppo_micro_batch_size_per_gpu=4",
             "critic.checkpoint.save_contents=[model]",
             "trainer.critic_warmup=0",

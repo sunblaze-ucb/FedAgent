@@ -55,20 +55,27 @@ These were verified during migration audits and fixed where they diverged (see
   `actor_rollout_ref.rollout.n=8`). Stock verl 0.8 multiplies `ppo_mini_batch_size` by
   `rollout.n` internally; the fork multiplied by its `actor_rollout_ref.rollout.n`, which
   was **asserted `== 1`** (its main_ppo.py:168, grouping came from `env.rollout.n` and
-  never scaled the minibatch). The original therefore always stepped in **64-row global
-  minibatches**: GRPO 1 update/step over its 64-row batch, PPO **8 updates/step** over its
-  512-row batch. On verl 0.8 that same 64-row minibatch is `ppo_mini_batch_size=8` prompts
-  for **both** algos, *not* 64 for PPO, which would fuse the 512-row batch into a single
-  8×-larger update. (The PPO configs originally shipped with 64; corrected to 8, see
-  `../EXPERIMENTS.md`.)
-- **Trajectories/step = `train_batch_size × rollout.n`, for PPO as well as GRPO.** Confirmed
-  in the verl-agent source (`agent_system/multi_turn_rollout/rollout_loop.py:448` targets
-  `train_batch_size * rollout.n`; `:504` does `gen_batch.repeat(rollout.n)`), both
-  **unconditional**, *not* gated on `adv_estimator`, and PPO uses the same `multi_turn_loop`.
-  So the original ran **GRPO 8×8 = 64** and **PPO 64×8 = 512** trajectories/step; the new
-  configs reproduce both exactly. ⚠️ **`rollout.n` must stay 8 for PPO**: dropping it to 1
-  would give 64/step, *unfaithful* to the paper. (Reviewed false-alarm: the new PPO is **not**
-  doing 8× extra rollout vs legacy; legacy already did 512/step.)
+  never scaled the minibatch). The original always stepped in **64-row global minibatches**,
+  and (2026-07-20 correction) collected **64 trajectories/step for both algos** — GRPO
+  8 prompts × 8, PPO 64 prompts **ungrouped** (next bullet). On verl 0.8 the 64-row
+  minibatch is therefore `ppo_mini_batch_size=8` prompts × `rollout.n=8` for GRPO and
+  `=64` prompts × `rollout.n=1` for PPO, plus an explicit `critic.ppo_mini_batch_size=64`
+  (the base body's `8` is GRPO-sized). (History: PPO shipped with mini=64×n8, corrected to
+  8×n8 on 2026-07-09, and to 64×n1 on 2026-07-20 when `env.rollout.n` turned out to be a
+  dead key on the PPO path; see `../EXPERIMENTS.md` + [`bugfixes.md`](bugfixes.md).)
+- **Trajectories/step = 64 for BOTH algos (2026-07-20 correction, [`bugfixes.md`](bugfixes.md)).**
+  The fork's grouping knob is `env.rollout.n`, and on the PPO path it was a **dead key**: the
+  fork default is `-1` = disable grouping (`ppo_trainer.yaml:293`), the PPO base scripts never
+  set it ("PPO has no GRPO/GiGPO group dimension", `scripts/verl-agent/ppo/run_*.sh`), and the
+  fed orchestrator (`core/fed/script_builder.py`) only rewrites keys already present in the
+  script. Envs = `train_batch_size × group_n` (`env_manager.py:1101,1181`) and the prompt
+  repeat is gated on `env.rollout.n > 0` (`rollout_loop.py:282`), so the executed original ran
+  **GRPO 8×8 = 64** and **PPO 64×1 = 64** trajectories/step; the configs now reproduce both
+  (`rollout.n=8` GRPO / `=1` PPO). An earlier note here concluded the opposite ("`rollout.n`
+  must stay 8 for PPO") from the *formula* `train_batch_size × rollout.n` on the dynamic
+  filter-groups path (`rollout_loop.py:414/:448`) — the formula is real but the executed
+  *value* was 1; that verdict is withdrawn. Pre-fix PPO configs really did 8× the paper's
+  rollout volume (512/step).
 - **Sparse reward + invalid-action penalty**: `{0,10}` with a `0.1 × n_invalid` penalty
   (the penalty moved from the trainer actor to the agent-loop; same total per episode).
   Within the episode the placement is **per-turn**: −0.1 lands at the turns whose own action
@@ -111,7 +118,8 @@ applies three fixes surfaced by the WebShop/ALFWorld implementation audits:
    (`max_model_len=16384`, `response_length=8192`) are gone. The ALFWorld `client_overrides`
    now use `rollout.max_model_len=2560`, `response_length=512` (prompt `2048` for the short
    room text); WebShop uses `rollout.max_model_len=4608`, `response_length=512` (prompt `4096`
-   for the long product pages). `rollout.n` stays at G=8.
+   for the long product pages). GRPO keeps `rollout.n`=G=8; PPO is ungrouped
+   (`rollout.n=1`, 2026-07-20 fix, [`bugfixes.md`](bugfixes.md)).
 
 > Fixes #2/#3 are **GPU-VERIFY**: confirm no OOM / prompt truncation at 50 turns on the
 > target hardware; raise `max_model_len` further if episodes truncate before `done`.
@@ -167,7 +175,7 @@ configs (WebShop; ALFWorld 2026-07-02/03 incl. the 50-turn budget, no OOM/trunca
 | TinyGuess (in-process) | GPU-verified end-to-end |
 | **WebShop GRPO federated** | **GPU-verified: full multi-round loop** (train → FedAvg → merge → next round → eval), incl. the real paper config |
 | **ALFWorld GRPO federated** (service + max_turns=50) | **GPU-verified: 2-round run on the real paper config** (2026-07-02/03); 50-turn budget OK |
-| WebShop PPO (gae critic federation) | config-parses + code-audited; not GPU-smoke-run, use the 2026-07-09 corrected `ppo_mini_batch_size` configs |
+| WebShop PPO (gae critic federation) | config-parses + code-audited; not GPU-smoke-run, use the 2026-07-20 corrected configs (`rollout.n=1`, `ppo_mini_batch_size=64`, critic mini 64) |
 | ALFWorld PPO | config-parses + code-audited; not GPU-smoke-run |
 | Decentralized ablations | config-parses + code-audited; not GPU-smoke-run |
 | Larger backbones (3B/7B/Llama) / 70-round budget | not exercised on this stack |

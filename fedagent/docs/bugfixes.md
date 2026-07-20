@@ -5,6 +5,73 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-20: PPO rollout grouping: the original's dead `env.rollout.n` resurrected as a live `rollout.n=8` → 8× rollout volume
+
+- **File:** `tools/verl08_migration/gen_paper_configs.py` (→ all 85+85 generated PPO configs in
+  `config/paper/` + `config/paper_accelerated/`), the 4 hardness-rerun PPO configs in
+  `fedagent/tools/verl08_migration/accel/{webshop,alfworld}/`, and stale doc claims
+  (`docs/migration.md`, `docs/configuration.md`, review reports).
+- **Severity:** science-correctness + cost. Every migrated PPO run collected **512
+  trajectories/step (64 prompts × `rollout.n=8`)** where the executed original collected
+  **64 (64 × 1, ungrouped)** — 8× the paper's rollout volume, ~8× per-step optimizer updates
+  (row pool ≤7680 vs ≤960 on WebShop, minibatch 64 rows), 512 concurrent sessions against a
+  single env service, and the observed "PPO ≈ 8× slower than GRPO". GRPO is unaffected.
+- **Provenance:** the original fed yamls carry `verl: env: rollout: n: 8` for BOTH algos, but on
+  the PPO path that key was **dead**; the migration translated it into a live
+  `actor_rollout_ref.rollout.n=8`.
+
+### The bug
+
+The fork groups rollouts via `env.rollout.n` (verl's own `actor_rollout_ref.rollout.n` is
+asserted `== 1`, fork main_ppo.py:168). On the PPO path the yaml's `env.rollout.n: 8` never
+reached the executed command:
+
+1. the fork default is `env.rollout.n: -1` = "disable env grouping"
+   (`third_party/verl-agent/verl/trainer/config/ppo_trainer.yaml:293`);
+2. the PPO base scripts set no `env.rollout.n` (`scripts/verl-agent/ppo/run_webshop.sh` header:
+   "PPO has no GRPO/GiGPO group dimension"; same for `run_alfworld.sh`) — the GRPO scripts DO
+   set it (`grpo/run_webshop.sh:82`);
+3. the fed orchestrator only regex-rewrites keys already present in the base script and never
+   handles `rollout.n` (`core/fed/script_builder.py`).
+
+So the executed original PPO ran **ungrouped**: envs = `train_batch_size × group_n(=1)` = 64
+(`agent_system/environments/env_manager.py:1101,1181`), and the rollout loop's prompt repeat is
+gated on `env.rollout.n > 0` (`agent_system/multi_turn_rollout/rollout_loop.py:282`). The
+earlier "`rollout.n` must stay 8 for PPO" audit note (migration.md, since corrected) verified
+the *formula* `train_batch_size × rollout.n` (dynamic filter-groups path, `rollout_loop.py:414`)
+but not the executed *value*.
+
+### The fix
+
+`gen_paper_configs.py` now emits, for PPO only: `rollout.n=1` (ungrouped, == original),
+`actor.ppo_mini_batch_size=64` (prompts; × n=1 = the original 64-row minibatch — GRPO keeps
+8 × 8), and an explicit `critic.ppo_mini_batch_size=64` (the base body's 8 is GRPO-sized).
+Both trees regenerated (85 PPO configs each; all 91+91 GRPO configs byte-identical). The 4
+accel hardness-rerun PPO configs got the same three-line fix. Post-fix, PPO == GRPO in
+per-step trajectory budget (64), minibatch rows (64), and env-service concurrency (64); the
+arms differ only in estimator + critic, and PPO round wall-clock should drop ~8× to
+≈1.1–1.4× GRPO.
+
+**Recipe boundary:** any PPO output produced before this fix (n=8 recipe) is a different
+recipe — do not mix in figures or resume into post-fix runs. **Paper-text erratum flagged:**
+`main.tex:1327` ("PPO uses the same group size") describes the never-executed config;
+`main.tex:1320`'s "Mini-batch size 64" is what actually ran (and is now the literal config
+value again).
+
+### Verification
+
+- Residual sweep: `grep -rl "adv_estimator: gae" --include="*.yaml" | xargs grep -l
+  "rollout.n=8"` → empty over `config/paper*/` + the accel rerun configs (the historical
+  `tools/verl08_migration/poc/gpu_verify/` snapshots keep n=8 by design — they document what
+  was validated then).
+- Regeneration diff = exactly {mini 8→64, n 8→1, +critic mini 64} × 85 × 2 trees; GRPO 0 files
+  changed (also proves the port bands didn't drift).
+- Evidence chain re-verified in the `paper-reproduce-verl-agent` checkout: fork default,
+  both PPO base scripts, `script_builder.py` (no generic verl-section injection; targeted
+  `_sub` rewrites only), env build math, and the `n > 0` repeat gate.
+
+---
+
 ## 2026-07-19: Hardness partition: success quota double-drawn from the *unsuccessful* pool → floored difficulty
 
 - **File:** `fedagent/hetero/webshop_hardness.py` (`hardness_partition`), and the ALFWorld copies in

@@ -601,7 +601,10 @@ PPO minibatch adjudicated against both trainers' sources):
   `gen_paper_configs.py` + regeneration; docs re-worded (migration.md, both migration reports).
   The critic was **already faithful** (body `critic.ppo_mini_batch_size=8` ×8 = 64 rows = 8
   critic updates/step; the fork's critic interpolated actor's 64 × `rollout_n==1` = same 64-row
-  split). No GRPO config changed.
+  split). No GRPO config changed. **[Superseded 2026-07-20:** the ×8 legs of this accounting
+  assumed `env.rollout.n=8` reached the executed PPO command; it did not (dead key → PPO ran
+  ungrouped, 64 traj/step). PPO is now `rollout.n=1` + actor/critic mini `64`; see the
+  2026-07-20 section at the end + `docs/bugfixes.md`.**]**
 - **ALFWorld service strategy-name alias removed (unblocks the 8 ALFWorld preference/hardness
   arms).** `service/server.py` still translated unified `preference/hardness` →
   `category/hardiness` (an interim engine revision's vocabulary), but the engine vendored on
@@ -731,3 +734,23 @@ Highlights of what was fixed:
   claims (configuration.md + alfworld_val.yaml) corrected to valid_seen-only; running.md's
   lanes equivalence number re-attributed to the TinyGuess rig; accel/alfworld README's Tier-2
   arms row relabeled as the A/B rig (not the real config).
+
+## PPO rollout-grouping fidelity fix (2026-07-20)
+
+The original's `env.rollout.n: 8` was a **dead key on the PPO path** — fork default `-1`
+(= no grouping, `ppo_trainer.yaml:293`), never set by the PPO base scripts ("PPO has no
+GRPO/GiGPO group dimension"), never injected by `core/fed/script_builder.py` (regex rewrites
+of existing lines only; the GRPO scripts DO set it, `grpo/run_webshop.sh:82`). Envs =
+`train_batch_size × group_n` (`env_manager.py:1101,1181`) with the prompt repeat gated on
+`n > 0` (`rollout_loop.py:282`) ⇒ the executed original PPO collected **64 trajectories/step
+(64 prompts × 1)**, not 512 — the same per-step budget as GRPO (8×8). The migration had
+resurrected the dead key as a live `actor_rollout_ref.rollout.n=8` (8× the paper's PPO
+rollout volume — the observed "PPO ≈ 8× slower than GRPO"); the 2026-07-09 minibatch
+adjudication above and the review's `agent-loop-rollout-4` "must stay 8" note inherited the
+same assumption (both now annotated). Fix (`gen_paper_configs.py` + regeneration + the 4
+accel hardness-rerun configs): PPO `rollout.n=1`, `actor.ppo_mini_batch_size=64`,
+`critic.ppo_mini_batch_size=64` (the 64-row minibatch, now realized as 64×1); GRPO untouched
+(85+85 PPO configs changed, 91+91 GRPO byte-identical). n=8-recipe PPO outputs are a
+different recipe — never resume or mix them. Full evidence chain: `docs/bugfixes.md`
+(2026-07-20). Paper-text erratum flagged: `main.tex:1327` ("PPO uses the same group size")
+describes the never-executed config.

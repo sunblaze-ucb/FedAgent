@@ -51,8 +51,8 @@ client_overrides:
   - data.train_batch_size=64
   - data.max_prompt_length=2048
   - data.max_response_length=512
-  - actor_rollout_ref.actor.ppo_mini_batch_size=8
-  - actor_rollout_ref.rollout.n=8
+  - actor_rollout_ref.actor.ppo_mini_batch_size=64
+  - actor_rollout_ref.rollout.n=1
   - actor_rollout_ref.rollout.prompt_length=2048
   - actor_rollout_ref.rollout.response_length=512
   - actor_rollout_ref.rollout.max_model_len=2560
@@ -67,6 +67,7 @@ client_overrides:
   - critic.model.use_remove_padding=true
   - critic.model.enable_gradient_checkpointing=true
   - critic.fsdp.optimizer_offload=true
+  - critic.ppo_mini_batch_size=64
   - critic.ppo_micro_batch_size_per_gpu=4
   - critic.checkpoint.save_contents=[model]
   - trainer.critic_warmup=0
