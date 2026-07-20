@@ -56,5 +56,9 @@ RELEASE_PLAN.md
 # acceleration run outputs (regenerable; configs/source live in tools/verl08_migration/)
 /runs/
 
+# hardness re-run configs are machine-specific (hard-coded absolute output_dir/model paths); keep
+# local. Canonical reproducible source lives in tools/verl08_migration/ + config/paper_accelerated/.
+fedagent/tools/verl08_migration/accel/
+
 
 /others
