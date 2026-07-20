@@ -16,20 +16,20 @@ and aggregation share the value. Pick a count per run and **keep it fixed for th
 
 | `--n-gpus` | Use it for | WebShop | ALFWorld |
 |---|---|---|---|
-| `1` | wiring checks / debug | smokes only, WebShop is **GPU-bound**, so the step time is ~the whole compute term on one card; [running.md](./running.md#hardware-recipe) recommends a small backbone + small config here | **legitimate budget option**: the paper geometry is GPU-verified no-OOM on 1×H100, and the bottleneck is the env service, not the GPU |
+| `1` | wiring checks / debug | smokes only: WebShop is **GPU-bound**, so the step time is ~the whole compute term on one card; [running.md](./running.md#hardware-recipe) recommends a small backbone + small config here | **legitimate budget option**: the paper geometry is GPU-verified no-OOM on 1×H100, and the bottleneck is the env service, not the GPU |
 | `2` | the smoke default (`DEFAULTS`) | fine for smokes; ~half the paper recipe's compute | fine, same reasoning as 1 GPU |
 | `4` | **the paper recipe**: every `paper/` and `paper_accelerated/` config pins it | ✅ the sweet spot: FSDP world size **is** WebShop's lever | ✅ paper-validated; the wins come from `alfworld_replicas`, not the count |
 
 **The rule behind the table** (acceleration.md's "30-second rule"): run one training step at
 two GPU counts and read the **gen** term of `timing_s`. Gen **scales** with GPUs ⇒ GPU-bound
-(WebShop) ⇒ add GPUs. Gen **flat** ⇒ env-bound (ALFWorld) ⇒ add `<env>_replicas: K`: more
+(WebShop) ⇒ add GPUs. Gen **flat** ⇒ env-bound (ALFWorld) ⇒ add `<env>_replicas: K`, more
 GPUs mostly idle against the env-service lock.
 
 Per-count best practice:
 
 - **1 GPU**: debugging, partition/wiring checks (`--rounds 2`), and ALFWorld-on-a-budget.
   Expect paper-scale WebShop to be painfully slow; that is the bottleneck class, not a bug.
-- **2 GPUs**: smokes. On a 4-GPU node this also leaves 2 GPUs free for a second *small* run,
+- **2 GPUs**: smokes. On a 4-GPU node this also leaves 2 GPUs free for a second *small* run;
   give it its own `--output-dir` + `--port-base` ([running.md](./running.md#concurrent-runs-on-one-node)).
 - **4 GPUs**: all paper runs, GRPO and PPO. Memory at the shipped settings: 1.5B fits
   comfortably (GRPO `gpu_memory_utilization=0.6`, PPO `0.5` + optimizer offload already in the
@@ -43,13 +43,13 @@ Per-count best practice:
 
 Every one of the 176 `config/paper/**` cells has an **accelerated twin at the same relative
 path** under [`../config/paper_accelerated/`](../config/paper_accelerated/): same partition,
-same seeds, same federation protocol, same eval cadence, only the fixed costs (engine
+same seeds, same federation protocol, same eval cadence; only the fixed costs (engine
 cold-starts, service restarts, cold evals) are removed. Every knob in the stack is
 **A/B-equivalent**: final aggregated models match the legacy path within the measured
 **9.3e-5** GPU-nondeterminism floor ([acceleration.md](./acceleration.md#why-its-safe-the-equivalence-bar)).
 
 ```bash
-# any paper cell, accelerated: just swap paper/ -> paper_accelerated/:
+# any paper cell, accelerated, just swap paper/ -> paper_accelerated/:
 python -m fedagent.fed.run_fed --config \
   fedagent/config/paper_accelerated/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
 ```
@@ -63,7 +63,7 @@ What a twin adds on top of its `paper/` original:
 | `service_scope: run` | per-client env-service fleets stay warm across rounds | both |
 | `alfworld_replicas: 8` (+ pool 8→64) | shards the TextWorld process lock, env-step −57 % | ALFWorld |
 | `alfworld_manifest_cache: true` | skips the 8810-game directory walk on warm boots (−18 %) | ALFWorld |
-| fused log-prob/entropy kernels (triton) | −6.5 % on the GPU-bound step | WebShop, **Qwen2.5-1.5B twins only** (the backbone the A/B ran on, add the two `client_overrides` lines by hand to try another) |
+| fused log-prob/entropy kernels (triton) | −6.5 % on the GPU-bound step | WebShop, **Qwen2.5-1.5B twins only** (the backbone the A/B ran on; add the two `client_overrides` lines by hand to try another) |
 
 Measured on the real 1.5B paper configs (4 GPUs): steady round **905 → 402 s** (WebShop) and
 **1125 → 762 s** (ALFWorld); full 70-round budget **≈ ×3.5 / ×2.5** less wall-clock
@@ -72,16 +72,16 @@ Measured on the real 1.5B paper configs (4 GPUs): steady round **905 → 402 s**
 Deliberate choices baked into the twins:
 
 - **`hf_export: every_round`, not `final`.** Round-level resume scans per-round HF exports
-  ([running.md](./running.md#resume)), so the twins keep them, a 10–17 h run that can hit a
+  ([running.md](./running.md#resume)), so the twins keep them; a 10–17 h run that can hit a
   walltime limit should be resumable. If a run fits comfortably inside one allocation, flip to
   `hf_export: final` for the recipe's last saving (it skips the per-round FedAvg-merge-to-HF
   pass).
-- **No `webshop_replicas`.** Measured a wash at paper scale (WebShop is GPU-bound), its
+- **No `webshop_replicas`.** Measured a wash at paper scale (WebShop is GPU-bound); its
   absence is intentional, not an omission.
 - **Disjoint port bands.** Twins use WebShop `25000+` / ALFWorld `52224+` (originals:
   `10000+` / `40000+`), so a cell and its twin can share a host. ALFWorld twins need wide
   bands (`replicas=8` ⇒ the 100-client band is 800 ports), so their 80 configs cycle 12
-  1024-port blocks, two ALFWorld twins 12 apart share a band; deconflict via
+  1024-port blocks; two ALFWorld twins 12 apart share a band; deconflict via
   `alfworld_base_port` if you ever co-host them.
 
 Regenerate the whole tree (it is generated, never hand-edited):
@@ -107,8 +107,8 @@ figures' per-client circles; every paper config ships `true`) *before* launching
 
 ## See also
 
-- [acceleration.md](./acceleration.md), the final recipe, why each lever works, the
+- [acceleration.md](./acceleration.md): the final recipe, why each lever works, the
   equivalence bar.
-- [running.md](./running.md), the driver, CLI flags, offload table, resume, SLURM pattern.
-- [reproducing.md](./reproducing.md), which config backs which paper number; compute budget.
-- [installation.md](./installation.md), the three conda envs and per-env data.
+- [running.md](./running.md): the driver, CLI flags, offload table, resume, SLURM pattern.
+- [reproducing.md](./reproducing.md): which config backs which paper number; compute budget.
+- [installation.md](./installation.md): the three conda envs and per-env data.
