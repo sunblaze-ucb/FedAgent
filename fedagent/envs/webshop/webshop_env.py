@@ -176,6 +176,12 @@ class WebShopEnv(BaseTextEnv):
             "success": bool(d.get("success", False)),
             "is_action_valid": bool(d.get("is_action_valid", True)),
         }
+        if d.get("task_score") is not None:
+            # dense graded score in [0,1] -> the Task Score metric. The server always sends it
+            # (service/server.py); it was previously dropped here, so info['task_score'] was never
+            # set and the agent-loop task_score plumbing (-> dump -> figure) got None. Gated so
+            # non-WebShop / older servers stay None (figure silently skipped, unchanged).
+            info["task_score"] = float(d["task_score"])
         if self._goal_id is not None:
             info["goal_id"] = self._goal_id   # carried for the hardness-labelling dump
         return {"obs_str": obs_str}, float(d.get("reward", 0.0)), bool(d.get("done", False)), info
