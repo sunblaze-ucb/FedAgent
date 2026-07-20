@@ -53,7 +53,8 @@ Each subfolder has its own `README.md` (linked above). For end-to-end guides see
 
 - **Algorithms**: **GRPO** (default; `adv_estimator=grpo`, group size **G=8** via
   `rollout.n=8`) and **PPO** (`adv_estimator=gae`, which federates the value model
-  alongside the actor each round).
+  alongside the actor each round; rollout is **ungrouped**, `rollout.n=1` — GAE's
+  baseline is the critic).
 - **Federation**: FedAvg over FSDP-sharded checkpoints, with optional client-side
   **FedProx** (proximal term, enabled by `fedprox_mu>0`). Configurable protocol:
   clients `N`, clients/round `M`, local epochs `E`, rounds `T`, tasks/client.

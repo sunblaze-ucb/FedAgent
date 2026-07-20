@@ -66,8 +66,9 @@ It then overrides only the FedAgent-specific leaves. Notable defaults:
 
 - **Algorithm: GRPO.** `algorithm.adv_estimator: grpo`, `use_kl_in_reward: false`.
 - **GRPO group size.** `actor_rollout_ref.rollout.n: 4` in the base; the runner's
-  `client_overrides` re-pin `rollout.n` per arm (paper arms = 8, smokes = 2). PPO arms
-  switch to `adv_estimator: gae` and federate a critic, see below.
+  `client_overrides` re-pin `rollout.n` per arm (GRPO paper arms = 8; PPO paper arms = 1,
+  ungrouped GAE — see `docs/bugfixes.md` 2026-07-20; smokes = 2). PPO arms switch to
+  `adv_estimator: gae` and federate a critic, see below.
 - **Async multi-turn rollout:** `rollout.name: vllm`, `mode: async`,
   `multi_turn.enable: true`, with `agent.default_agent_loop: gym_text` and
   `agent_loop_config_path` (-> `agent.yaml`) supplied on the CLI.

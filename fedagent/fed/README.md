@@ -127,7 +127,9 @@ client (and only its env service is launched).
   via the agent config / `client_overrides`, not by a `run_fed` key.
 - **`gae`** (PPO): `run_client` adds `algorithm.adv_estimator=gae` and loads the value
   model from `critic.model.path` (the **base model** on round 1, the previous round's
-  **aggregated critic** thereafter). verl saves the critic to `global_step_K/critic`
+  **aggregated critic** thereafter); the PPO arms roll out **ungrouped** (`rollout.n=1` —
+  GAE's baseline is the critic, see `docs/bugfixes.md` 2026-07-20). verl saves the critic
+  to `global_step_K/critic`
   alongside the actor with the identical shard layout, so the driver runs the **same**
   `fedavg` + `merge_to_hf` machinery a second time (`kind="critic"`) and carries the merged
   critic (`aggregated/critic_hf`) into the next round. If `gae` is set but a client fails to
