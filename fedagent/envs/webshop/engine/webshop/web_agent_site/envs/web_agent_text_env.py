@@ -37,7 +37,12 @@ import threading
 # interleaved access to the process-global `random` stream otherwise gives every env
 # a different, nondeterministic goal order -- silently breaking seed->goal
 # determinism, goal_id logging, and every index-based goal partition.
-_RNG_CONSTRUCT_LOCK = threading.Lock()
+# RLock (not Lock): WebAgentTextEnv.__init__ holds it across its WHOLE body — including
+# the trailing self.reset(), whose global-RNG draws (session id via random.choices; goal
+# pick via random_idx when session_int is None) otherwise interleave with ANOTHER env's
+# seeded SimServer window during pooled-concurrent construction — while SimServer.__init__
+# re-acquires it for the seeded window. See the residual price-clause race note below.
+_RNG_CONSTRUCT_LOCK = threading.RLock()
 
 app = Flask(__name__)
 class WebAgentTextEnv(gym.Env):
@@ -70,10 +75,22 @@ class WebAgentTextEnv(gym.Env):
 
         self._seed = kwargs.get('seed', 42)
 
-        with _RNG_CONSTRUCT_LOCK:
-            random.seed(self._seed)
-            np.random.seed(self._seed)
-            torch.manual_seed(self._seed)
+        # Residual price-clause race (found 2026-07-21, second pass): the goal ORDER fix
+        # below (SimServer's locked seeded window) left one unlocked global-RNG consumer —
+        # the self.reset() at the END of this constructor. In pooled-concurrent
+        # construction, env_j's construct-time reset() draws landed INSIDE env_k's locked
+        # seeded window (between its random.seed(42) and generate_product_prices), shifting
+        # the ~93 ranged-product uniform price draws => envs served DIFFERENT price
+        # clauses/price_upper for those products' goals while the goal ORDER stayed
+        # identical (the price-blind first-64 task-id guard passed). Fix: hold the
+        # (re-entrant) construction lock across the WHOLE init including that reset().
+        # Sequential construction is byte-identical to the historical order; explicit
+        # acquire/release (not `with`) to avoid re-indenting the vendored body — an
+        # exception here kills the service anyway.
+        _RNG_CONSTRUCT_LOCK.acquire()
+        random.seed(self._seed)
+        np.random.seed(self._seed)
+        torch.manual_seed(self._seed)
 
         self.file_path = file_path
         self.attr_path = attr_path
@@ -110,6 +127,7 @@ class WebAgentTextEnv(gym.Env):
         self.num_prev_obs = self.kwargs.get('num_prev_obs', 0)
         self.num_prev_actions = self.kwargs.get('num_prev_actions', 0)
         self.reset()
+        _RNG_CONSTRUCT_LOCK.release()
 
     def step(self, action):
         """
