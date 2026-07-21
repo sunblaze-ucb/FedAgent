@@ -5,6 +5,44 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-21: Post-race audit hardening: latent members of the same bug class
+
+- **File:** `fedagent/envs/webshop/service/server.py`, the vendored
+  `web_agent_site/envs/web_agent_text_env.py`, `fedagent/hetero/webshop_hardness.py`,
+  `fedagent/data/agentic_dataset.py`.
+- **Provenance:** two systematic sweeps (global-RNG × concurrency; identity/index-mapping)
+  over the overlay + vendored engines, prompted by the goal-shuffle race below. All items are
+  the same species: an unchecked implicit assumption whose violation is SILENT.
+
+Fixed in one pass:
+
+1. **Shared goal-dict pollution** (engine `receive()`): the `assigned_instruction_text`
+   override wrote through `session['goal']` — a REFERENCE into the shared `self.goals` list —
+   silently corrupting the canonical goal for every later session on that env. Currently inert
+   (nothing sets the hack in this stack); now overrides a per-session copy.
+2. **Partition `start_idx` drift** (service): preference/coverage/hardness hardcoded
+   `start_idx=500` while uniform honored `WEBSHOP_VAL_SIZE` — changing the val size would have
+   shifted every shard index by the delta, silently. All four now receive `start_idx=VAL_SIZE`.
+3. **`NUM_GOALS` never validated** (service lifespan): the `/reset` seed→goal modulo trusted
+   the env var; now HARD-FAILS unless it equals `len(env.server.goals)`.
+4. **Pool-order guard sampled only the first 64 goals**: upgraded to a FULL-length
+   (asin, instruction) comparison.
+5. **Silent label-miss flooring** (`webshop_hardness.py`): goals whose task_id is absent from
+   the trajectories file were silently defaulted to "hard" — the exact camouflage that let the
+   race-era labels look plausible. Now counted and WARNED (a large miss count means the labels
+   do not match the catalog/keying).
+6. **Seed-window aliasing** (`agentic_dataset.py`): the `si*1_000 + i` row-seed layout collides
+   when a non-last spec has `n_envs > 1000` (two rows → one env seed). Now refused loudly.
+
+Verified end-to-end: `hardness_for_client` over the real `env.server.goals` with the
+regenerated labels matches **6,410/6,410** train goals (zero misses; high 1,115 + low 5,295).
+Checked and clean: task-id derivation verbatim-identical at both sites; uniform partition
+val_size plumbing; per-env single-session use at request time; ALFWorld flow (path-keyed
+identity, single-threaded collection, global TW lock); original Ray-actor stack (per-process
+RNG).
+
+---
+
 ## 2026-07-21: WebShop pooled service: goal shuffle raced across concurrently-built envs → nondeterministic per-env goal order
 
 - **File:** `fedagent/envs/webshop/engine/webshop/web_agent_site/envs/web_agent_text_env.py`
