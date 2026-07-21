@@ -23,9 +23,20 @@ Mechanism (reuses the overlay end to end, no new rollout code):
 Run ONCE per backbone (the labels depend on the reference policy), then point the Hardness
 configs' trajectories_file at the output. Greedy reference by default (deterministic labels).
 
+Rollout-mode faithfulness: the val pass is rolled out in the SAME mode run_fed uses for
+training/eval (cfg.rollout_mode, DEFAULT windowed = the faithful paper rollout; injected below
+via inject_rollout_mode + history_length_env). Pass a config with the reference's rollout
+budgets — for paper checkpoints that is the paper config (windowed per-turn budgets
+prompt 4096 / response 512 / max_model_len 4608, search_return_n 50), NOT the smoke example
+(concat budgets): a windowed-trained reference rolled out in concat mode measures near the
+zero-shot rate and the easy/hard split degenerates.
+
+Chunked/resumable generation: FEDAGENT_SEED_OFFSET=K shifts every row's seed so the run labels
+the disjoint train-goal window goals[500+K : 500+K+N]; merge the chunk outputs afterwards.
+
 Usage (inside fedagent-verl08, on the GPU node):
     python -m tools.verl08_migration.gen_hardness_trajectories \
-        --config fedagent/config/examples/webshop/scaled/hardness.yaml \
+        --config fedagent/config/paper/task_heterogeneity/grpo/webshop/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-hardness_success_std-1.yaml \
         --model  /path/to/reference/hf  --num-goals 6410 \
         --output fedagent/data/hardness/webshop_trajectories_qwen1.5b.json [--n-gpus 4]
 """
