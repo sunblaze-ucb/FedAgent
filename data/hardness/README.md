@@ -3,9 +3,9 @@
 The **Hardness** task-heterogeneity arm partitions train goals into *easy* / *hard*
 by a per-goal success label from a **reference policy**, then Beta-allocates the easy
 goals across clients (dispersion = `success_std` = ξ′). The partition
-([`../../hetero/webshop_hardness.py`](../../hetero/webshop_hardness.py) for WebShop;
+([`../../fedagent/hetero/webshop_hardness.py`](../../fedagent/hetero/webshop_hardness.py) for WebShop;
 the ALFWorld branch of the vendored
-[`partition_strategy.py`](../../envs/alfworld/engine/agent_system/environments/partition_strategy.py))
+[`partition_strategy.py`](../../fedagent/envs/alfworld/engine/agent_system/environments/partition_strategy.py))
 **requires** a labels file; there is no usable default.
 
 These are the **original FedAgent reference labels**, produced by the paper's **trained
@@ -55,7 +55,7 @@ The labels depend on the reference policy, so regenerate per backbone if you cha
   python -m tools.verl08_migration.gen_hardness_trajectories \
       --config fedagent/config/paper/task_heterogeneity/grpo/webshop/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-hardness_success_std-1.yaml \
       --model <trained Qwen2.5-1.5B checkpoint> --num-goals 6410 \
-      --output fedagent/data/hardness/qwen2.5-1.5b_webshop_trajectories.json
+      --output data/hardness/qwen2.5-1.5b_webshop_trajectories.json
   ```
   For chunked / resumable generation (shared or preemptible GPUs): the dataset honors
   `FEDAGENT_SEED_OFFSET` (additive per-row seed shift; the TRAIN service maps

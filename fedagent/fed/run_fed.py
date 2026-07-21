@@ -2046,15 +2046,22 @@ def load_cfg(args) -> "OmegaConf":
         cfg.resume = False
     # resolve package-relative paths (so configs can use e.g. config/envs/webshop.yaml)
     for key in ("env_spec", "val_env_spec", "custom_cls_path", "agent_config_path",
-                "webshop_run_service", "alfworld_run_service", "trajectories_file"):
+                "webshop_run_service", "alfworld_run_service"):
         v = cfg.get(key)
         if v and not os.path.isabs(str(v)):
             cfg[key] = str(PKG_DIR / str(v))
+    # data ASSETS live at the REPO ROOT (data/..., beside data/env_heterogeneity), so a
+    # config's `trajectories_file: data/hardness/x.json` means literally that path. Fall
+    # back to the legacy package-relative location (fedagent/data/...) for older configs.
+    v = cfg.get("trajectories_file")
+    if v and not os.path.isabs(str(v)):
+        root_p, pkg_p = REPO_ROOT / str(v), PKG_DIR / str(v)
+        cfg["trajectories_file"] = str(pkg_p if (pkg_p.is_file() and not root_p.is_file()) else root_p)
     if str(cfg.get("partition_strategy", "")).strip().lower() == "hardness":
         if not cfg.get("trajectories_file"):
             raise ValueError(
                 "partition_strategy=hardness requires trajectories_file "
-                "(see fedagent/data/hardness/README.md)."
+                "(see data/hardness/README.md)."
             )
         if not Path(str(cfg.trajectories_file)).is_file():
             raise FileNotFoundError(f"hardness trajectories_file not found: {cfg.trajectories_file}")

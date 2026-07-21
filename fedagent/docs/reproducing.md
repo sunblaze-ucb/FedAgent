@@ -61,15 +61,15 @@ see [the fidelity note](#scientific-equivalence-not-bit-identical).
 >
 > ```bash
 > python -m tools.verl08_migration.gen_hardness_trajectories \
->   --config fedagent/config/examples/webshop/scaled/hardness.yaml \
+>   --config fedagent/config/paper/task_heterogeneity/grpo/webshop/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-hardness_success_std-1.yaml \
 >   --model  <trained Qwen2.5-1.5B checkpoint> --num-goals 6410 \
->   --output fedagent/data/hardness/qwen2.5-1.5b_webshop_trajectories.json
+>   --output data/hardness/qwen2.5-1.5b_webshop_trajectories.json
 > ```
 >
 > (ALFWorld labels come from the original verl-agent inference pipeline.) The
 > schema is `{"trajectories": [{"task_info": {"task_id": ...}, "traj_info":
 > {"success": ...}}, ...]}`. See
-> [`../data/hardness/README.md`](../data/hardness/README.md) and
+> [`../../data/hardness/README.md`](../../data/hardness/README.md) and
 > [`./heterogeneity.md`](./heterogeneity.md#hardness-beta-skewed-easyhard-mix-over-success-labels).
 
 - **ALFWorld arms** drive episodes at `max_turns: 50` (the original

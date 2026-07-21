@@ -35,8 +35,8 @@ The original generator scripts for the holdout files live on the
 **paper-reproduce branch** (`tools/env_heterogeneity/gen_holdout_{webshop,alfworld}.py`
 there); the shipped v1 artifacts are the ones the paper used.
 
-**Hardness labels** (task-level heterogeneity reference trajectories) are a separate
-bundle under [`../fedagent/data/hardness/`](../fedagent/data/hardness/README.md).
+**Hardness labels** (task-level heterogeneity reference trajectories) ship right here
+under [`hardness/`](hardness/README.md).
 
 These are **derived from the WebShop and ALFWorld benchmark data (both MIT)**, see
 [`../NOTICE`](../NOTICE) for attribution.

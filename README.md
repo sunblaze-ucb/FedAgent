@@ -132,7 +132,7 @@ fedagent/                      ← the maintained verl-0.8 overlay (start here)
 
 sitecustomize.py               repo-root FedProx hook (auto-imported on PYTHONPATH)
 tools/verl08_migration/        FedAvg aggregator, paper-config generator, hardness-traj generator, helpers
-data/env_heterogeneity/        shipped env-level heterogeneity data (holdout / lookalike sets)
+data/                          shipped data assets: env_heterogeneity (holdout/lookalike) + hardness reference labels
 tools/plotting/                training-dynamics figure script (reads round_*/client_*/json_logs)
 LICENSE · NOTICE · CITATION.cff
 ```
