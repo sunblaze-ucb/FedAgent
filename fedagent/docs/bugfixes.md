@@ -5,6 +5,62 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-21: WebShop pooled service: goal shuffle raced across concurrently-built envs → nondeterministic per-env goal order
+
+- **File:** `fedagent/envs/webshop/engine/webshop/web_agent_site/envs/web_agent_text_env.py`
+  (SimServer's seeded goal-generation/shuffle window; WebAgentTextEnv's global reseeding) and
+  `fedagent/envs/webshop/service/server.py` (new pool-consistency hard guard).
+- **Severity:** science-correctness, broad. Every pooled WebShop service start built its envs
+  from concurrent threads, and each env ended up with a DIFFERENT, nondeterministic goal order.
+  Everything that assumes one shared order silently broke: seed→goal determinism (`/reset`
+  serves env_j's `goals[sess]` while `_GOAL_TASKIDS` and runtime partitions are computed from
+  env_0's order), per-goal `goal_id` logging (measured: only **~4.6 %** of labelling rollouts
+  carried the id of the goal actually served), and index-based goal partitions (a client's
+  shard indices need not select the same goals on the env that serves them). AGGREGATE metrics
+  (mean success over ~uniformly mixed goals) remain approximately valid; anything per-goal is not.
+- **Provenance:** vendored WebShop `SimServer.__init__` seeds the process-global `random` at the
+  top (`random.seed(42)`), spends ~20 s loading products / building the search engine /
+  generating goals — all of which draw from that same global stream — then
+  `random.shuffle(self.goals)` at the bottom; the service `_lifespan` constructs POOL_SIZE envs
+  via `asyncio.to_thread(...)` concurrently, interleaving every thread's draws.
+
+### The bug
+
+Detected via the hardness relabelling run: 6,409 rollouts collapsed to 4,478 unique task_ids
+whose duplicate groups mixed UNRELATED products (a men's-t-shirt, a women's-swimsuit and a
+CD-player episode under one `asin`+options key) — impossible at the data level, since the
+canonical train slice has 6,402 unique keys with only 8 genuine ×2 phrasing duplicates. A
+ground-truth join of the dump's instructions against the canonical goal list showed the served
+goals scattered over the whole 6,910-goal list (val slice included, with within-chunk repeats),
+while each chunk's logged-id set was the DESIGNED disjoint window under a fresh per-restart
+permutation — the signature of every env (and every service start) shuffling differently.
+
+### The fix
+
+- The entire seeded construction window (`seed(42)` → load → `get_goals` → shuffle →
+  `setstate`) now holds a module-level `_RNG_CONSTRUCT_LOCK`; `WebAgentTextEnv.__init__`'s own
+  global reseeding takes the same lock. Goal generation itself consumes the global stream, so
+  only serializing the FULL window reproduces the historical sequential order — and val/train
+  membership (`goals[0:500]`) is pinned to that order, so byte-for-byte reproduction is a hard
+  requirement, not cosmetics. Cost: pool construction is serialized (~26 s/env).
+- `server.py` `_lifespan` now HARD-FAILS if any pool env's goal order diverges from env 0
+  (first-64 task-id comparison), so this bug class can never pass silently again.
+
+### Verification
+
+- Sequential 200-key goal-order fingerprint byte-identical before/after the change; 8
+  concurrently-built envs identical to each other AND to the historical sequential order.
+- 32-goal windowed labelling smoke through the full service stack after the fix: every dump
+  row's served instruction, intended goal index and logged `goal_id` agree.
+- Full-pool relabelling after the fix yields the goal data's true key cardinality (~6,402
+  unique task_ids), not 4,478.
+
+**Recipe boundary:** any per-goal-attribution artifact produced through a pooled WebShop
+service before this fix (hardness labels, per-goal success analyses, realized heterogeneity
+shards) is suspect and should be regenerated or re-audited.
+
+---
+
 ## 2026-07-21: Hardness labelling rolled out in CONCAT mode against WINDOWED-trained references → labels collapse toward zero-shot
 
 - **File:** `tools/gen_hardness_trajectories.py` (missing rollout-mode injection) and
@@ -48,13 +104,13 @@ Two independent halves:
 ### Verification
 
 - A/B on the same 128 train goals and checkpoint (greedy): concat **1.6 %** vs windowed+paper
-  budgets **22.7 %** strict success — the collapse and its cure.
-- Full-pool regeneration post-fix (7 × 1024-goal disjoint chunks, 2026-07-21): per-chunk easy
-  rate a tight 16.0–19.9 %, aggregate **926 / 4,478 unique task_ids = 20.7 %**
-  (`data/hardness/qwen2.5-1.5b-grpo-hardness-std4_webshop_trajectories.json`) — a healthy split
-  in the same ballpark as the shipped original labels (27.8 %), vs near-degenerate pre-fix.
+  budgets **22.7 %** strict success — the collapse and its cure. (Aggregate rates; valid
+  independently of the goal-shuffle race above.)
 - Every dump row now carries `goal_id`; the aggregation's "dump has no goal_id fields" guard no
   longer trips.
+- NOTE: the first full-pool regeneration run with this fix (2026-07-21, 4,478 keys / 20.7 %)
+  was itself INVALIDATED by the pooled-service goal-shuffle race (previous entry) — its per-goal
+  attribution was scrambled — and was reverted and redone after that fix.
 
 ---
 
