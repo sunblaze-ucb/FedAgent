@@ -5,7 +5,7 @@
 # for torch 2.8 (needs >=9). So: compile with the conda gcc-11 toolchain (>=9 for torch,
 # <=12.2 for nvcc-12.1; pulls a matching libstdcxx-ng for runtime) + cuda-12.1 toolkit.
 set -e
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08
 
 export CUDA_HOME=/hpc/software/cuda/cuda-12.1.0

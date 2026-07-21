@@ -15,7 +15,7 @@ PORT="${WEBSHOP_PORT:-8080}"
 # pool must be >= gen batch (concurrency): train_batch_size(4) * rollout.n(2) = 8
 export WEBSHOP_POOL_SIZE="${WEBSHOP_POOL_SIZE:-8}"
 
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08                      # trainer env (parent shell: health check + training)
 
 # --- 1. start the WebShop service in its own env (background) ---

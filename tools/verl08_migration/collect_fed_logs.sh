@@ -40,6 +40,6 @@ for l in "${LABELS[@]}"; do args="$args $l=$STAGE/$l"; done
 decomp=""
 if [ "${#LABELS[@]}" -eq 3 ]; then decomp="--decomp=${LABELS[0]},${LABELS[1]},${LABELS[2]}"; fi
 echo "[collect] running summarizer ..."
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh 2>/dev/null || true
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done || true
 conda activate fedagent-verl08 2>/dev/null || true
 python "$HERE/summarize_fed_run.py" $args $decomp

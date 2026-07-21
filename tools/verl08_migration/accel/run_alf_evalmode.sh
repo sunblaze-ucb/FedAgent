@@ -4,7 +4,7 @@
 # 2 client × 2 round, eval every round, 48-game val. Output -> gitignored runs/alf_em/ (NOT _scratch).
 # Hardened: unique RUN_ID + EXIT trap (review fix b). (no `set -u`: conda deactivate is not nounset-clean)
 REPO=/gpfs/projects/b1222/userdata/canyu/kangyu/fedagent
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh 2>/dev/null
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08
 cd "$REPO"
 RUN_ID=$(date +%H%M%S)-$$

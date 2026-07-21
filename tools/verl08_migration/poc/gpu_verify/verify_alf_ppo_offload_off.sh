@@ -6,7 +6,7 @@
 # update_actor/update_critic? Compare update_* timings vs v3 (offload=true) on qgpu3022.
 set +e
 REPO=/gpfs/projects/b1222/userdata/canyu/kangyu/fedagent; cd "$REPO" || exit 2
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh; conda activate fedagent-verl08
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done; conda activate fedagent-verl08
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 G=_scratch/gpu_verify; RUNS=$REPO/$G/runs; mkdir -p "$RUNS"
 echo "[OFFLOFF start $(date)] host=$(hostname)"

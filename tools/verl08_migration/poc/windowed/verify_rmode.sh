@@ -3,7 +3,7 @@
 # Validates the rollout_mode switch (windowed auto-injects the manager; concat does not).
 set +e
 REPO=/gpfs/projects/b1222/userdata/canyu/kangyu/fedagent; cd "$REPO" || exit 2
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh; conda activate fedagent-verl08
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done; conda activate fedagent-verl08
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 CONFIG="$1"; OUTDIR="$2"; LOG="$3"; PLO="$4"; PHI="$5"
 echo "[RMODE start $(date)] host=$(hostname) config=$(basename "$CONFIG")"

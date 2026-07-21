@@ -2,7 +2,7 @@
 # Clean stale Ray/vLLM state on this node, then run one fed config to completion.
 cfg="$1"
 cd /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08
 # vLLM 0.11 / deep_gemm needs CUDA_HOME (else _find_cuda_home() asserts at engine init).
 # Matches the proven fedagent/scripts/run_webshop_fed_smoke.sh.

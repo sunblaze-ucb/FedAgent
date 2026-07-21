@@ -5,7 +5,7 @@
 # rollout -> GRPO -> actor update -> checkpoint, on 2 H100s.
 # Run on the GPU node:  srun --jobid=<JID> --overlap bash fedagent/scripts/run_smoke.sh
 set -e
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"        # .../fedagent/fedagent/scripts

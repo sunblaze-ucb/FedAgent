@@ -1,6 +1,6 @@
 #!/bin/bash
 set +e; REPO=/gpfs/projects/b1222/userdata/canyu/kangyu/fedagent; cd "$REPO" || exit 2
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh; conda activate fedagent-verl08
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done; conda activate fedagent-verl08
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 G=_scratch/gpu_verify; RUNS=$REPO/_scratch/gpu_verify/runs
 pkill -f uvicorn 2>/dev/null; pkill -f main_ppo_fed 2>/dev/null; for p in $(seq 9500 9520); do fuser -k $p/tcp 2>/dev/null; done; sleep 6

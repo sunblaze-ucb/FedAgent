@@ -8,7 +8,7 @@
 # Fix: (1) uninstall the CUDA-13-era orphans; (2) force-reinstall torch 2.8.0+cu128
 # WITH deps so every correct cu12 nvidia .so is rewritten.
 set -e
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08
 
 echo "=== libnccl size BEFORE (cu13=236524880 is the bad one) ==="

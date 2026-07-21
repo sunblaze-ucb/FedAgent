@@ -28,9 +28,10 @@ trainer env. `run_service.sh` therefore activates the WebShop-specific env and
 launches `server.py` under `uvicorn`:
 
 ```bash
-# run_service.sh (verbatim shape)
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
-conda activate verl-agent-webshop          # the WebShop env (gym 0.24 / pyserini / JDK / Lucene)
+# run_service.sh (shape; the real script resolves the conda base portably —
+# CONDA_EXE / conda on PATH / common prefixes — instead of a fixed cluster path)
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "${WEBSHOP_CONDA_ENV:-verl-agent-webshop}"   # the WebShop env (gym 0.24 / pyserini / JDK / Lucene)
 export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"  # so `import fedagent.envs.webshop.service.server` resolves
 exec uvicorn fedagent.envs.webshop.service.server:app --host 0.0.0.0 --port "${WEBSHOP_PORT:-8080}" --log-level warning
 ```

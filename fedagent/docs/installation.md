@@ -36,12 +36,17 @@ the two talk over HTTP. You only need the service env for the benchmark you run
 | `verl-agent-webshop` | WebShop remote env service | `uvicorn fedagent.envs.webshop.service.server:app`, launched by [`../envs/webshop/service/run_service.sh`](../envs/webshop/service/run_service.sh) | **Python 3.10**, `gym==0.24.0`, `pyserini==0.17.0` + `pyjnius` (Lucene/BM25), `torch==2.6.0`, `numpy==1.26.4`, `spacy`; **a JDK on `PATH`** |
 | `verl-agent-alfworld` | ALFWorld remote env service | `uvicorn fedagent.envs.alfworld.service.server:app`, launched by [`../envs/alfworld/service/run_service.sh`](../envs/alfworld/service/run_service.sh) | **Python 3.10**, `alfworld==0.4.2`, `textworld==1.6.2`, `fast_downward_textworld` (PDDL planner), `gymnasium==0.29.1`, `torch==2.6.0` + `torchvision==0.21.0`; **game files** via `alfworld-download` |
 
-All three envs are created with the cluster conda; activate via:
+All three envs are created with your conda; activate via (adjust the conda base
+path to your install — e.g. `$HOME/miniconda3`, `/opt/conda`, or a cluster module):
 
 ```bash
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
+source "$(conda info --base)/etc/profile.d/conda.sh"   # or: source <conda-base>/etc/profile.d/conda.sh
 conda activate <env-name>
 ```
+
+The `run_service.sh` launchers resolve the conda base automatically (via `CONDA_EXE`
+/ `conda` on `PATH` / common prefixes), so they are **not** tied to any one cluster
+path; set `CONDA_PROFILE=/path/to/etc/profile.d/conda.sh` to force a specific one.
 
 ## 1. Trainer env: `fedagent-verl08` (verl 0.8, Python 3.12)
 

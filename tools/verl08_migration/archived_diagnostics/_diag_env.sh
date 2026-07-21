@@ -1,6 +1,6 @@
 #!/bin/bash
 # Diagnose env damage after flash-attn --force-reinstall clobbered torch.
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08
 echo "=== current versions ==="
 pip show torch vllm flashinfer-python sglang 2>/dev/null | grep -E "^Name|^Version"

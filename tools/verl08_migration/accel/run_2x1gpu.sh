@@ -5,7 +5,7 @@
 # Durable: per-client logs + a barrier file on GPFS so the wall-clock survives a session teardown.
 # (no `set -u`: conda's deactivate scripts reference unbound vars and would abort under nounset)
 REPO=/gpfs/projects/b1222/userdata/canyu/kangyu/fedagent
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh 2>/dev/null
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08
 cd "$REPO"
 BAR=_scratch/accel/p3_1gpu_barrier.log

@@ -4,7 +4,7 @@
 # Each node runs ONE run at a time, so a full cleanup here is safe. arg: <config_abs>
 cfg="$1"
 REPO=/gpfs/projects/b1222/userdata/canyu/kangyu/fedagent
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh 2>/dev/null
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08 2>/dev/null
 echo "[launch] cleaning stale Ray/vLLM/training procs on $(hostname) ..."
 ray stop --force >/dev/null 2>&1 || true

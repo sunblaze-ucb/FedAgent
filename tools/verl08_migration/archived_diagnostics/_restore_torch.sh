@@ -3,7 +3,7 @@
 # from 2.8.0 -> 2.12.1+cu130. vllm 0.11.0 pins torch==2.8.0/vision0.23.0/audio2.8.0;
 # node NVIDIA driver is CUDA 12.8 (12080) -> use the cu128 wheels (exact driver match).
 set -e
-source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
+for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /software/miniconda3/4.10.3; do [ -f "$__c/etc/profile.d/conda.sh" ] && { . "$__c/etc/profile.d/conda.sh"; break; }; done
 conda activate fedagent-verl08
 
 echo "=== before ==="

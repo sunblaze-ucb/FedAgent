@@ -269,7 +269,7 @@ JID=<your_slurm_job_id>
 
 # 2) run the driver ON the GPU node, in the trainer env
 srun --jobid="$JID" --overlap bash -lc '
-  source /software/miniconda3/4.10.3/etc/profile.d/conda.sh
+  source "$(conda info --base)/etc/profile.d/conda.sh"   # or your cluster conda module
   conda activate fedagent-verl08
 
   cd /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent
