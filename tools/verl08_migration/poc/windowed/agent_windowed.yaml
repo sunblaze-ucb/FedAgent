@@ -1,5 +1,0 @@
-# SCRATCH agent registry for the windowed (faithful) Stage-1 smoke.
-- name: gym_text
-  _target_: fedagent.agent_loops.gym_text_agent_loop.GymTextAgentLoop
-- name: gym_text_windowed
-  _target_: fedagent.agent_loops.windowed_agent_loop.WindowedGymTextAgentLoop

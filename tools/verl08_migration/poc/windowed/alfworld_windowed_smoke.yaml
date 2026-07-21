@@ -1,9 +1,0 @@
-# ALFWorld windowed (faithful) smoke env-spec. history_length=2 -> env builds legacy template.
-envs:
-  - name: ALFWorld
-    n_envs: 4
-    max_turns: 10
-    agent_name: gym_text_windowed
-    config:
-      timeout: 180.0
-      history_length: 2          # >0 -> WINDOWED (faithful) mode in the env client

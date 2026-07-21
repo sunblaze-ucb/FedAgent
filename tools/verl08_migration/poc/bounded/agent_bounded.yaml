@@ -1,6 +1,0 @@
-# SCRATCH agent registry for the bounded POC smoke (NOT the release agent.yaml).
-# gym_text_bounded -> bounded_worker.BoundedGymTextAgentLoop (top-level module via PYTHONPATH).
-- name: gym_text
-  _target_: fedagent.agent_loops.gym_text_agent_loop.GymTextAgentLoop
-- name: gym_text_bounded
-  _target_: bounded_worker.BoundedGymTextAgentLoop

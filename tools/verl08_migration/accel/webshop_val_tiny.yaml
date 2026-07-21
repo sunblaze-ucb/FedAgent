@@ -1,8 +1,0 @@
-# Tiny unperturbed WebShop val spec for the cross-round eval-coexistence smoke (n_envs small).
-envs:
-  - name: WebShop
-    n_envs: 8
-    max_turns: 6
-    agent_name: gym_text
-    config:
-      timeout: 120.0

@@ -1,7 +1,0 @@
-envs:
-  - name: WebShop
-    n_envs: 8
-    max_turns: 15
-    agent_name: gym_text
-    config:
-      timeout: 180.0

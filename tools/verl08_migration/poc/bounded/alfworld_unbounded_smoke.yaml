@@ -1,9 +1,0 @@
-# UNBOUNDED (stock concat) ALFWorld smoke — A/B baseline for the bounded run.
-# Identical to alfworld_bounded_smoke.yaml EXCEPT agent_name=gym_text (stock concat rollout).
-envs:
-  - name: ALFWorld
-    n_envs: 4          # = train_batch_size (must be >= tbs or dataloader is empty)
-    max_turns: 10
-    agent_name: gym_text
-    config:
-      timeout: 180.0

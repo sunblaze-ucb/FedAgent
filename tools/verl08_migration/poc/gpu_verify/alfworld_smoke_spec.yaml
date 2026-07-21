@@ -1,9 +1,0 @@
-# Smoke ALFWorld env-spec: n_envs=8 (== train_batch_size so the dataloader has >=1 batch and works
-# on both 1- and 4-GPU); max_turns=50 to test the widened context window.
-envs:
-  - name: ALFWorld
-    n_envs: 8
-    max_turns: 50
-    agent_name: gym_text
-    config:
-      timeout: 300.0

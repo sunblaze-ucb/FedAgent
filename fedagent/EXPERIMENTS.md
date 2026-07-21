@@ -434,8 +434,8 @@ earlier FedAvg-29500 rendezvous fix. Commits `f4cb8ca` / `aa145f5`.
 ## ALFWorld acceleration economics (2026-06-30)
 
 Resolves the two falsifiable predictions in [`docs/alfworld_testing.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/alfworld_testing.md) §6.
-Configs: `tools/verl08_migration/accel/alfworld/` (reorganized accel/ into env subfolders + per-folder
-READMEs this round). **Setup:** 1.5B, 4×H100 (qgpu3021), `response_length=4096`, in-loop val n=48
+Configs: `tools/verl08_migration/accel/alfworld/` (preserved on `migrate/verl-0.8.0`; reorganized
+accel/ into env subfolders + per-folder READMEs this round). **Setup:** 1.5B, 4×H100 (qgpu3021), `response_length=4096`, in-loop val n=48
 (`valid_seen` subset), sweep methodology = minimal training (`epochs=1, total_training_steps=1`/round).
 
 - **Eval-mode sweep** (2 client × 2 round, eval every round): **worker 3509s < parallel 3620s <
@@ -485,7 +485,7 @@ Ran on TWO allocations simultaneously (4×H100 qgpu3021 + 1×H100/8-core qgpu301
   hypothesis refuted); pool64+`webshop_replicas: 4` → step 93.4→**82.2 (−12%)**: real but garnish.
 - **Production recipes:** ALFWorld 4×H100 = `cross_round + eval_mode=worker + alfworld_replicas: 8`;
   ALFWorld 1×H100 = `alfworld_replicas: 4` (−33%); WebShop = GPUs + optional replicas −12%.
-- Configs: `tools/verl08_migration/accel/{alfworld,webshop}/` (`*_r8/r4/r1n1/p64*` probes).
+- Configs: `tools/verl08_migration/accel/{alfworld,webshop}/` (`*_r8/r4/r1n1/p64*` probes; preserved on `migrate/verl-0.8.0`).
 
 ## Acceleration frontier study (2026-07-02)
 

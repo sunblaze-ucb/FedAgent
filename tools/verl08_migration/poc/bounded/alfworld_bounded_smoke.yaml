@@ -1,8 +1,0 @@
-# Minimal ALFWorld bounded smoke env-spec (fast mechanics check).
-envs:
-  - name: ALFWorld
-    n_envs: 4          # = train_batch_size (dataset len = sum n_envs; must be >= tbs or dataloader is empty)
-    max_turns: 10
-    agent_name: gym_text_bounded
-    config:
-      timeout: 180.0
