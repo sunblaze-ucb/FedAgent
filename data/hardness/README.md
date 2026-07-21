@@ -8,15 +8,22 @@ the ALFWorld branch of the vendored
 [`partition_strategy.py`](../../fedagent/envs/alfworld/engine/agent_system/environments/partition_strategy.py))
 **requires** a labels file; there is no usable default.
 
-These are the **original FedAgent reference labels**, produced by the paper's **trained
-checkpoint** (a Qwen2.5-1.5B policy fine-tuned on each benchmark, *not* zero-shot), via
+The first two files are the **original FedAgent reference labels**, produced by the paper's
+**trained checkpoint** (a Qwen2.5-1.5B policy fine-tuned on each benchmark, *not* zero-shot), via
 the original verl-agent inference pipeline (`scripts/inference/run_{webshop,alfworld}_inference.sh`,
-Sept 2025), and copied verbatim from the original `output/inference/` summaries.
+Sept 2025), and copied verbatim from the original `output/inference/` summaries. The third was
+regenerated 2026-07-21 with the overlay generator below (windowed rollout, greedy, one trajectory
+per goal, full train pool in 7 disjoint `FEDAGENT_SEED_OFFSET` chunks) **after** the
+pooled-service goal-shuffle race fix (see `fedagent/docs/bugfixes.md`, 2026-07-21): its key set
+equals the canonical goal data's exactly (6,402 = 6,410 goals − 8 genuine duplicate
+`asin`+options pairs, whose rollouts are merged by per-key mean ≥ 0.5), and per-row attribution
+was ground-truth verified (served instruction == logged task_id on every checked row).
 
 | file | env | reference | coverage | easy rate |
 |---|---|---|---|---|
 | `qwen2.5-1.5b_webshop_trajectories.json` | WebShop | trained Qwen2.5-1.5B | 6,402 goals (full train pool) | 1,780 (27.8 %) |
 | `qwen2.5-1.5b_alfworld_trajectories.json` | ALFWorld | trained Qwen2.5-1.5B | 3,553 games (full train pool) | 2,112 (59.4 %) |
+| `qwen2.5-1.5b-grpo-hardness-std4_webshop_trajectories.json` | WebShop | trained GRPO hardness-std4 Qwen2.5-1.5B (windowed, greedy) | 6,402 task_ids (full 6,410-goal train pool; the 8 duplicate `asin`+options pairs merge) | 1,114 (17.4 %) |
 
 ## Schema
 
