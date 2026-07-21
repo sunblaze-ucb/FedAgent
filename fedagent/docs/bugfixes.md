@@ -35,6 +35,43 @@ goals scattered over the whole 6,910-goal list (val slice included, with within-
 while each chunk's logged-id set was the DESIGNED disjoint window under a fresh per-restart
 permutation — the signature of every env (and every service start) shuffling differently.
 
+### Impact
+
+Ranked by how much it distorts results:
+
+1. **GRPO group advantage was cross-task contaminated (training-signal quality).** GRPO repeats
+   one dataset row `rollout.n=8` times and normalizes rewards within the group — assuming all 8
+   rollouts solve the SAME goal. Each rollout borrows its own pool env, and the same `sess` index
+   is a different goal on every env, so with a 16–24-env pool essentially **every group compared
+   scores across 8 unrelated goals** (P(all 8 on one env) ≈ (1/K)⁷ ≈ 0). The group mean stops
+   being a per-task baseline and collapses toward the global success rate: the update degenerates
+   to global-baseline REINFORCE, losing GRPO's variance reduction — a rollout that happened to
+   draw a hard goal gets a large negative advantage regardless of policy quality. Unbiased but
+   noisier: slower convergence per unit compute, and a systematic handicap for GRPO in any
+   GRPO-vs-PPO comparison (PPO's ungrouped n=1 critic path has no group semantics and is
+   untouched by this channel).
+2. **Task-heterogeneity partitions were not realized.** Client shards are index sets over env₀'s
+   order; serving used env_j's order — every client actually trained on a ~uniform mix of the
+   whole pool, so hardness/coverage/preference arms were diluted toward homogeneous and any
+   cross-arm difference is noise. (Env-heterogeneity arms perturb the catalog/search, not goal
+   order — their manipulation stands.)
+3. **The train/val holdout did not exist.** Each env's positions `[500:]` hold a random
+   6,410-goal subset of all 6,910: ~93 % of canonical val goals were served during training
+   (~7 % of the sampling mass), and ~93 % of "val" episodes were actually train goals. Val
+   metrics ≈ train-distribution performance, not generalization.
+4. **Small-shard curricula became infinite streams.** `min_goals_per_client=100`-style configs
+   were designed as heavy repetition over a fixed small set; the race turned them into fresh
+   ~random goals on every reset (and a new mix every service restart). Results from such configs
+   do not reflect the designed protocol (and may be inflated by the accidental diversity).
+5. **Per-goal attribution was scrambled** — only ~4.6 % of logged ids matched the served
+   episode; difficulty labels and per-goal success tables built through the service are noise.
+6. **Run-to-run reproducibility:** the served goal stream changed on every service start,
+   inflating the effective noise floor of any cross-run comparison.
+
+**Still valid:** aggregate success rates (the served mix is ~uniform, so means are ~unbiased),
+learning-curve shapes, and same-broken-way A/B comparisons on aggregate metrics — plus the
+original verl-agent-0.3.1 paper runs (Ray-actor processes; see the scope audit below).
+
 ### The fix
 
 - The entire seeded construction window (`seed(42)` → load → `get_goals` → shuffle →
