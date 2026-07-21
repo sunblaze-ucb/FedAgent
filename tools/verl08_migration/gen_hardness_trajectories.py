@@ -45,7 +45,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from fedagent.fed.run_fed import DEFAULTS, log, stream, verl_cfg_dir  # noqa: E402
+from fedagent.fed.run_fed import (  # noqa: E402
+    DEFAULTS, log, stream, verl_cfg_dir, inject_rollout_mode, history_length_env,
+)
 
 PKG_DIR = REPO_ROOT / "fedagent"
 
@@ -150,7 +152,14 @@ def main():
         # duplicates, pure wasted compute.
         cmd += [str(o) for o in (cfg.client_overrides or [])
                 if not str(o).startswith("actor_rollout_ref.rollout.n=")]
+        # Label with the SAME rollout mode as training/eval (run_fed injects these into every
+        # train+eval cmd; rollout_mode defaults to windowed = the faithful paper rollout).
+        # Without this the labels are produced by the CONCAT rollout, which a windowed-trained
+        # reference policy never saw -- its measured success collapses toward the zero-shot
+        # rate and the easy/hard split degenerates.
+        inject_rollout_mode(cmd, cfg)
         run_env = dict(env_base)
+        run_env.update(history_length_env(cfg))
         run_env["WEBSHOP_SERVICE_URL"] = f"http://localhost:{args.port}"
         rc = stream(cmd, run_env, out_dir / "label.log", tag="label")
         if rc != 0:

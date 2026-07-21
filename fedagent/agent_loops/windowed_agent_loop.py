@@ -47,6 +47,12 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
         turn_invalid: List[float] = []   # per-turn 1.0 if THAT turn's action was invalid, else 0.0
         success = False
         task_score_val = None    # WebShop partial-credit score [0,1] (info['task_score']); stays None if the env doesn't expose it (e.g. ALFWorld)
+        # Per-episode string tags the env optionally surfaces (PARITY with the concat loop):
+        # goal_id (WebShop; REQUIRED by the hardness-labelling aggregation) / task_type
+        # (ALFWorld eval breakdown). String-valued -> kept in verl's validation dump, skipped
+        # by metric aggregation. Without this, windowed labelling dumps carry no goal_id and
+        # gen_hardness_trajectories aborts at aggregation.
+        tag_vals: Dict[str, Any] = {}
         traj_uid = uuid4().hex   # one id per trajectory (broadcast advantage groups by it)
         try:
             init_obs, _ = await env.reset(seed=seed)
@@ -68,6 +74,9 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
                 success = bool(info.get("success", success))
                 if info.get("task_score") is not None:
                     task_score_val = float(info["task_score"])   # last (terminal) turn carries the episode's partial-credit score
+                for tag in ("goal_id", "task_type"):
+                    if info.get(tag) is not None:
+                        tag_vals[tag] = info[tag]
                 turn_invalid.append(0.0 if info.get("is_action_valid", True) else 1.0)
                 resp = action_ids[: self.response_length]
                 # rollout log-probs (present iff rollout.calculate_log_probs=true), sliced with
@@ -107,4 +116,6 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
             o.extra_fields["reward_extra_info"]["traj_success"] = float(success)
             if task_score_val is not None:
                 o.extra_fields["reward_extra_info"]["task_score"] = task_score_val
+            for tag, v in tag_vals.items():
+                o.extra_fields["reward_extra_info"][tag] = v
         return outputs

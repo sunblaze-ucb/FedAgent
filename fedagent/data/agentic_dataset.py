@@ -53,6 +53,11 @@ class AgenticDataset(Dataset):
         # base seed for per-instance variety; the federated bridge sets this per
         # client-round (Phase 4/6) so each client sees a distinct, reproducible draw.
         base_seed = int(os.environ.get("FEDAGENT_BASE_SEED", 0))
+        # additive per-instance seed shift (default 0 = unchanged). Used by chunked/resumable
+        # labeling: the WebShop service maps seed -> goal (goal = VAL_SIZE + seed % train_pool),
+        # so shifting every row's seed by K makes a run cover a DISJOINT contiguous goal window
+        # goals[VAL_SIZE+K : VAL_SIZE+K+n_envs]. Lets 6410 goals be labeled in resilient chunks.
+        seed_offset = int(os.environ.get("FEDAGENT_SEED_OFFSET", 0))
 
         self.items: List[Dict[str, Any]] = []
         for si, s in enumerate(specs):
@@ -65,7 +70,7 @@ class AgenticDataset(Dataset):
                 self.items.append(
                     {
                         "env_name": name,
-                        "seed": base_seed * 100_000 + si * 1_000 + i,
+                        "seed": base_seed * 100_000 + si * 1_000 + i + seed_offset,
                         "config": env_cfg,
                         "max_turns": max_turns,
                         "agent_name": agent_name,
