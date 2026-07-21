@@ -62,7 +62,8 @@ Two independent halves:
 
 - **File:** `tools/gen_paper_configs.py` (→ all 85+85 generated PPO configs in
   `config/paper/` + `config/paper_accelerated/`), the 4 hardness-rerun PPO configs in
-  `tools/verl08_migration/accel/{webshop,alfworld}/` (now on the `migrate/verl-0.8.0` branch), and stale doc claims
+  `fedagent/tools/verl08_migration/accel/{webshop,alfworld}/` (a machine-local, gitignored
+  working area — see `.gitignore` — not part of the tracked tree), and stale doc claims
   (`docs/migration.md`, `docs/configuration.md`, review reports).
 - **Severity:** science-correctness + cost. Every migrated PPO run collected **512
   trajectories/step (64 prompts × `rollout.n=8`)** where the executed original collected

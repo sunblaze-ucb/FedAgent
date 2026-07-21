@@ -53,7 +53,8 @@ RELEASE_PLAN.md
 /_scratch/
 /.codex/
 
-# acceleration run outputs (regenerable; configs/source live in tools/verl08_migration/)
+# acceleration run outputs (regenerable; the A/B configs/source are preserved on the
+# migrate/verl-0.8.0 branch under tools/verl08_migration/)
 /runs/
 
 # fedagent/tools/ is a local working area (machine-specific re-run configs + a local repro script);
