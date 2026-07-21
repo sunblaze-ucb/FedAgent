@@ -59,6 +59,20 @@ permutation — the signature of every env (and every service start) shuffling d
 service before this fix (hardness labels, per-goal success analyses, realized heterogeneity
 shards) is suspect and should be regenerated or re-audited.
 
+**Scope audit — not exposed:**
+- **ALFWorld service:** structurally safe on four counts — the game list is collected ONCE,
+  single-threaded, in the shared base env BEFORE the pool fan-out (every pooled `init_env`
+  wraps that same list); federated sharding/partitions filter that single list at collection
+  time; `/reset` holds the global `_TW_LOCK` across `env.seed(seed)+reset()`; and the served
+  game's identity comes from the episode itself (`extra.gamefile`), never from an env-0 index
+  table. The identical unsafe idiom in `alfred_tw_env.py` (global `random.seed`+`shuffle`,
+  adjacent calls) was nonetheless hardened to a local `random.Random` — byte-identical order —
+  as defense in depth.
+- **Original verl-agent-0.3.1 stack (the paper checkpoints):** safe — WebShop envs live in
+  separate Ray-actor PROCESSES (`env_package/webshop/envs.py`), each with a private global
+  `random`, so every actor computes the same deterministic seed-42 order; the race requires
+  threads sharing one interpreter.
+
 ---
 
 ## 2026-07-21: Hardness labelling rolled out in CONCAT mode against WINDOWED-trained references → labels collapse toward zero-shot

@@ -252,13 +252,16 @@ class AlfredTWEnv(object):
 
         shuffle_seed = self.partition_kwargs.get('shuffle_seed', 42)
         print(f"shuffle_seed: {shuffle_seed}")
-        # shuffle the game_files
+        # shuffle the game_files -- via a LOCAL Random instance: byte-identical to the
+        # previous global seed+shuffle (the two calls were adjacent, nothing consumed
+        # the stream in between), but immune to the concurrent-construction race that
+        # bit the WebShop engine (docs/bugfixes.md 2026-07-21). The alfworld service
+        # collects this list ONCE, single-threaded, in the shared base env; this is
+        # defense in depth, not a live-bug fix.
         if self.train_eval == "train":
-            random.seed(shuffle_seed)
-            random.shuffle(self.game_files)
+            random.Random(shuffle_seed).shuffle(self.game_files)
         else:
-            random.seed(42)
-            random.shuffle(self.game_files)
+            random.Random(42).shuffle(self.game_files)
         
         # ========== Federated learning data sharding ==========
         # breakpoint()
