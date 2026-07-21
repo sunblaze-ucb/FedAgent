@@ -30,6 +30,14 @@ from web_agent_site.utils import (
     FEAT_IDS,
     random_idx
 )
+import threading
+
+# Serializes every RNG-critical construction window (global random seeding + goal
+# generation + shuffle). Pooled env services construct envs from CONCURRENT threads;
+# interleaved access to the process-global `random` stream otherwise gives every env
+# a different, nondeterministic goal order -- silently breaking seed->goal
+# determinism, goal_id logging, and every index-based goal partition.
+_RNG_CONSTRUCT_LOCK = threading.Lock()
 
 app = Flask(__name__)
 class WebAgentTextEnv(gym.Env):
@@ -62,9 +70,10 @@ class WebAgentTextEnv(gym.Env):
 
         self._seed = kwargs.get('seed', 42)
 
-        random.seed(self._seed)
-        np.random.seed(self._seed)
-        torch.manual_seed(self._seed)
+        with _RNG_CONSTRUCT_LOCK:
+            random.seed(self._seed)
+            np.random.seed(self._seed)
+            torch.manual_seed(self._seed)
 
         self.file_path = file_path
         self.attr_path = attr_path
@@ -328,7 +337,14 @@ class SimServer:
             docs/heterogeneity.md for the "double-track"
             design rationale). When None, behavior is identical to the original.
         """
-        # Load all products, goals, and search engine
+        # Load all products, goals, and search engine.
+        # The WHOLE seeded window below (seed(42) ... setstate at the end) holds
+        # _RNG_CONSTRUCT_LOCK: goal generation itself consumes the global stream, so
+        # only serializing the full window reproduces the historical sequential goal
+        # order byte-for-byte (val/train membership = goals[0:500] is pinned to it).
+        # Explicit acquire/release (not `with`) to avoid re-indenting the vendored
+        # body; an exception here kills the service anyway.
+        _RNG_CONSTRUCT_LOCK.acquire()
         original_state = random.getstate()
         # Use fixed seed (42) for consistent goal shuffling across all workers
         random.seed(42)
@@ -400,7 +416,7 @@ class SimServer:
         # Fix outcome for random shuffling of goals
         # First shuffle all goals with default seed (42)
         random.shuffle(self.goals)
-        
+
         # If custom shuffle_seed is provided, re-shuffle the last 500 goals with the custom seed
         print(f"[DEBUG] SimServer: received shuffle_seed={shuffle_seed}")
         if shuffle_seed is None:
@@ -409,14 +425,15 @@ class SimServer:
         print(f'Shuffle goals with seed {shuffle_seed}')
         if shuffle_seed != 42:
             random.seed(shuffle_seed)
-            
+
             # Extract the last 500 goals, shuffle them, and put them back
             last_500_goals = self.goals[500:]
             random.shuffle(last_500_goals)
             self.goals[500:] = last_500_goals
-        
-        # Restore original random state
+
+        # Restore original random state; the seeded construction window ends here.
         random.setstate(original_state)
+        _RNG_CONSTRUCT_LOCK.release()
 
         # Apply `filter_goals` parameter if exists to select speific goal(s)
         if filter_goals is not None:

@@ -294,6 +294,16 @@ async def _lifespan(app: FastAPI):
     # Compute runtime, goal-order-dependent state from the env's REAL goals (all pool envs share
     # the same seed-42 shuffled server.goals -- catalog filter doesn't perturb it, GPU-verified).
     server_goals = _server_goals(envs[0])
+    # HARD GUARD: every pooled env must expose the IDENTICAL goal order, or seed->goal
+    # determinism (goal_id logging, index-based goal partitions) is silently broken.
+    # This caught a real bug: the engine's goal shuffle drew from the process-global
+    # random stream and the concurrent env construction above raced it.
+    _ref_keys = [_goal_taskid(g) for g in server_goals[:64]]
+    for _j in range(1, len(envs)):
+        _gj = _server_goals(envs[_j])
+        if len(_gj) != len(server_goals) or [_goal_taskid(g) for g in _gj[:64]] != _ref_keys:
+            raise RuntimeError(f"pool env {_j} goal order diverges from env 0; "
+                               f"seed->goal mapping would be nondeterministic")
     if _DEFERRED_TASK_PARTITION is not None:
         await asyncio.to_thread(_compute_task_partition, server_goals)
     if LOG_GOAL_ID:
