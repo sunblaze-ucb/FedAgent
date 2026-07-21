@@ -5,6 +5,59 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-21: Hardness labelling rolled out in CONCAT mode against WINDOWED-trained references → labels collapse toward zero-shot
+
+- **File:** `tools/gen_hardness_trajectories.py` (missing rollout-mode injection) and
+  `fedagent/agent_loops/windowed_agent_loop.py` (missing `goal_id`/`task_type` tag propagation).
+- **Severity:** science-correctness. A windowed-trained reference measured in concat mode succeeds
+  at ≈ the zero-shot rate, so the generated task-difficulty labels are near-degenerate and the
+  ξ′ (Hardness) arm's easy/hard split loses its signal. **Symptom:** the label file is well-formed
+  but the easy rate sits at ~1–2 % instead of ~20–30 %, and the run looks like "the reference
+  checkpoint is broken" when it isn't.
+- **Provenance:** `run_fed` injects the rollout mode into every train/eval command it builds
+  (`inject_rollout_mode` + `FEDAGENT_HISTORY_LENGTH`; DEFAULTS `rollout_mode: windowed`), but the
+  label generator built its verl val command from scratch and injected neither — labelling
+  silently fell back to the stock concat `gym_text` loop.
+
+### The bug
+
+Two independent halves:
+
+1. **Rollout-mode mismatch (the collapse).** Paper checkpoints are trained AND evaled windowed
+   (fresh per-turn prompt = task + last-2 (obs, action) window, response = ONE action, budgets
+   4096/512/4608). The concat loop instead accumulates the whole history into one growing prompt —
+   out-of-distribution for a windowed-trained policy. Measured on the same 128 train goals,
+   greedy: **1.6 %** strict success under concat (≈ the ~1.4 % zero-shot rate) vs **22.7 %**
+   windowed with paper budgets.
+2. **`goal_id` tag loss.** The concat loop copies env info tags (`goal_id`, `task_type`) into
+   per-sample `reward_extra_info`; the windowed loop didn't, so once half 1 was fixed the
+   labelling aggregation died loudly with "dump has no goal_id fields".
+
+### The fix
+
+- The generator appends its `client_overrides`, then calls `inject_rollout_mode(cmd, cfg)` and
+  merges `history_length_env(cfg)` into the run env — labels now roll out in the SAME mode as
+  training/eval by construction. The regen docs (`data/hardness/README.md` "Regenerating", the
+  generator docstring, the hardness smoke-config header) now require a paper-budget config for
+  paper references.
+- `WindowedGymTextAgentLoop` collects `goal_id`/`task_type` from step info and stamps them into
+  every per-turn output's `reward_extra_info`, mirroring the concat loop.
+- Supporting: `FEDAGENT_SEED_OFFSET` (`fedagent/data/agentic_dataset.py`, additive per-row seed
+  shift) lets full-pool labelling run as disjoint, resumable chunks on shared GPUs.
+
+### Verification
+
+- A/B on the same 128 train goals and checkpoint (greedy): concat **1.6 %** vs windowed+paper
+  budgets **22.7 %** strict success — the collapse and its cure.
+- Full-pool regeneration post-fix (7 × 1024-goal disjoint chunks, 2026-07-21): per-chunk easy
+  rate a tight 16.0–19.9 %, aggregate **926 / 4,478 unique task_ids = 20.7 %**
+  (`data/hardness/qwen2.5-1.5b-grpo-hardness-std4_webshop_trajectories.json`) — a healthy split
+  in the same ballpark as the shipped original labels (27.8 %), vs near-degenerate pre-fix.
+- Every dump row now carries `goal_id`; the aggregation's "dump has no goal_id fields" guard no
+  longer trips.
+
+---
+
 ## 2026-07-20: PPO rollout grouping: the original's dead `env.rollout.n` resurrected as a live `rollout.n=8` → 8× rollout volume
 
 - **File:** `tools/gen_paper_configs.py` (→ all 85+85 generated PPO configs in
