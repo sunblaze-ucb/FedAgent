@@ -60,6 +60,14 @@ class AgenticDataset(Dataset):
         seed_offset = int(os.environ.get("FEDAGENT_SEED_OFFSET", 0))
 
         self.items: List[Dict[str, Any]] = []
+        # Seed layout gives each spec a 1000-wide window (si * 1_000 + i): a non-last
+        # spec with n_envs > 1000 would silently ALIAS into the next spec's seed range
+        # (two rows -> the same env seed -> the same served goal). Refuse loudly.
+        for si, s in enumerate(specs[:-1]):
+            if int(s.get("n_envs", 64)) > 1000:
+                raise ValueError(
+                    f"spec {si} ({s.get('name')}) has n_envs={s.get('n_envs')} > 1000 with "
+                    f"later specs present; row seeds would collide across specs (si*1000+i layout)")
         for si, s in enumerate(specs):
             n = int(s.get("n_envs", 64))
             max_turns = int(s.get("max_turns", 6))

@@ -266,18 +266,18 @@ def _compute_task_partition(server_goals):
         from fedagent.hetero.webshop_task import preference_for_client
         CLIENT_GOAL_IDXS = preference_for_client(
             CLIENT_ID, CLIENT_NUM, omega=float(os.environ.get("OMEGA", "0.5")),
-            min_goals_per_client=min_goals, env_goals=server_goals)
+            min_goals_per_client=min_goals, env_goals=server_goals, start_idx=VAL_SIZE)
     elif strat == "coverage":
         from fedagent.hetero.webshop_coverage import coverage_for_client
         CLIENT_GOAL_IDXS = coverage_for_client(
             CLIENT_ID, CLIENT_NUM, size_std=float(os.environ.get("SIZE_STD", "1.0")),
-            min_goals_per_client=min_goals, env_goals=server_goals)
+            min_goals_per_client=min_goals, env_goals=server_goals, start_idx=VAL_SIZE)
     elif strat == "hardness":
         from fedagent.hetero.webshop_hardness import hardness_for_client
         CLIENT_GOAL_IDXS = hardness_for_client(
             CLIENT_ID, CLIENT_NUM, success_std=float(os.environ.get("SUCCESS_STD", "1.0")),
             trajectories_file=os.environ.get("TRAJECTORIES_FILE", ""),
-            min_goals_per_client=min_goals, env_goals=server_goals)
+            min_goals_per_client=min_goals, env_goals=server_goals, start_idx=VAL_SIZE)
     print(f"[webshop-service] {strat} client {CLIENT_ID}/{CLIENT_NUM}: runtime |goal_idxs|="
           f"{len(CLIENT_GOAL_IDXS) if CLIENT_GOAL_IDXS else 0} (from env.server.goals, FULL catalog)",
           flush=True)
@@ -294,14 +294,20 @@ async def _lifespan(app: FastAPI):
     # Compute runtime, goal-order-dependent state from the env's REAL goals (all pool envs share
     # the same seed-42 shuffled server.goals -- catalog filter doesn't perturb it, GPU-verified).
     server_goals = _server_goals(envs[0])
-    # HARD GUARD: every pooled env must expose the IDENTICAL goal order, or seed->goal
-    # determinism (goal_id logging, index-based goal partitions) is silently broken.
-    # This caught a real bug: the engine's goal shuffle drew from the process-global
-    # random stream and the concurrent env construction above raced it.
-    _ref_keys = [_goal_taskid(g) for g in server_goals[:64]]
+    # HARD GUARD 1: the seed->goal modulo assumes NUM_GOALS == the env's real goal count.
+    if len(server_goals) != NUM_GOALS:
+        raise RuntimeError(f"env.server.goals has {len(server_goals)} goals but "
+                           f"WEBSHOP_NUM_GOALS={NUM_GOALS}; the /reset seed->goal modulo "
+                           f"would silently mis-map goals")
+    # HARD GUARD 2: every pooled env must expose the IDENTICAL goal order (FULL-length
+    # check; string compares, ~ms), or seed->goal determinism (goal_id logging,
+    # index-based goal partitions) is silently broken. This caught a real bug: the
+    # engine's goal shuffle drew from the process-global random stream and the
+    # concurrent env construction above raced it.
+    _ref_ids = [(g.get("asin"), g.get("instruction_text")) for g in server_goals]
     for _j in range(1, len(envs)):
         _gj = _server_goals(envs[_j])
-        if len(_gj) != len(server_goals) or [_goal_taskid(g) for g in _gj[:64]] != _ref_keys:
+        if [(g.get("asin"), g.get("instruction_text")) for g in _gj] != _ref_ids:
             raise RuntimeError(f"pool env {_j} goal order diverges from env 0; "
                                f"seed->goal mapping would be nondeterministic")
     if _DEFERRED_TASK_PARTITION is not None:

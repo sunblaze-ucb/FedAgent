@@ -185,6 +185,7 @@ def hardness_partition(
     high_success_data = []  # success rate >= 0.5
     low_success_data = []   # success rate < 0.5
     unknown_success_data = []  # tasks with no success information
+    n_label_miss = 0  # goals whose task_id is absent from the labels file (defaulted to hard)
 
     for item in total_train_data:
         # Extract the task_id from the item (matching the logic in envs.py).
@@ -215,10 +216,19 @@ def hardness_partition(
                 low_success_data.append(item)
         else:
             # Tasks with no matching success info default to "not successful".
+            n_label_miss += 1
             low_success_data.append(item)
 
 
     print(f"Data distribution: high_success={len(high_success_data)}, low_success={len(low_success_data)}")
+    # Observability for a SILENT failure mode: a label-file/keying mismatch does not
+    # error, it just floors every missed goal to "hard". A healthy labels file matches
+    # (near-)all train goals; a large miss count means the labels were generated under
+    # a different keying/catalog and the split is degenerating.
+    if n_label_miss:
+        print(f"[hardness] WARNING: {n_label_miss}/{len(total_train_data)} goals have no "
+              f"label in the trajectories file (defaulted to hard); if this is more than "
+              f"a few, the labels do not match this catalog/keying")
 
     # Assemble this client's shard as X_i = Y_i u F_i, following the paper's
     # HardnessPartition Algorithm literally:

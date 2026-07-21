@@ -646,7 +646,13 @@ class SimServer:
                     self.user_sessions[session_id]['goal']['instruction_text']
             if self.assigned_instruction_text is not None:
                 instruction_text = self.assigned_instruction_text  # TODO: very hacky, should remove
-                self.user_sessions[session_id]['goal']['instruction_text'] = instruction_text
+                # Override on a PER-SESSION COPY of the goal dict: the previous in-place
+                # write mutated self.goals[idx] itself (session['goal'] is a reference
+                # into the shared list), silently corrupting the canonical goal for every
+                # later session on this env. Same session-visible behavior, no pollution.
+                _g = dict(self.user_sessions[session_id]['goal'])
+                _g['instruction_text'] = instruction_text
+                self.user_sessions[session_id]['goal'] = _g
             session = self.user_sessions[session_id]
 
             if not kwargs:
