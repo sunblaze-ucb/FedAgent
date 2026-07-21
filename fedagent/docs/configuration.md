@@ -145,7 +145,7 @@ overlay replaced parquet preprocessing with on-the-fly env enumeration.
 | [`webshop_15_ppo.yaml`](../config/envs/webshop_15_ppo.yaml) | 64 | 15 | WebShop **PPO** train (`n_envs=64` == original PPO train_data_size, paired with `train_batch_size=64`). |
 | [`webshop_15_val.yaml`](../config/envs/webshop_15_val.yaml) | 500 | 15 | WebShop validation: held-out `goals[0:500]` on the full catalog (the whole held-out set; eval sets no `FEDAGENT_BASE_SEED`, so every round scores the same 500 goals). |
 | [`alfworld.yaml`](../config/envs/alfworld.yaml) | 8 | 50 | ALFWorld train (game shards; `max_turns=50` == original `max_steps`). |
-| [`alfworld_val.yaml`](../config/envs/alfworld_val.yaml) | 140 | 50 | ALFWorld validation: `valid_seen` (140, in-distribution). For the per-task-type breakdown on this 140-game split, run `tools/verl08_migration/eval_alfworld_by_tasktype.py` (it pins `eval_in_distribution`; the 134-game `valid_unseen` half of the paper's 274 needs a separate pass with `alfworld_val_split: eval_out_of_distribution`). |
+| [`alfworld_val.yaml`](../config/envs/alfworld_val.yaml) | 140 | 50 | ALFWorld validation: `valid_seen` (140, in-distribution). For the per-task-type breakdown on this 140-game split, run `tools/eval_alfworld_by_tasktype.py` (it pins `eval_in_distribution`; the 134-game `valid_unseen` half of the paper's 274 needs a separate pass with `alfworld_val_split: eval_out_of_distribution`). |
 
 ---
 
@@ -240,7 +240,7 @@ So **3-seed replication** = `base_seed` 42 / 21 / 84 across `main`, `main_seed1`
 divergence from the original filenames: `centralized` / `local_client*` encode
 `rd-70_ep-3` (not the original `rd-1_ep-210`) because the verl-0.8 runner draws goal
 variety from *rounds*, so the 210 local epochs are spread over 70 rounds. Regenerate the
-whole tree with `tools/verl08_migration/gen_paper_configs.py`.
+whole tree with `tools/gen_paper_configs.py`.
 
 ---
 
@@ -303,7 +303,7 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | `size_std` | float | `1.0` | **coverage** (task-het) Beta dispersion ξ. |
 | `success_std` | float | `1.0` | **hardness** (task-het) Beta dispersion ξ′. |
 | `variant_n` | int | `0` | env-variant arms (bm25/lookalike/rank): # variants in the pool (`0` => fn default 2/4). Filename token `N-<n>`. |
-| `trajectories_file` | path | `""` | hardness: **required** `task_id`->success-labels file (generate via `tools/verl08_migration/gen_hardness_trajectories.py`). |
+| `trajectories_file` | path | `""` | hardness: **required** `task_id`->success-labels file (generate via `tools/gen_hardness_trajectories.py`). |
 | `min_goals_per_client` | int | `100` | Minimum goals per client's shard. Filename token `min-goals-per-cl-<G>`. |
 
 See [`./heterogeneity.md`](./heterogeneity.md) for the full taxonomy and how each knob maps

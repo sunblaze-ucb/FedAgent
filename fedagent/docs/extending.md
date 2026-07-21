@@ -22,7 +22,7 @@ each extension point is isolated to a small number of files:
 | 1 | **New environment** | `fedagent/envs/<name>/` + `fedagent/envs/registry.py` + a `config/envs/<name>.yaml` | the env-spec row's `name:` |
 | 2 | **New heterogeneity strategy** | `fedagent/hetero/<name>.py` + the service env-var bridge + `run_fed.py` | `partition_strategy` (YAML / env `PARTITION_STRATEGY`) |
 | 3 | **New RL algorithm** | the verl trainer (`algorithm.adv_estimator`); FedAgent only carries the checkpoints | `adv_estimator` (YAML → Hydra) |
-| 4 | **New aggregation rule** | `tools/verl08_migration/aggregate_fedavg_fsdp.py` (server FedAvg) · `sitecustomize.py` + `fedagent/fedprox.py` (client-side hook) | the aggregator CLI / `fedprox_mu` |
+| 4 | **New aggregation rule** | `fedagent/fed/aggregate_fedavg_fsdp.py` (server FedAvg) · `sitecustomize.py` + `fedagent/fedprox.py` (client-side hook) | the aggregator CLI / `fedprox_mu` |
 
 > **How the layers fit together.** The overlay owns the *orchestration* (the round
 > loop, per-client env services, aggregation, eval) and the *agent rollout*
@@ -422,7 +422,7 @@ client-side proximal term, with server aggregation left as FedAvg.
 
 ### Where
 
-`tools/verl08_migration/aggregate_fedavg_fsdp.py` is the live server aggregator. The
+`fedagent/fed/aggregate_fedavg_fsdp.py` is the live server aggregator. The
 driver shells out to it once per round (per component) via `torchrun`:
 
 ```python

@@ -107,7 +107,7 @@ factor each so the asymmetry decomposes cleanly:
 
 → **A − B = pure environment-heterogeneity effect**, **B − C = pure task-heterogeneity effect**, both
 under FedAvg. Expected (Input-Dynamics Asymmetry): A−B negative (env-het hurts), B−C ≈ 0 (task-het robust).
-Analyze with `tools/verl08_migration/summarize_fed_run.py A=… B=… C=…`.
+Analyze with `tools/summarize_fed_run.py A=… B=… C=…`.
 
 **Fx, FedProx hook test.** `config/examples/webshop/fedprox_test.yaml` (μ=0.1). Verifies the non-fork FedProx
 injection (`fedagent/fedprox.py` patches `FSDPEngine.optimizer_step` via the Ray
@@ -146,7 +146,7 @@ the earlier 4-round runs were flat.
 absolute gaps sit within the noise band. This is **suggestive, not significant**: paper-scale
 (E×T≈210) × **3 seeds** + unperturbed validation are needed for a firm claim (Phase 8-full).
 `task` here is the `task_disjoint` stand-in; the faithful Preference/Coverage task arm is a
-follow-up (Coverage run launched). Reproduce: `tools/verl08_migration/collect_fed_logs.sh`.
+follow-up (Coverage run launched). Reproduce: `tools/collect_fed_logs.sh`.
 
 ## Observed reward data (critic/rewards/mean per step)
 
@@ -403,14 +403,14 @@ bash fedagent/scripts/run_webshop_fed_smoke.sh CFG         # federated WebShop (
 #   CFG ∈ config/examples/webshop/{2cl_catalog_split, probe_signal, fedprox_test}.yaml
 #       or config/examples/webshop/scaled/{catalog, task, homog}.yaml
 # extra args forwarded to run_fed, e.g.:  ... CFG --base-seed 43 --output-dir /tmp/run_s43 --port-base 8090
-python tools/verl08_migration/summarize_fed_run.py A=/tmp/...scaled_env B=/tmp/...scaled_task C=/tmp/...scaled_homog
+python tools/summarize_fed_run.py A=/tmp/...scaled_env B=/tmp/...scaled_task C=/tmp/...scaled_homog
 ```
 
 ## Acceleration + concurrency-fix round (2026-06-29)
 
 Full analysis in [`docs/acceleration.md`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md) / [`_results`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_results.md) /
 [`_report`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_report.md). Configs/drivers preserved under
-`tools/verl08_migration/{accel,poc}/` (moved out of the gitignored 1.3 TB `_scratch/`).
+`tools/verl08_migration/{accel,poc}/` (moved out of the gitignored 1.3 TB `_scratch/`; now preserved on `migrate/verl-0.8.0`).
 
 **GPU-validated timings (1.5B, 15-turn WebShop, paper settings, 4×H100):**
 - **Client-parallel #3** (2 client × 2 GPU concurrent) = **727s/round** vs 4-GPU solo 558s, 2-GPU solo
@@ -428,7 +428,7 @@ Full analysis in [`docs/acceleration.md`](https://github.com/sunblaze-ucb/FedAge
 `/tmp` socket by Ray job id, but FedAgent's isolated per-client Ray clusters all assign the same first
 id `01000000` → identical `/tmp` socket → 44-min hang at 0% util in `update_weights`. Fixed: `run_fed`
 exports a unique `VERL_RAY_JOB_ID` per verl subprocess + a 2-line verl honor-override patch
-(`tools/verl08_migration/patches/`); GPU-validated rc=0 on the exact 3-job layout. Same family as the
+(`tools/setup/patches/`); GPU-validated rc=0 on the exact 3-job layout. Same family as the
 earlier FedAvg-29500 rendezvous fix. Commits `f4cb8ca` / `aa145f5`.
 
 ## ALFWorld acceleration economics (2026-06-30)
@@ -678,7 +678,7 @@ came from. So `true` is the paper protocol; the `run_fed.py` library default sta
 (all paper configs run sequential lanes; `parallel_clients>1 + client_end_eval` would raise).
 
 Follow-up 2 (2026-07-10): figure-plotting parity for the new stack.
-`tools/plotting/plot_training_dynamics.py` could not plot a verl-0.8 run: it read
+`tools/plot_training_dynamics.py` could not plot a verl-0.8 run: it read
 `val/success_rate` from `round_*/client_*/json_logs/metrics.json` at client step 0 (red line)
 and the last local step (circles), but on this stack clients never validate (client jobs pin
 `trainer.val_before_train=false`, `test_freq=-1`) -- those keys never appear. The figure data

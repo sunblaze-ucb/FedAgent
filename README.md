@@ -131,9 +131,8 @@ fedagent/                      ← the maintained verl-0.8 overlay (start here)
 └── main_ppo_fed.py            per-client entry: stock verl run_ppo + FedAgent hooks
 
 sitecustomize.py               repo-root FedProx hook (auto-imported on PYTHONPATH)
-tools/verl08_migration/        FedAvg aggregator, paper-config generator, hardness-traj generator, helpers
 data/                          shipped data assets: env_heterogeneity (holdout/lookalike) + hardness reference labels
-tools/plotting/                training-dynamics figure script (reads round_*/client_*/json_logs)
+tools/                         operator toolbox: paper-config generator, hardness-label generator, eval/log/plot helpers (+ setup/: flash-attn build, verl patch)
 LICENSE · NOTICE · CITATION.cff
 ```
 
@@ -172,7 +171,7 @@ fetched/generated separately:
   [`fedagent/docs/installation.md`](fedagent/docs/installation.md)).
 - **Hardness arm trajectories**: the Hardness heterogeneity configs require per-backbone
   task-difficulty labels at `data/hardness/*.json`; generate them **before** any hardness run
-  with `python tools/verl08_migration/gen_hardness_trajectories.py` (see
+  with `python tools/gen_hardness_trajectories.py` (see
   [`fedagent/docs/reproducing.md`](fedagent/docs/reproducing.md)).
 
 ## Models

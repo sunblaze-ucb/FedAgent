@@ -113,7 +113,7 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 |---|---|
 | `envs/{webshop,alfworld}/engine/` | The **vendored WebShop/ALFWorld engines** (+ original `partition_strategy.py`, `*_projection` action parsers). `sys.path`-injected by the env services so the environment MDP is the *same code* the original FedAgent used, now carrying **no verl-agent dependency**. The trainer itself is **stock verl 0.8**. |
 | `sitecustomize.py` (repo root) | Auto-imported by CPython at interpreter startup in every process on `PYTHONPATH` (client + Ray workers). Gated on `FEDPROX_MU`, it applies `fedprox.py`'s patch, deliberately **not** a Ray `runtime_env` hook (that clobbered per-worker `CUDA_VISIBLE_DEVICES`). |
-| `tools/verl08_migration/aggregate_fedavg_fsdp.py` | The FedAvg core. Run under `torchrun --nproc_per_node=world_size`: each rank averages its own FSDP shard in place across clients and re-saves, byte-structurally identical to a verl checkpoint so the next round loads it unchanged. Shelled out to by `run_fed.py`'s `fedavg`. |
+| `fedagent/fed/aggregate_fedavg_fsdp.py` | The FedAvg core. Run under `torchrun --nproc_per_node=world_size`: each rank averages its own FSDP shard in place across clients and re-saves, byte-structurally identical to a verl checkpoint so the next round loads it unchanged. Shelled out to by `run_fed.py`'s `fedavg`. |
 
 ## The federated round loop
 
@@ -197,7 +197,7 @@ envs/registry.py → BaseTextEnv  (WebShopEnv / AlfworldEnv)   ── HTTP ─�
 verl PPO/GRPO  → advantage → actor (and PPO critic) update  → FSDP checkpoint shards
   │  round_r/client_c/.../actor
   ▼  (back in run_fed.py, after all clients in the round)
-tools/verl08_migration/aggregate_fedavg_fsdp.py   (torchrun, ws ranks)   FedAvg shards in place
+fedagent/fed/aggregate_fedavg_fsdp.py   (torchrun, ws ranks)   FedAvg shards in place
   ▼
 verl.model_merger merge --backend fsdp   → round_r/aggregated/hf        (complete HF model)
   │

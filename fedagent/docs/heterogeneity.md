@@ -218,7 +218,7 @@ goals, others almost only hard ones).
 > as-is; `hardness_for_client` still raises `FileNotFoundError` for a bad path. Labels
 > depend on the reference policy, so regenerate **per backbone** with a **trained**
 > checkpoint (the base/zero-shot model collapses the easy/hard split) via
-> `tools/verl08_migration/gen_hardness_trajectories.py`, which writes labels keyed
+> `tools/gen_hardness_trajectories.py`, which writes labels keyed
 > on the **exact** `task_id` formula the partitioner uses:
 > ```python
 > # webshop_hardness.py: task_id derivation (per goal dict)

@@ -60,7 +60,7 @@ see [the fidelity note](#scientific-equivalence-not-bit-identical).
 > split):
 >
 > ```bash
-> python -m tools.verl08_migration.gen_hardness_trajectories \
+> python -m tools.gen_hardness_trajectories \
 >   --config fedagent/config/paper/task_heterogeneity/grpo/webshop/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-hardness_success_std-1.yaml \
 >   --model  <trained Qwen2.5-1.5B checkpoint> --num-goals 6410 \
 >   --output data/hardness/qwen2.5-1.5b_webshop_trajectories.json
@@ -151,7 +151,7 @@ The `uniform/` family (112) is the four backbones, `Qwen2.5-1.5B-Instruct`,
 × `{grpo, ppo}` × `{webshop, alfworld}`. The het / decentralized families are
 Qwen2.5-1.5B only. `config/paper/` mirrors the original tree's structure and
 naming; contents are verl-0.8 `run_fed` configs, regenerable with
-`tools/verl08_migration/gen_paper_configs.py` (see
+`tools/gen_paper_configs.py` (see
 [`../config/README.md`](../config/README.md)).
 
 Every `paper/` filename is self-describing; the trailing `p-*` token is the only
@@ -548,7 +548,7 @@ Each run writes everything under the config's `output_dir`:
   set it to `false` **before** launching, per-client checkpoints are cleaned
   up each round, so circles cannot be recomputed from a finished run. (The
   library-wide default in `run_fed.py` remains `false`.) Render the figures with
-  `tools/plotting/plot_training_dynamics.py <run_dir> [--with-clients]`: on this
+  `tools/plot_training_dynamics.py <run_dir> [--with-clients]`: on this
   stack it auto-reads `federated_summary.json` (`val_curve` red line +
   `client_curve` circles, x-stride = `epochs_per_round`) and stays
   resume-safe, a resumed run's summary carries the pre-resume rounds. The
@@ -557,7 +557,7 @@ Each run writes everything under the config's `output_dir`:
   curve lands in `federated_summary.json` (`val_curve`) and the round-`r` eval
   dumps live in `round_<r>/eval/`.
 
-`tools/verl08_migration/summarize_fed_run.py` post-processes a run directory.
+`tools/summarize_fed_run.py` post-processes a run directory.
 
 > **Disk.** Consumed FSDP shards are deleted after each merge
 > (`cleanup_checkpoints`, on by default), keeping every `training.log` and the

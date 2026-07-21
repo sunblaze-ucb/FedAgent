@@ -59,7 +59,7 @@ The labels depend on the reference policy, so regenerate per backbone if you cha
      `prompt 4096 / response 512 / max_model_len 4608`, `search_return_n: 50`), NOT the smoke
      config's concat budgets:
   ```bash
-  python -m tools.verl08_migration.gen_hardness_trajectories \
+  python -m tools.gen_hardness_trajectories \
       --config fedagent/config/paper/task_heterogeneity/grpo/webshop/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-hardness_success_std-1.yaml \
       --model <trained Qwen2.5-1.5B checkpoint> --num-goals 6410 \
       --output data/hardness/qwen2.5-1.5b_webshop_trajectories.json

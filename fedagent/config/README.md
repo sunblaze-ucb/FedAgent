@@ -170,7 +170,7 @@ client_overrides:                 # extra `key=value` Hydra overrides applied to
   `homog` (IID anchor), `task`/`pref` (task-het), `coverage`, `hardness`, `catalog`
   (env-het), `envhet_fedprox`, `local`, `centralized`, `lookalike`, `rank`, `bm25field`,
   `bm25reweight`, `ppo`, `ppo_lookalike`. (`hardness` requires a `trajectories_file`;
-  generate one with `tools/verl08_migration/gen_hardness_trajectories.py`.)
+  generate one with `tools/gen_hardness_trajectories.py`.)
 - **`examples/alfworld/`**: `smoke.yaml` and `paper.yaml`
   (game-shard env-het, `partition_strategy: env_disjoint`, 8 clients x 70 rounds).
 
@@ -215,9 +215,9 @@ paper/
 **Regenerate** the whole matrix with one command:
 
 ```bash
-python tools/verl08_migration/gen_paper_configs.py                # all 176 -> fedagent/config/paper
-python tools/verl08_migration/gen_paper_configs.py --group-size 2 # cheap smoke (lower G)
-python tools/verl08_migration/gen_paper_configs.py --accel        # the 176 accelerated twins -> paper_accelerated/
+python tools/gen_paper_configs.py                # all 176 -> fedagent/config/paper
+python tools/gen_paper_configs.py --group-size 2 # cheap smoke (lower G)
+python tools/gen_paper_configs.py --accel        # the 176 accelerated twins -> paper_accelerated/
 ```
 
 Every generated config runs directly with `python -m fedagent.fed.run_fed --config <path>`.

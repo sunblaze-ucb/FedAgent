@@ -27,7 +27,7 @@ reproducible without forking verl. Apply it into the editable `others/verl` chec
 # from the editable verl checkout root (others/verl)
 VERL_ROOT=$(python -c 'import verl, os; print(os.path.dirname(os.path.dirname(verl.__file__)))')
 cd "$VERL_ROOT"
-git apply /path/to/fedagent/tools/verl08_migration/patches/verl_weight_transfer_jobid.patch
+git apply /path/to/fedagent/tools/setup/patches/verl_weight_transfer_jobid.patch
 # verify:
 grep -n 'VERL_RAY_JOB_ID' verl/workers/rollout/vllm_rollout/vllm_rollout.py
 ```

@@ -12,7 +12,7 @@ final aggregated model) and from verl's val-metrics internals (each type is a se
 that type's games -> robust, no per-sample tagging needed).
 
 Usage (inside fedagent-verl08, on the GPU node):
-    python -m tools.verl08_migration.eval_alfworld_by_tasktype \
+    python -m tools.eval_alfworld_by_tasktype \
         --config fedagent/config/examples/alfworld/paper.yaml \
         --model  /path/to/final/aggregated/hf \
         --output /path/to/alfworld_tasktype_breakdown.json [--n-gpus 4]
@@ -25,7 +25,7 @@ from pathlib import Path
 
 from omegaconf import OmegaConf
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

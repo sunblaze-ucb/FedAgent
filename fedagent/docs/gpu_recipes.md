@@ -87,7 +87,7 @@ Deliberate choices baked into the twins:
 Regenerate the whole tree (it is generated, never hand-edited):
 
 ```bash
-python tools/verl08_migration/gen_paper_configs.py --accel
+python tools/gen_paper_configs.py --accel
 ```
 
 ---

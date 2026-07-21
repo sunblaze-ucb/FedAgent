@@ -2,7 +2,7 @@
 # each client gets a disjoint slice of the train games (a distinct hidden transition kernel
 # P_i), aggregated with FedAvg each round. Unperturbed validation on the 274 in-distribution
 # eval games every test_freq=5 rounds; per-task-type breakdown (Pick/Look/Clean/Heat/Cool/
-# Pick2) via tools/verl08_migration/eval_alfworld_by_tasktype.py on the final model.
+# Pick2) via tools/eval_alfworld_by_tasktype.py on the final model.
 #
 # ALFWorld has ~3.5k solvable train games, so the client count is smaller than WebShop's 100
 # (min_goals_per_client=100 => up to ~35 clients); 8 clients x 2/round keeps >=100 games each.

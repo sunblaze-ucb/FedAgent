@@ -45,7 +45,7 @@ Per-client environment services live in [`../envs/webshop/service/`](../envs/web
    sibling `critic` dir for PPO (`critic_dir_for`). `wait_between_clients` seconds pass
    between clients to let Ray/GPU fully release.
 4. **FedAvg the actor shards.** `fedavg(...)` runs
-   `tools/verl08_migration/aggregate_fedavg_fsdp.py` under
+   `fedagent/fed/aggregate_fedavg_fsdp.py` under
    `torchrun --nproc_per_node=<world_size>` (world size auto-detected from the shards by
    `world_size_of`), averaging the clients' shards into
    `round_r/aggregated/checkpoints/global_step_0/actor`. `weights` (if set) gives a

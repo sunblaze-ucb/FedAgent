@@ -20,7 +20,7 @@ verification status. The running experiment log is [`../EXPERIMENTS.md`](../EXPE
 | Algorithm / heterogeneity / protocol | GRPO G=8 / PPO; two-level het; N=100/M=2/E=3/T=70 | **identical** | scientific equivalence |
 
 > **The one verl exception.** "No fork" remains the principle, with a single deliberate 2-line patch
-> (the FSDP→vLLM weight-transfer socket, captured under `tools/verl08_migration/patches/` so it stays
+> (the FSDP→vLLM weight-transfer socket, captured under `tools/setup/patches/` so it stays
 > reproducible without forking; see [archive acceleration.md §7.7](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md)). It hardens concurrent
 > same-node verl jobs and is needed only for client-parallel / eval-parallel runs, still no maintained fork.
 
@@ -101,7 +101,7 @@ These were verified during migration audits and fixed where they diverged (see
 
 ## Fidelity fixes baked into the config generator
 
-`tools/verl08_migration/gen_paper_configs.py` (which emits the 176-config paper tree)
+`tools/gen_paper_configs.py` (which emits the 176-config paper tree)
 applies three fixes surfaced by the WebShop/ALFWorld implementation audits:
 
 1. **WebShop `search_return_n` (BM25 top-K).** The original raised it only on env-het arms

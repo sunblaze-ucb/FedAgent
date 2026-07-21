@@ -35,7 +35,7 @@ Chunked/resumable generation: FEDAGENT_SEED_OFFSET=K shifts every row's seed so 
 the disjoint train-goal window goals[500+K : 500+K+N]; merge the chunk outputs afterwards.
 
 Usage (inside fedagent-verl08, on the GPU node):
-    python -m tools.verl08_migration.gen_hardness_trajectories \
+    python -m tools.gen_hardness_trajectories \
         --config fedagent/config/paper/task_heterogeneity/grpo/webshop/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-hardness_success_std-1.yaml \
         --model  /path/to/reference/hf  --num-goals 6410 \
         --output data/hardness/webshop_trajectories_qwen1.5b.json [--n-gpus 4]
@@ -52,7 +52,7 @@ from pathlib import Path
 
 from omegaconf import OmegaConf
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

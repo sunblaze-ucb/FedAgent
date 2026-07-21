@@ -5,7 +5,7 @@
 # n_envs=64 == the PAPER's in-loop validation size (original FedAgent val_data_size=64): the first
 # 64 valid_seen games, scored the SAME every round -> a clean round->success curve. (The verl-0.8
 # migration briefly set this to 140 = ALL of valid_seen; the paper used 64.) For the full per-task-type
-# breakdown / final numbers, run tools/verl08_migration/eval_alfworld_by_tasktype.py (valid_seen ONLY
+# breakdown / final numbers, run tools/eval_alfworld_by_tasktype.py (valid_seen ONLY
 # -- it pins eval_in_distribution; score the other 134 with a separate eval_out_of_distribution pass).
 # 50-turn budget matches training.
 envs:

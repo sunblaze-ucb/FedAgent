@@ -17,7 +17,7 @@ Round r:
             trainer.total_epochs=E
           env  FEDAGENT_BASE_SEED=base_seed+round*100+c   # round-threaded per-client env seed
         -> round_r/client_c/checkpoints/global_step_K/actor   (FSDP shards, ws=n_gpus)
-    FedAvg: torchrun --nproc_per_node=ws tools/.../aggregate_fedavg_fsdp.py
+    FedAvg: torchrun --nproc_per_node=ws fedagent/fed/aggregate_fedavg_fsdp.py
             --client-actor-dirs <c0>,<c1> --output-actor-dir round_r/aggregated/.../actor
     merge : python -m verl.model_merger merge --backend fsdp
             --local_dir <agg actor> --target_dir round_r/aggregated/hf
@@ -50,7 +50,7 @@ from omegaconf import OmegaConf, open_dict
 # fedagent/fed/run_fed.py -> PKG_DIR=fedagent/ , REPO_ROOT=repo root
 PKG_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = PKG_DIR.parent
-AGGREGATOR = REPO_ROOT / "tools" / "verl08_migration" / "aggregate_fedavg_fsdp.py"
+AGGREGATOR = Path(__file__).resolve().parent / "aggregate_fedavg_fsdp.py"
 
 # Per-PROCESS tag for the FSDP->vLLM weight-transfer IPC socket namespace. verl derives that
 # socket path (/tmp/rl-colocate-zmq-<job_id>-...) from the Ray job id to keep concurrent jobs

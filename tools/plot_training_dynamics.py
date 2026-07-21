@@ -39,7 +39,7 @@ Two data sources, auto-detected:
 
 Usage:
 
-    python tools/plotting/plot_training_dynamics.py <experiment_dir> \\
+    python tools/plot_training_dynamics.py <experiment_dir> \\
         [--metric val/success_rate] [--with-clients] [--out FIG.pdf] \\
         [--round-stride N] [--percent] [--title STR] [--client-logs]
 

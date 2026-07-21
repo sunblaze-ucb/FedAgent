@@ -14,7 +14,7 @@ identity, and because the re-wrap trap is real: verl's transformer auto-wrap pol
 shards params differently than a whole-model wrap, so loading verl shards into a
 basic-wrap model fails `assert type(tensor) is ShardedTensor`. Do NOT re-wrap.
 
-Generalized from tools/verl08_migration/phase0a_ckpt_roundtrip.py (FedAvg-exact + resume
+Generalized from phase0a_ckpt_roundtrip.py (migrate/verl-0.8.0 branch) (FedAvg-exact + resume
 validated). core/ will shell out to this (replacing utils/model_aggregation's single-
 process load) for the verl-0.8 federated loop.
 

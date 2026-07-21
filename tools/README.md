@@ -1,22 +1,24 @@
 # `tools/`
 
-Migration + operations tooling for the verl-0.8 FedAgent overlay.
+Maintained operator tooling for the verl-0.8 FedAgent overlay. Everything here is run **by
+hand against the repo**; code the training loop itself needs lives inside `fedagent/` (the
+FedAvg aggregator run_fed shells out to each round is
+[`fedagent/fed/aggregate_fedavg_fsdp.py`](../fedagent/fed/aggregate_fedavg_fsdp.py)).
 
-- [`verl08_migration/`](verl08_migration/), the maintained toolbox:
-  - `aggregate_fedavg_fsdp.py`: the FSDP-sharded FedAvg aggregator invoked by
-    [`fedagent/fed/run_fed.py`](../fedagent/fed/run_fed.py) each round.
-  - `gen_paper_configs.py`: regenerates the 176-config paper matrix under
-    [`fedagent/config/paper/`](../fedagent/config/README.md).
-  - `gen_hardness_trajectories.py`: generates the `data/hardness/*.json` task-difficulty
-    labels the hardness heterogeneity arm requires.
-  - `summarize_fed_run.py` · `collect_fed_logs.sh` · `eval_alfworld_by_tasktype.py`,
-    log / metrics / eval helpers.
+| script | purpose |
+|---|---|
+| [`gen_paper_configs.py`](gen_paper_configs.py) | regenerates the 176-config paper matrix under `fedagent/config/paper/` (`--accel` for the accelerated twins) |
+| [`gen_hardness_trajectories.py`](gen_hardness_trajectories.py) | generates the `data/hardness/*.json` task-difficulty labels the hardness heterogeneity arm requires |
+| [`eval_alfworld_by_tasktype.py`](eval_alfworld_by_tasktype.py) | per-task-type success breakdown on the ALFWorld validation split |
+| [`summarize_fed_run.py`](summarize_fed_run.py) | post-processes a run directory (round/client metrics, asymmetry/compounding summary) |
+| [`collect_fed_logs.sh`](collect_fed_logs.sh) | gathers per-node `training.log`s into one stage dir, then runs the summarizer |
+| [`plot_training_dynamics.py`](plot_training_dynamics.py) | training-dynamics figure; reads the `round_*/client_*/json_logs/metrics.json` every `run_fed` run emits |
 
-The original verl-agent-0.3.1 tooling (`run_federated.py`, `resolve_paths.py`,
-`generate_uniform_configs.py`, and the `aggregation/`, `env_heterogeneity/`,
-`heterogeneity_test/`, `monitor/` toolboxes) is preserved on the
-`paper-reproduce-verl-agent` branch (`tools/` there).
+[`setup/`](setup/) holds install-time assets: `build_fa.sh` (flash-attn source build for
+old-glibc nodes) and [`patches/`](setup/patches/) (the 2-line verl weight-transfer patch
+applied during [installation](../fedagent/docs/installation.md)).
 
-[`plotting/`](plotting/) holds `plot_training_dynamics.py`, the training-dynamics figure
-script; it reads the `round_*/client_*/json_logs/metrics.json` files every `run_fed` run
-emits (same schema as the original runner).
+History lives on branches, not here: the verl-0.8 migration's A/B experiment matrix,
+verification smokes and diagnostics (the former `tools/verl08_migration/{accel,poc,archived_diagnostics}`)
+are preserved on `migrate/verl-0.8.0`; the original verl-agent-0.3.1 tooling
+(`run_federated.py`, `aggregation/`, `monitor/`, …) on `paper-reproduce-verl-agent`.
