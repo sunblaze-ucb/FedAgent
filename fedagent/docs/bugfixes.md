@@ -5,6 +5,52 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-21: Residual construct-time RNG race: price clauses still diverged across pooled envs (the shuffle-race's last surviving facet)
+
+- **File:** vendored `web_agent_site/envs/web_agent_text_env.py` (fix `e2b5eef`).
+- **Provenance:** found during the full-population trajectory forensic pass over the v2
+  hardness-label rollouts: joining all 6,410 recorded prompts back to an offline sequential
+  goal reconstruction left 675 rows whose instruction differed ONLY in the price clause
+  (e.g. same product, "lower than 40.00" vs "50.00"), including different clauses for the
+  same product within one chunk — impossible under a single deterministic construction.
+  Reproduced at HEAD: 4 concurrently-built envs split into two price variants (1,375/6,910
+  instructions differ) while goal ORDER stayed identical.
+
+**Bug.** The goal-order fix (`afa440f`) serialized SimServer's whole seeded window under
+`_RNG_CONSTRUCT_LOCK`, but `WebAgentTextEnv.__init__` ends with a `self.reset()` that draws
+from the process-global `random` OUTSIDE the lock (`random.choices` session id; `random_idx`
+goal pick when `session_int is None`). During pooled-concurrent construction, env_j's
+construct-tail reset lands inside env_k's held window — between its `random.seed(42)` and
+`generate_product_prices()` — shifting the ~93 ranged-price products' `random.uniform` draws.
+Downstream, `get_synthetic_goals` re-seeds 42 before sampling price bands, so the SAMPLE
+stream stays aligned but the band CONTENT (`price_range` is a function of the drawn price)
+differs → those products' goals get different `price_upper`/instruction price text per env.
+Goal (asin, options) order is untouched, so the era's first-64 **task-id** pool guard —
+price-blind by construction — passed silently. (The full-length `(asin, instruction_text)`
+guard added in `337166f` would now hard-fail such a mixed pool at startup; this fix removes
+the race itself.)
+
+**Fix.** `_RNG_CONSTRUCT_LOCK` upgraded to an `RLock` (SimServer re-acquires it inside) and
+`WebAgentTextEnv.__init__` holds it from the seeding block through the trailing
+`self.reset()`. Sequential construction is byte-identical to the historical order.
+
+**Verification.** (1) 4 concurrently-built envs: instruction md5 == sequential build's md5,
+all four; (2) (asin, goal_options) sequence == the pre-fix sequential oracle (order and
+val/train membership untouched); (3) the affected product's clause back to the canonical
+value across all envs.
+
+**Impact on the v2 hardness labels (`d6f3c9b`).** 675/6,410 label-gen episodes were served a
+price clause deviating from the canonical sequential construction (ranged-price products
+only). Each episode was INTERNALLY consistent — the agent saw and was scored against the
+same served clause — so the labels remain valid as measured difficulty; the deviation is a
+small label-noise source on those goals (price is one of `denom` score terms), quantified in
+the trajectory-analysis archive (`hardness_labelgen_std4_v2/`). Offline forensics must use
+the PROMPT's price clause as scoring truth (not a reconstruction), and 53 purchases of
+range-priced items straddling the cap are price-undecidable offline (flagged, label-neutral:
+all have score < 1 regardless).
+
+---
+
 ## 2026-07-21: Post-race audit hardening: latent members of the same bug class
 
 - **File:** `fedagent/envs/webshop/service/server.py`, the vendored
