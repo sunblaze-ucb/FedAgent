@@ -5,6 +5,130 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-22: Cross-round persistent trainer: `_reset_engine` leaks a full model+Adam per round → reserved-VRAM creep → OOM (PPO ~2× GRPO)
+
+- **File:** `fedagent/fed/persistent_patch.py` (`_reset_engine`); root cause lives in stock verl
+  (`others/verl/verl/workers/engine/fsdp/transformer_impl.py:576-578`) but is only *activated* by
+  our reload pattern, so the fix is overlay-side.
+- **Severity:** blocker for every `cross_round: true` run — the process OOMs after a
+  headroom-dependent number of rounds (crash + lost round, not corrupted numbers; resume from the
+  last aggregated round is clean). All `paper_accelerated` configs (PPO **and** GRPO, WebShop
+  **and** ALFWorld) set `cross_round: true`, so the whole accelerated recipe tree was exposed.
+- **Provenance:** a WebShop PPO cross-round run OOM'd at round 14; lowering
+  `rollout.gpu_memory_utilization` bought 13 rounds and it OOM'd again at round 27. The telling
+  signature: training-side PyTorch memory grew **monotonically ~0.6 GB/round** (40 GB @rd14 →
+  48 GB @rd27) — a leak with a per-round clock, not a per-step one. The only per-round
+  allocation event is `reload_client_model`/`reload_critic_model`.
+
+### The bug
+
+`_reset_engine` hot-swaps a client's weights by calling `eng.initialize()` on the live FSDP
+engine. In verl, `initialize()` → `_build_model_optimizer()` ends in a bare rebind:
+
+```python
+self.module = module          # transformer_impl.py:576 — old module never freed
+self.optimizer = optimizer    # :577 — old Adam (fp32 m+v, the bulk) never freed
+self.lr_scheduler = lr_scheduler
+```
+
+Stock verl calls `initialize()` **once per process**, so the rebind is harmless there. Our
+cross-round trainer calls it **every round**, which activates two problems:
+
+1. **Transient 2× peak.** The new module+optimizer are fully built (lines 402–420) *before* the
+   rebind drops the old ones — both generations coexist at the moment of assignment.
+2. **Permanent reserved-memory creep (the killer).** After the rebind the old objects are
+   Python-garbage, but the CUDA caching allocator keeps their blocks **reserved**. The
+   allocate-new-then-free-old ordering plus FSDP flat-param allocation patterns fragment the
+   cache, so each round's rebuild can't fully reuse the previous round's freed blocks and asks
+   the GPU for fresh memory instead. Nothing ever calls `empty_cache()` in the worker, so
+   reserved grows monotonically → ~0.6 GB/round (PPO) → OOM.
+
+Two aggravators made it worse and hid it:
+
+- **`checkpoint_manager` pins the old generation.** `initialize()` also rebuilds
+  `FSDPCheckpointManager(model=…, optimizer=…, lr_scheduler=…)` (transformer_impl.py:193) — but
+  the *old* manager, still referenced by the engine until the rebind, holds refs to the old
+  module/optimizer. Any release scheme that doesn't drop it frees nothing.
+- **The existing hygiene call was in the wrong process.** `persistent_task_runner._reset_for_client`
+  ends with `torch.cuda.empty_cache()` — but that runs in the **driver**; the engines (and the
+  leak) live in the **Ray FSDP worker processes**. It never touched the leaked memory.
+
+### Why PPO leaks ~2× GRPO (and why the leak scales with the algo)
+
+Per round, `reload_client_model` rebuilds the actor (module + Adam) and the ref — but the ref is
+`forward_only`, so verl builds **no optimizer** for it (transformer_impl.py:567): the ref leaks
+only a backbone. PPO (`adv_estimator=gae`) additionally calls `reload_critic_model` →
+`_reset_engine` on the value engine: a **second full module + Adam** per round. Since Adam's
+fp32 m/v is the dominant term, PPO's leak rate ≈ 2× GRPO's (~0.6 vs ~0.3 GB/round observed).
+
+### Why 70-round GRPO runs "worked" (rounds-to-OOM arithmetic)
+
+Rounds-to-OOM ≈ training-side headroom ÷ per-round leak. The two arms differ on **both** terms:
+
+|  | GRPO | PPO |
+|---|---|---|
+| leak rate | ~0.3 GB/round | ~0.6 GB/round |
+| resident state | actor + ref | + full critic (module, Adam, grads, activations) |
+| `rollout.gpu_memory_utilization` (recipe) | 0.6 | 0.5 — lowered to squeeze the critic in at all |
+
+PPO starts with far less headroom *and* burns it twice as fast → wall at ~rd27. GRPO's
+rounds-to-OOM simply exceeded the configured 70 rounds — those runs **finished while leaking**
+(their logs should show the same monotonic climb at ~half slope). A 210-round GRPO config
+(`ep_per_round_change/`, `rd-210`) or a larger model would have hit the same wall. Mode matrix:
+the default subprocess-per-client path and `persistent`-per-round (process exits each round)
+never accumulate across rounds; **only `cross_round: true` exposes the leak**.
+
+### The fix
+
+`_reset_engine` now releases the old generation **before** rebuilding, inside the worker:
+
+```python
+for _attr in ("module", "optimizer", "lr_scheduler", "checkpoint_manager"):
+    if getattr(eng, _attr, None) is not None:
+        setattr(eng, _attr, None)      # incl. checkpoint_manager — it pins module/optimizer refs
+gc.collect()                            # actually collect the FSDP module's reference cycles
+torch.cuda.empty_cache()                # return reserved blocks -> rebuild reuses freed memory
+eng.initialize()
+```
+
+Release-before-rebuild cures **both** problems: the transient peak returns to 1× (the rebuild
+allocates into just-freed memory), and reserved no longer accretes (back to baseline each
+round). `empty_cache()` is safe next to the co-resident vLLM engine — it only returns *unused*
+cached blocks; vLLM's KV cache is live allocation. Cost: one allocator round-trip per client
+reload (ms-scale, amortized over a whole client fit). The cross-round acceleration (the entire
+point of lever #4) is preserved.
+
+**Coverage:** one function covers the full matrix — `reload_client_model` (actor+ref; GRPO and
+PPO) and `reload_critic_model` (critic; PPO) both call `_reset_engine`, and the patch is
+env-agnostic (the engines live in the trainer workers; WebShop/ALFWorld only differ in the
+separate env-service processes). Install path unchanged: `sitecustomize` arms the deferred
+import hook under `FEDAGENT_PERSISTENT=1` for every persistent/cross-round launch.
+
+### Verification
+
+- Source-verified against the vendored verl 0.8.0.dev actually in use (`others/verl`): the bare
+  rebind (576–578), the once-per-process assumption, `initialize()` rebuilding
+  `checkpoint_manager` (193 — so nulling it pre-call is safe), and the ref's
+  `forward_only`→no-optimizer branch (567 — the release loop's `None`-guard handles it).
+- No dangling references that would defeat the release: `TrainingWorker`/`ActorRolloutRefWorker`
+  hold only the engine (they call methods, never cache `module`); the FSDP→vLLM weight bridge
+  fetches `get_per_tensor_param()` fresh at each sync (engine_workers.py:711), so the rollout
+  side never pins the old module; `flops_counter` holds only `hf_config`.
+- **Live validation pending:** the definitive check is a cross-round run whose per-round
+  training-side memory is FLAT (vs the 0.6 GB/round ramp). A hot-patched variant (gc +
+  empty_cache, but **without** the `checkpoint_manager` drop) is under monitor on the original
+  failing run; note that variant may retain a residual leak via the manager's pinned refs — if
+  its curve bends but doesn't flatten, that's the expected signature, and this version
+  (manager included) is the one to sync.
+
+**Scope audit — not exposed:** AccelAgent (`accelagent/train.py` → stock `run_ppo` →
+`fit()` once; `initialize()` runs once per process, no reload path — the verl rebind is inert
+there, as in stock verl). The FedAgent subprocess and per-round persistent paths (process
+lifetime bounds the accumulation). Completed runs' *numbers* everywhere (the leak crashes; it
+does not corrupt weights, rewards, or advantages).
+
+---
+
 ## 2026-07-21: Residual construct-time RNG race: price clauses still diverged across pooled envs (the shuffle-race's last surviving facet)
 
 - **File:** vendored `web_agent_site/envs/web_agent_text_env.py` (fix `e2b5eef`).

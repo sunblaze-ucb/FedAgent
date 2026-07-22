@@ -35,7 +35,23 @@ def _apply_persistent_patch() -> bool:
     from verl.workers.engine_workers import ActorRolloutRefWorker, TrainingWorker
 
     def _reset_engine(eng, model_local_path):
+        import gc
+
+        import torch
+
         eng.model_config.local_path = model_local_path
+        # Cross-round leak fix: initialize() (_build_model_optimizer, transformer_impl.py:427-429)
+        # REBINDS self.module/optimizer/lr_scheduler without freeing the old ones -- and the CUDA
+        # caching allocator keeps the dropped blocks RESERVED (never returned) absent empty_cache().
+        # Per round that accretes ~one full model + Adam state (PPO leaks TWICE: actor here +
+        # critic via reload_critic_model; the ref engine is forward_only -> no optimizer), so
+        # reserved memory climbs ~0.6GB/round -> cross-round OOM. Drop the old refs FIRST (so the
+        # rebuild reuses freed memory instead of peaking at 2x), then gc + empty_cache.
+        for _attr in ("module", "optimizer", "lr_scheduler", "checkpoint_manager"):
+            if getattr(eng, _attr, None) is not None:
+                setattr(eng, _attr, None)
+        gc.collect()
+        torch.cuda.empty_cache()
         eng.initialize()  # _build_model_optimizer: new module(new weights)+optimizer+scheduler
         if hasattr(eng, "_fedprox_w_t"):
             del eng._fedprox_w_t  # re-anchor FedProx to this client's aggregated model
