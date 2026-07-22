@@ -917,6 +917,7 @@ def hardness_partition(
     low_success_data = []   # success rate < 0.5
     unknown_success_data = []  # tasks with no success information
 
+    n_label_miss = 0   # items whose task_id is ABSENT from the trajectories file (floored to hard)
     for item in total_train_data:
         # Extract the task_id from the item (matching the logic in envs.py).
         task_id = None
@@ -946,10 +947,17 @@ def hardness_partition(
                 low_success_data.append(item)
         else:
             # Tasks with no matching success info default to "not successful".
+            n_label_miss += 1
             low_success_data.append(item)
 
 
     print(f"Data distribution: high_success={len(high_success_data)}, low_success={len(low_success_data)}")
+    if n_label_miss:
+        # Silent floor-to-hard camouflages a labels/keying mismatch; make it loud
+        # (mirrors webshop_hardness.py and hardness_partition_alfworld below).
+        print(f"[hardness] WARNING: {n_label_miss}/{len(total_train_data)} items have no "
+              f"label in the trajectories file (defaulted to hard); if this is more than "
+              f"a few, the labels do not match this pool/keying")
 
     # Assemble this client's shard as X_i = Y_i u F_i, following the paper's
     # HardnessPartition Algorithm literally:
