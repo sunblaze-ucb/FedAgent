@@ -183,6 +183,29 @@ class _Session:
 # concurrency benefit (overlapping LLM rollouts) is preserved.
 _TW_LOCK = threading.Lock()
 
+# Deterministic per-index game selection for hardness LABELLING (off by default -> normal
+# train/eval keep the seeded-shuffle selection untouched). When ALFWORLD_SEED_IS_INDEX=1,
+# /reset treats `seed` as a direct index into the env's registered game_files, so contiguous
+# seeds 0..num_games-1 cover EVERY train game exactly once (a bijection). The default
+# seed->game map (RandomState(seed).shuffle(gamefiles)[0]) is only ~pseudo-random, so
+# coupon-collecting all N games would need ~N ln N episodes; index mode makes full-pool
+# labelling exactly N episodes. See tools/gen_alfworld_hardness_trajectories.py.
+SEED_IS_INDEX = bool(os.environ.get("ALFWORLD_SEED_IS_INDEX"))
+
+
+def _tw_batch(env):
+    """Reach the underlying TextworldBatchGymEnv (has .gamefiles + ._gamefiles_iterator)
+    through any gym wrapper chain (AlfredDemangler / AlfredInfos)."""
+    e = env
+    for _ in range(16):
+        if hasattr(e, "gamefiles") and hasattr(e, "_gamefiles_iterator"):
+            return e
+        nxt = getattr(e, "env", None) or getattr(e, "unwrapped", None)
+        if nxt is None or nxt is e:
+            break
+        e = nxt
+    raise RuntimeError("could not locate TextworldBatchGymEnv (.gamefiles) for index mode")
+
 
 def _load_config():
     import yaml
@@ -222,8 +245,16 @@ def _build_base_env():
 
 
 def _make_env():
-    """One single-instance textworld gym env (batch_size=1) from the shared base."""
-    return _base_env.init_env(batch_size=1)
+    """One single-instance textworld gym env (batch_size=1) from the shared base.
+
+    Serialized under _TW_LOCK: init_env -> textworld.gym.register_games bumps a PROCESS-GLOBAL
+    `registry` dict with a non-atomic check-then-max-version (textworld/gym/utils.py), so
+    POOL_SIZE concurrent _make_env threads can hit 'dict changed size during iteration' or race
+    to the same env_id. Payload is homogeneous (all pool envs register the identical game list),
+    so this only guards the one-time startup against a registry crash -- transitions still run
+    concurrently (their _TW_LOCK is taken separately, per reset/step)."""
+    with _TW_LOCK:
+        return _base_env.init_env(batch_size=1)
 
 
 def _unbatch_info(infos: dict) -> dict:
@@ -346,7 +377,15 @@ async def reset(r: ResetReq):
             # reset() loads the game -> parses its PDDL grammar via the shared tatsu parser,
             # so hold the global lock across the whole op (see _TW_LOCK).
             with _TW_LOCK:
-                env.seed(int(r.seed))
+                if SEED_IS_INDEX:
+                    # Labelling: seed IS the game index. Point the iterator at exactly
+                    # gamefiles[idx] (one-shot) so this reset loads that game. reset()
+                    # calls next(iterator) batch_size(=1) times, so a 1-element iter suffices.
+                    batch = _tw_batch(env)
+                    gfs = list(batch.gamefiles)
+                    batch._gamefiles_iterator = iter([gfs[int(r.seed) % len(gfs)]])
+                else:
+                    env.seed(int(r.seed))
                 obs, infos = env.reset()
             info = _unbatch_info(infos)
             return obs[0], _admissible(info), info.get("extra.gamefile")

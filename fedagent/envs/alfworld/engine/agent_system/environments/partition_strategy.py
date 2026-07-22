@@ -1159,6 +1159,7 @@ def hardness_partition_alfworld(
     low_success_data = []   # success rate < 0.5
     unknown_success_data = []  # tasks with no success information
 
+    n_label_miss = 0   # games whose task_id is ABSENT from the trajectories file (floored to hard)
     for item in total_train_data:
         # Extract the task_id from the Alfworld game file path.
         task_id = None
@@ -1187,8 +1188,23 @@ def hardness_partition_alfworld(
                 low_success_data.append(item)
         else:
             # Tasks with no matching success info default to "not successful".
+            # A LARGE miss count means the trajectories file's keying/catalog does not match this
+            # game pool (e.g. wrong split, stale labels) -- otherwise the whole pool silently
+            # collapses to "hard" and the hardness partition degenerates. Count and warn so the
+            # miscmatch is loud rather than an invisible floor-to-hard (mirrors the WebShop
+            # webshop_hardness.py label-miss guard).
+            n_label_miss += 1
             low_success_data.append(item)
 
+    if n_label_miss and show_progress and client_id == 0:
+        frac = n_label_miss / max(1, len(total_train_data))
+        msg = (f"[hardness_partition_alfworld] WARNING: {n_label_miss}/{len(total_train_data)} "
+               f"games ({100*frac:.1f}%) had NO task_id match in the trajectories file and were "
+               f"floored to HARD. Expected key form: 'alfworld_<task_type-...-scene>_<trial_...>_game'.")
+        if frac > 0.5:
+            msg += (" >50% missing -> the trajectories file almost certainly does not match this "
+                    "game pool (wrong split or stale/incompatible labels).")
+        print(msg)
 
     print(f"Alfworld data distribution: high_success={len(high_success_data)}, low_success={len(low_success_data)}")
 

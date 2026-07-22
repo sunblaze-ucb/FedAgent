@@ -32,6 +32,35 @@ def _extract_alf_task(obs: str) -> str:
     i = (obs or "").find("Your task is to: ")
     return obs[i + len("Your task is to: "):].strip() if i != -1 else ""
 
+
+def _gamefile_to_task_id(gamefile: str) -> Optional[str]:
+    """Derive the hardness task_id from a game.tw-pddl path, VERBATIM with
+    partition_strategy.py::hardness_partition (the ALFWorld branch, line ~1177):
+      .../{task_type-obj-...-scene}/{trial_xxx}/game.tw-pddl
+      -> f"alfworld_{grandparent}_{parent}_game"
+    So the hardness-labelling dump keys match what the partition looks up. Returns None
+    if the path is not a recognizable game file (leaves normal runs untouched)."""
+    if not gamefile:
+        return None
+    fn = os.path.basename(gamefile)
+    if fn != "game.tw-pddl":
+        return None
+    parent = os.path.basename(os.path.dirname(gamefile))
+    grandparent = os.path.basename(os.path.dirname(os.path.dirname(gamefile)))
+    if not parent or not grandparent:
+        return None
+    return f"alfworld_{grandparent}_{parent}_game"
+
+
+def _gamefile_to_task_type(gamefile: str) -> Optional[str]:
+    """ALFWorld task family (the six pick_*/look_* types), for the eval breakdown tag —
+    the leading segment of the grandparent dir before the first hyphen (e.g.
+    'pick_clean_then_place_in_recep-Plate-None-DiningTable-19' -> 'pick_clean_then_place_in_recep')."""
+    if not gamefile or os.path.basename(gamefile) != "game.tw-pddl":
+        return None
+    grandparent = os.path.basename(os.path.dirname(os.path.dirname(gamefile)))
+    return grandparent.split("-", 1)[0] if grandparent else None
+
 # Format/reasoning instructions (env-level, no per-episode task) -> system message.
 # This is the instruction tail of verl-agent's ALFWORLD_TEMPLATE_NO_HIS, lifted to the
 # system turn (the per-turn body below carries the observation + admissible actions).
@@ -77,6 +106,8 @@ class AlfworldEnv(BaseTextEnv):
         self._memory: list = []     # [{"text_obs": <raw obs before action>, "action": <projected action>}]
         self._pre_obs = ""          # raw obs that led to the pending action (legacy pre_text_obs)
         self._task = ""             # extracted from the init obs ("Your task is to: ...")
+        self._goal_id = None        # hardness task_id from the episode's gamefile (see step())
+        self._task_type = None      # ALFWorld task family (eval breakdown tag)
         self._client: Optional[httpx.AsyncClient] = None
 
     def _c(self) -> httpx.AsyncClient:
@@ -130,6 +161,13 @@ class AlfworldEnv(BaseTextEnv):
         r = await self._post("/reset", {"session_id": self.session_id, "seed": int(seed)}, retry=True)
         self._step_id = 0   # fresh episode -> restart the /step idempotency counter (server does too)
         d = r.json()
+        # Episode identity: /reset always returns this episode's gamefile (the game the seed
+        # selected on the borrowed pool env). Derive the hardness task_id + task family so the
+        # windowed/concat loop can tag every sample -- REQUIRED by the hardness-labelling
+        # aggregation (mirrors WebShopEnv's goal_id surfacing). None on non-game paths.
+        gamefile = d.get("gamefile")
+        self._goal_id = _gamefile_to_task_id(gamefile)
+        self._task_type = _gamefile_to_task_type(gamefile)
         raw = d.get("obs", "") or ""
         avail_str = _fmt_actions(d.get("admissible_commands", []))
         if self._history_length > 0:        # WINDOWED (faithful) mode: full legacy template
@@ -168,6 +206,13 @@ class AlfworldEnv(BaseTextEnv):
             "success": bool(d.get("success", False)),
             "is_action_valid": bool(d.get("is_action_valid", True)),
         }
+        # String tags kept in verl's validation dump (skipped by metric aggregation): goal_id is
+        # REQUIRED by gen_hardness_trajectories' per-task aggregation; task_type feeds the
+        # ALFWorld eval breakdown. Parity with WebShopEnv (which surfaces goal_id the same way).
+        if self._goal_id is not None:
+            info["goal_id"] = self._goal_id
+        if self._task_type is not None:
+            info["task_type"] = self._task_type
         return {"obs_str": obs_str}, float(d.get("reward", 0.0)), bool(d.get("done", False)), info
 
     async def close(self) -> None:
