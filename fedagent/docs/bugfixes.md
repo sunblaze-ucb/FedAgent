@@ -5,6 +5,45 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-22: Concat loop: inter-turn glue mis-slice on reasoning-model templates (Qwen3-family) → eaten turn boundary
+
+- **Files:** `fedagent/agent_loops/gym_text_agent_loop.py`; new verl-free helper
+  `fedagent/agent_loops/_concat_glue.py`; offline regression `tests/test_concat_glue.py`.
+- **Severity:** latent. The paper-default rollout mode is WINDOWED (per-turn prompts — no
+  inter-turn glue, so it never had this bug); only CONCAT-mode runs on templates whose
+  generation prompt ends in a scaffold are affected. Qwen2.5 (no scaffold) is byte-identical
+  pre/post fix.
+
+### The bug
+
+The concat loop builds one token sequence per episode: `prompt + Σ_t (action_t + glue_t)`,
+where `glue_t` (assistant-close `<|im_end|>` + observation-as-user-turn + next generation
+prompt) was recovered by a blind token slice `obs_tokens = new_ids[len(cur_ids):]` — assuming
+the fresh full re-render `new_ids` extends `cur_ids` (prompt + raw sampled action ids) as a
+token prefix. That holds on Qwen2.5 but is FALSE on Qwen3/Qwen3.5: the generation prompt ends
+with a `<think>\n\n</think>\n\n` scaffold that is DROPPED when the turn is re-rendered as
+completed history, so `cur_ids` is not a prefix of `new_ids` and the slice is offset by the
+scaffold length — silently eating the `<|im_end|>\n<|im_start|>user` boundary that closes the
+assistant turn (~4 tokens/turn on Qwen3.5-style templates). The observation then runs straight
+out of the action with no turn boundary. The glue is masked (`response_mask=0`) so the loss
+TARGETS were never wrong — the corruption is in the CONTEXT the policy and the trainer's
+recomputed logprobs condition on (measured where investigated: ~0.039 nats/token on the next
+action's logprobs).
+
+### The fix
+
+Recover the glue by a **string** diff of consecutive rendered prompts
+(`apply_chat_template(tokenize=False)`), anchored at their divergence point (where the action
+content begins), then token-encode the glue text — immune to any scaffold the template adds or
+drops, and to BPE context-dependence (never a token diff). A leading turn-terminator already
+emitted by the sampler (trained as part of the action) is deduped; if the action text cannot
+be located, fall back to the legacy slice (never worse than before). The helper is
+dependency-free so it is unit-tested offline: `tests/test_concat_glue.py` locks Qwen2.5
+parity (anchored == legacy == correct), the Qwen3 boundary recovery, terminator dedup, and
+the fallback path.
+
+---
+
 ## 2026-07-22: Cross-round persistent trainer: `_reset_engine` leaks a full model+Adam per round → reserved-VRAM creep → OOM (PPO ~2× GRPO)
 
 - **File:** `fedagent/fed/persistent_patch.py` (`_reset_engine`); root cause lives in stock verl
@@ -126,6 +165,34 @@ import hook under `FEDAGENT_PERSISTENT=1` for every persistent/cross-round launc
 there, as in stock verl). The FedAgent subprocess and per-round persistent paths (process
 lifetime bounds the accumulation). Completed runs' *numbers* everywhere (the leak crashes; it
 does not corrupt weights, rewards, or advantages).
+
+---
+
+## 2026-07-21: Retroactive record — ALFWorld labelling identity gaps + label-miss hardening (`8b104ca`, `0a41188`)
+
+Shipped the same day as the audit entries below but documented only in the commit messages
+until now. ALFWorld is genuinely immune to the two construction RNG races (local
+`random.Random` game shuffle; single-threaded game collection; `_TW_LOCK` over all reset/step
+engine touches), but the sweep left four smaller items, fixed in `8b104ca`/`0a41188`:
+
+- **No episode identity ever reached the dump** (`fedagent/envs/alfworld/alfworld_env.py`):
+  `/reset` returns the episode's `gamefile` but the client dropped it, so the windowed/concat
+  loops' `goal_id`/`task_type` harvesting never fired for ALFWorld. Now derives the hardness
+  task_id (`alfworld_{grandparent}_{parent}_game`, VERBATIM with `partition_strategy`'s
+  ALFWorld keying) + task_type from the gamefile and surfaces both in step `info`.
+- **Pooled `_make_env` raced textworld's process-global registry**
+  (`fedagent/envs/alfworld/service/server.py`): `init_env` → `textworld.gym.register_games`
+  bumps a global `registry` dict non-atomically, so `POOL_SIZE` concurrent constructions could
+  crash at startup ('dict changed size during iteration'). Now serialized under `_TW_LOCK`
+  (startup-only; transitions still run concurrently). Crash class, not a correctness class.
+- **Silent label-miss floor-to-hard** (`partition_strategy.py`, BOTH the ALFWorld and the
+  vendored webshop-shaped `hardness_partition`): games/goals whose task_id is absent from the
+  trajectories file were silently bucketed "hard" — a keying/catalog mismatch could collapse
+  the whole pool to hard with no signal. Now counted + WARNED (>50 % miss flags a wrong-split/
+  stale-labels mismatch explicitly), mirroring `webshop_hardness.py`.
+- (Feature, same commit: `ALFWORLD_SEED_IS_INDEX` bijective seed→game mode + the
+  `gen_alfworld_hardness_trajectories.py` generator — full-pool labelling in exactly N
+  episodes instead of ~N ln N.)
 
 ---
 

@@ -26,6 +26,7 @@ from verl.utils.profiler import simple_timer
 from verl.utils.rollout_trace import rollout_trace_op
 from verl.workers.rollout.replica import TokenOutput
 
+from fedagent.agent_loops._concat_glue import inter_turn_glue_ids
 from fedagent.envs.registry import make_env
 
 logger = logging.getLogger(__file__)
@@ -69,6 +70,19 @@ class GymTextAgentLoop(AgentLoopBase):
             ),
         )
 
+    async def _render_chat_str(self, messages: List[Dict[str, Any]]) -> str:
+        """String render (tokenize=False) of the same prompt ``_tokenize_chat`` tokenizes.
+
+        The concat loop diffs consecutive rendered *strings* to recover the inter-turn glue
+        (BPE is context-dependent, so token diffs are unsafe — see ``_concat_glue``)."""
+        return await self.loop.run_in_executor(
+            None,
+            lambda: self.tokenizer.apply_chat_template(
+                messages, add_generation_prompt=True, tokenize=False,
+                **self.apply_chat_template_kwargs,
+            ),
+        )
+
     @rollout_trace_op
     async def run(self, sampling_params: Dict[str, Any], **kwargs) -> AgentLoopOutput:
         env_name = kwargs.get("env_name", "TinyGuess")
@@ -91,6 +105,7 @@ class GymTextAgentLoop(AgentLoopBase):
             metrics: Dict[str, Any] = {}
             prompt_ids = await self._tokenize_chat(messages)
             cur_ids = list(prompt_ids)
+            rt_prev = await self._render_chat_str(messages)  # string form of the current prompt (concat glue anchor)
             response_ids: List[int] = []
             response_mask: List[int] = []
             # Per-token rollout log-probs, kept aligned with response_ids (0.0 on obs tokens,
@@ -139,12 +154,23 @@ class GymTextAgentLoop(AgentLoopBase):
                 # append the env observation as a user turn; its tokens are NOT generated
                 messages.append({"role": "user", "content": obs["obs_str"]})
                 new_ids = await self._tokenize_chat(messages)
-                obs_tokens = new_ids[len(cur_ids):] if len(new_ids) > len(cur_ids) else []
+                rt_next = await self._render_chat_str(messages)
+                # Inter-turn glue = assistant-close + observation + next generation prompt that
+                # FOLLOW this action, recovered by a string diff of rt_prev/rt_next so the
+                # reasoning-model scaffold (Qwen3 <think>...) that rt_prev ends with is not
+                # miscounted. The legacy blind slice new_ids[len(cur_ids):] silently ate the
+                # <|im_end|> turn boundary on such templates (0 off on Qwen2.5, ~4 tokens/turn on
+                # Qwen3.5). Falls back to the legacy slice if the action can't be located.
+                obs_tokens = inter_turn_glue_ids(
+                    rt_prev, rt_next, text, self.tokenizer, gen[-1] if gen else None)
+                if obs_tokens is None:
+                    obs_tokens = new_ids[len(cur_ids):] if len(new_ids) > len(cur_ids) else []
                 response_ids += obs_tokens
                 response_mask += [0] * len(obs_tokens)  # 0 = observation -> masked out of loss
                 if lp_ok:
                     response_logprobs += [0.0] * len(obs_tokens)
                 cur_ids = new_ids
+                rt_prev = rt_next
         finally:
             # always release the env (e.g. return a pooled remote WebShop session),
             # even if generate/step raises mid-episode.
