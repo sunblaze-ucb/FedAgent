@@ -4,10 +4,14 @@
 Reads the per-round / per-client metric logs written under an experiment
 directory and plots the aggregated (global FedAvg model) trajectory on a
 cumulative training-epoch x-axis. Round N enters at epoch (N-1)*ep-per-cl, so
-an ``ep-per-cl-3`` run over 70 rounds spans 0..210. Two modes:
+an ``ep-per-cl-3`` run over 70 rounds spans 0..210. Variants:
 
-    (default)        aggregated curve only
-    --with-clients   additionally overlay each client's per-round local
+    (default)        BOTH of the below, per metric — the default call renders
+                     4 figures: {task_score, success_rate} x {plain, with-clients}
+                     (the with-clients ones auto-skipped if the run recorded no
+                     client_curve)
+    --no-clients     only the plain aggregated curve
+    --with-clients   only the overlay variant: each client's per-round local
                      trajectory as a faint segment diverging from the shared
                      global point (visualizes client heterogeneity)
 
@@ -40,10 +44,18 @@ Two data sources, auto-detected:
 Usage:
 
     python tools/plot_training_dynamics.py <experiment_dir> \\
-        [--metric val/success_rate] [--with-clients] [--out FIG.pdf] \\
+        [--metric val/task_score,val/success_rate] [--with-clients] [--out FIG.pdf] \\
         [--round-stride N] [--percent] [--title STR] [--client-logs]
 
-Run it once without and once with --with-clients to get both figures.
+``--metric`` takes a comma-separated list; each metric renders its OWN figure
+per variant (suffixing the out name / title when there is more than one). The
+default is the paper's WebShop pair — ``val/task_score`` (partial-credit [0,1]
+goal-match score) + ``val/success_rate``. A listed metric with no recorded
+points (e.g. task_score on ALFWorld runs, or on WebShop dumps predating the
+task_score plumbing) is SKIPPED with a warning instead of failing the call.
+``val/reward_mean`` stays plottable on explicit request, but is deliberately
+NOT in the default set: the training reward is the binarized {0,10} success
+signal, so that curve is success_rate x10 — same information, misleading label.
 """
 from __future__ import annotations
 
@@ -53,11 +65,12 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator
 import numpy as np
+
+# matplotlib is imported lazily inside plot_training_dynamics() so the data-path
+# helpers (load_summary_curves etc.) stay importable/testable without it.
+
+DEFAULT_METRICS = "val/task_score,val/success_rate"
 
 StepData = Dict[str, object]
 Experiment = Dict[str, Dict[str, List[StepData]]]
@@ -204,6 +217,11 @@ def plot_training_dynamics(
 
     from_summary: True = read federated_summary.json, False = read the per-client
     json_logs, None (default) = auto: the summary when the file exists."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MultipleLocator
+
     folder_p = Path(folder)
     if from_summary is None:
         from_summary = (folder_p / "federated_summary.json").is_file()
@@ -318,6 +336,84 @@ def plot_training_dynamics(
     return str(out)
 
 
+def _metric_slug(metric: str) -> str:
+    """val/task_score -> task_score (figure-name / title suffix)."""
+    return metric.split("/")[-1]
+
+
+def plot_metric_set(
+    folder: str,
+    metrics: List[str],
+    *,
+    with_clients: Optional[bool] = None,
+    out_path: Optional[str] = None,
+    round_stride: Optional[int] = None,
+    as_percent: bool = False,
+    title: Optional[str] = None,
+    from_summary: Optional[bool] = None,
+) -> List[str]:
+    """Render the figure set (the CLI entry point's engine): every metric x every
+    client-overlay variant. ``with_clients=None`` (the default) renders BOTH the
+    plain and the ``_with_clients`` variant of each metric — the default call
+    yields 4 figures (task_score/success_rate x plain/with-clients), each saved
+    as .pdf + .png; True/False pins one variant. In auto mode the with-clients
+    variants are dropped when the summary has no ``client_curve`` (the run had
+    ``client_end_eval: false``) — they would just duplicate the plain figures.
+
+    A metric with NO recorded points is skipped with a warning — task_score is
+    WebShop-only and absent from dumps predating its plumbing, and the default
+    pair must not fail an ALFWorld run over it. Unknown metric NAMES still raise
+    (that is a caller typo, not missing data). Raises if nothing at all rendered.
+    When several figures render, each gets ``_<metric>[_with_clients]`` out-name
+    suffixes (also when --out is absent -- a shared default name would silently
+    overwrite) and a ``- <metric>`` title suffix so they stay distinguishable."""
+    variants = [False, True] if with_clients is None else [bool(with_clients)]
+    if with_clients is None:
+        summary_file = Path(folder) / "federated_summary.json"
+        use_summary = from_summary if from_summary is not None else summary_file.is_file()
+        if use_summary:
+            try:
+                if not json.loads(summary_file.read_text()).get("client_curve"):
+                    variants = [False]
+                    print("[plot] summary has no client_curve (client_end_eval off) -> "
+                          "skipping the _with_clients variants")
+            except OSError:
+                pass   # unreadable here -> let the renderer surface the real error
+    many = len(metrics) > 1 or len(variants) > 1
+    outs: List[str] = []
+    for metric in metrics:
+        slug = _metric_slug(metric)
+        for wc in variants:
+            wc_tag = "_with_clients" if wc else ""
+            m_out = out_path
+            if many:
+                if out_path is not None:
+                    p = Path(out_path)
+                    m_out = str(p.with_name(f"{p.stem}_{slug}{wc_tag}{p.suffix or '.pdf'}"))
+                else:
+                    m_out = str(Path(folder) / f"training_dynamics_{slug}{wc_tag}.pdf")
+            m_title = title
+            if many:
+                m_title = f"{title or Path(folder).name} — {slug.replace('_', ' ')}"
+            try:
+                outs.append(plot_training_dynamics(
+                    folder, metric,
+                    with_clients=wc, out_path=m_out,
+                    round_stride=round_stride, as_percent=as_percent, title=m_title,
+                    from_summary=from_summary,
+                ))
+            except ValueError as e:
+                if not str(e).startswith("no "):   # data absent -> skip; bad name -> raise
+                    raise
+                hint = (" [task_score is WebShop-only, and dumps written before its "
+                        "plumbing carry null -- rounds evaluated on current code have it]"
+                        if slug == "task_score" else "")
+                print(f"[plot] SKIP {metric}{wc_tag}: {e}{hint}")
+    if not outs:
+        raise ValueError(f"none of {metrics} produced a figure for {folder}")
+    return outs
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -330,23 +426,33 @@ def main() -> None:
     ap.add_argument("--client-logs", action="store_true",
                     help="force the legacy per-client json_logs source even when "
                          "federated_summary.json exists (e.g. to plot a training metric)")
-    ap.add_argument("--metric", default="val/success_rate",
-                    help="metric key to plot (default: val/success_rate)")
-    ap.add_argument("--with-clients", action="store_true",
-                    help="overlay per-client per-round local trajectories")
+    ap.add_argument("--metric", default=DEFAULT_METRICS,
+                    help="comma-separated metric key(s); one figure per metric and "
+                         f"client-overlay variant (default: {DEFAULT_METRICS} — the "
+                         "paper's WebShop pair, x plain + with-clients = 4 figures)")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--with-clients", action="store_true",
+                   help="ONLY the client-overlay variant (default: both variants; the "
+                        "overlay one is auto-skipped when the summary has no client_curve)")
+    g.add_argument("--no-clients", action="store_true",
+                   help="ONLY the plain aggregated variant")
     ap.add_argument("--out", default=None,
-                    help="output figure path (.pdf; a matching .png is written too)")
+                    help="output figure path (.pdf; a matching .png is written too; "
+                         "with several metrics each gets a _<metric> suffix)")
     ap.add_argument("--round-stride", type=int, default=None,
                     help="training epochs per round = x-axis stride between rounds "
                          "(default: the summary's epochs_per_round when federated_summary.json "
                          "is the source, else ep-per-cl-N parsed from the run dir name)")
     ap.add_argument("--percent", action="store_true",
                     help="scale the metric to a percentage (x100)")
-    ap.add_argument("--title", default=None, help="figure title (default: run dir name)")
+    ap.add_argument("--title", default=None, help="figure title (default: run dir name; "
+                    "with several metrics each gets a — <metric> suffix)")
     args = ap.parse_args()
-    plot_training_dynamics(
-        args.experiment_dir, args.metric,
-        with_clients=args.with_clients, out_path=args.out,
+    plot_metric_set(
+        args.experiment_dir,
+        [m.strip() for m in args.metric.split(",") if m.strip()],
+        with_clients=True if args.with_clients else (False if args.no_clients else None),
+        out_path=args.out,
         round_stride=args.round_stride, as_percent=args.percent, title=args.title,
         from_summary=False if args.client_logs else None,
     )

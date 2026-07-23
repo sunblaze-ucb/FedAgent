@@ -548,9 +548,16 @@ Each run writes everything under the config's `output_dir`:
   set it to `false` **before** launching, per-client checkpoints are cleaned
   up each round, so circles cannot be recomputed from a finished run. (The
   library-wide default in `run_fed.py` remains `false`.) Render the figures with
-  `tools/plot_training_dynamics.py <run_dir> [--with-clients]`: on this
-  stack it auto-reads `federated_summary.json` (`val_curve` red line +
-  `client_curve` circles, x-stride = `epochs_per_round`) and stays
+  `tools/plot_training_dynamics.py <run_dir>`: ONE call renders the default set
+  of 4 — the paper's metric pair `val/task_score` (partial-credit score;
+  WebShop-only, skipped with a warning where absent) + `val/success_rate`, each
+  as a plain figure and a `_with_clients` overlay (the overlay pair is
+  auto-skipped when the summary has no `client_curve`; `--no-clients` /
+  `--with-clients` pin one variant). Don't plot `val/reward_mean`: the training
+  reward is the binarized {0,10} success signal, so that curve is
+  success_rate ×10 under another label. On this stack it auto-reads `federated_summary.json`
+  (`val_curve` red line + `client_curve` circles, x-stride = `epochs_per_round`)
+  and stays
   resume-safe, a resumed run's summary carries the pre-resume rounds. The
   legacy per-client `json_logs` mode (`--client-logs`) still covers
   paper-reproduce-branch run dirs. The aggregated
