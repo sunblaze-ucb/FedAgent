@@ -14,7 +14,8 @@ reproducible without forking verl. Apply it into the editable `others/verl` chec
   and every fresh cluster assigns the **same first job id `01000000`**, so concurrent clients/eval on
   one node compute the **same** `/tmp` socket path and the weight sync **deadlocks** (GPU-confirmed:
   two trainers hung 44 min at 0 % util in `update_weights`). See
-  [archive acceleration.md §Lever #3 / §7.7](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md).
+  [archive acceleration.md §Lever #3 / §7.7](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md)
+  (a `migrate/verl-0.8.0` branch archive, not shipped in this tree).
 - **What it does:** makes both the sender (`vllm_rollout.py`) and the receiver-source
   (`vllm_async_server.py`) **honor a driver-supplied `VERL_RAY_JOB_ID` override** instead of the
   colliding job id. `fedagent/fed/run_fed.py` sets that env var **uniquely per launched verl

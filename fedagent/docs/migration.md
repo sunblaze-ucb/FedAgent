@@ -21,7 +21,8 @@ verification status. The running experiment log is [`../EXPERIMENTS.md`](../EXPE
 
 > **The one verl exception.** "No fork" remains the principle, with a single deliberate 2-line patch
 > (the FSDP→vLLM weight-transfer socket, captured under `tools/setup/patches/` so it stays
-> reproducible without forking; see [archive acceleration.md §7.7](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md)). It hardens concurrent
+> reproducible without forking; see [archive acceleration.md §7.7](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration.md) — a
+> `migrate/verl-0.8.0` branch archive, not shipped in this tree). It hardens concurrent
 > same-node verl jobs and is needed only for client-parallel / eval-parallel runs, still no maintained fork.
 
 ## Environment fidelity: the engines are reused, not reimplemented
@@ -40,7 +41,11 @@ The MDP is therefore unchanged:
   (its Beta sizing and seeds are unchanged, see [`bugfixes.md`](bugfixes.md)).
 - **ALFWorld**: `AlfredTWEnv` / TextWorld, the `alfworld_projection` parser, the game
   loader, the `10 × won` reward, the 6 task types, and the `uniform/preference/coverage/
-  hardness/env_disjoint` partition set are all reused unchanged.
+  hardness/env_disjoint` partition set are reused with two small, behavior-neutral
+  carve-outs: a +34-line **opt-in** game-manifest cache in `alfred_tw_env.py` (off by
+  default; `alfworld_manifest_cache: true`, see [acceleration.md](acceleration.md)) and a
+  6-line `paths.yaml` fallback in the vendored `partition_strategy.py` (path resolution
+  only; the partition math is untouched).
 
 What differs is the **wrapping/driving** (HTTP service + verl 0.8's native multi-turn
 agent-loop instead of the fork's in-process rollout), equivalent information to the policy,
@@ -73,7 +78,7 @@ These were verified during migration audits and fixed where they diverged (see
   **GRPO 8×8 = 64** and **PPO 64×1 = 64** trajectories/step; the configs now reproduce both
   (`rollout.n=8` GRPO / `=1` PPO). An earlier note here concluded the opposite ("`rollout.n`
   must stay 8 for PPO") from the *formula* `train_batch_size × rollout.n` on the dynamic
-  filter-groups path (`rollout_loop.py:414/:448`) — the formula is real but the executed
+  filter-groups path (`rollout_loop.py:414`, block `:447-482`) — the formula is real but the executed
   *value* was 1; that verdict is withdrawn. Pre-fix PPO configs really did 8× the paper's
   rollout volume (512/step).
 - **Sparse reward + invalid-action penalty**: `{0,10}` with a `0.1 × n_invalid` penalty
@@ -136,21 +141,27 @@ single round would repeat the same goals. Same total epochs; correct goal covera
 
 ## Residual differences
 
-**Benign plumbing (no MDP effect):** the multi-turn history is verl 0.8's native concat-chat
-rather than the fork's re-rendered template (equivalent information); the invalid-action
-penalty is applied in the agent-loop, not the trainer; goal sampling uses a different (still
-reproducible) RNG, so per-seed trajectories are not bit-identical to 0.3.1. Round re-entry
-passes through `verl.model_merger`, which casts to **bf16**: every round boundary truncates
-the fp32-aggregated weights (within the equivalence bar; if drift ever shows over long
-horizons, switch re-entry to a model-only `resume_from_path` load, which skips the HF merge).
+**Benign plumbing (no MDP effect):** the paper-default rollout is the faithful **windowed**
+mode (one training sample per turn, the legacy re-rendered `history_length=2` template via
+`fedagent/envs/legacy_prompts.py`); verl 0.8's native concat-chat is the **opt-in alternate**
+mode (`rollout_mode: concat`), where the growing chat replaces the fork's re-rendered
+template (equivalent information). The invalid-action penalty is applied in the agent-loop,
+not the trainer; goal sampling uses a different (still reproducible) RNG, so per-seed
+trajectories are not bit-identical to 0.3.1. Round re-entry passes through
+`verl.model_merger`; stock verl casts to **bf16** there, which used to truncate the
+fp32-aggregated weights at every round boundary — fixed 2026-07-23: `merge_fp32` (default
+on) keeps the aggregated FSDP→HF merge in fp32 ([`bugfixes.md`](bugfixes.md) "bf16 merge
+truncation"); `hf_export: final` skips the hop entirely.
 
 **Baseline dynamics (the renamed rd-70_ep-3 centralized/local configs):** each round is a
 fresh subprocess started from the merged HF weights (`save_contents=[model]`,
 `resume_mode=disable`), so the T=70×E=3 baselines inherit the federated arms' per-round
 semantics: Adam moments re-initialize every 3 epochs, the `use_kl_loss` reference re-anchors
 to each round's starting model (the original 1×210 baselines kept one optimizer and a fixed
-base-model KL anchor), and the E epochs within a round replay that round's goal draw (the
-original re-drew goals every epoch: 210 draws vs 70 here). Compute- and dynamics-matched to
+base-model KL anchor). The E epochs within a round used to replay that round's goal draw;
+per-epoch resampling (`epoch_resample`, default on since 2026-07-23) restores a fresh draw
+every epoch — 210 distinct draws over T=70×E=3, matching the original's cadence
+([`bugfixes.md`](bugfixes.md) "per-epoch goal resampling"). Compute- and dynamics-matched to
 the federated arms, but the legacy paper baseline numbers are not exactly re-derivable on
 this stack; use the paper-reproduce branch for that.
 

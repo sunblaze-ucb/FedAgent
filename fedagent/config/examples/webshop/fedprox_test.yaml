@@ -1,7 +1,8 @@
 # FedProx HOOK TEST: 1 client, 1 round, 2 steps, mu=0.1, catalog_split.
-# Verifies the Ray worker_process_setup_hook applies fedagent.fedprox in the
-# actor-engine worker -- look for "[fedprox] enabled: proximal mu=0.1" in the
-# client training.log and that training proceeds normally. Cheap (~5 min).
+# Verifies the sitecustomize deferred-import hook (armed by FEDPROX_MU>0; see
+# fedagent/fedprox.py) applies the proximal patch in the actor-engine worker --
+# look for "[fedprox] enabled: proximal mu=0.1" in the client training.log and
+# that training proceeds normally. Cheap (~5 min).
 
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml

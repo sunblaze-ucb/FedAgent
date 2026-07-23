@@ -2,7 +2,8 @@
 # (catalog_split, 8 rounds) but with the FedProx proximal term enabled (mu>0). Pairs
 # directly with envhet_c4 (FedAvg, mu=0) to test the MITIGATION story: does the proximal
 # term recover the env-heterogeneity degradation (does it pull A back toward B/C)?
-# FedProx is injected non-fork via the Ray worker_process_setup_hook (fedagent/fedprox.py).
+# FedProx is injected non-fork via the sitecustomize deferred-import hook, armed by
+# FEDPROX_MU>0 (fedagent/fedprox.py; actor-only -- the PPO critic is never anchored).
 # Qwen2.5-1.5B @ 15 turns, 2 clients x 8 rounds, robust single-run recipe (n_gpus 4, pool 16).
 
 env_kind: webshop

@@ -61,8 +61,11 @@ federated training loop with **FedAvg** aggregation (plus optional client-side
 **FedProx**), a **two-level heterogeneity suite** (task vs environment partitioning),
 and federated **PPO/GRPO** trainers, built as a **thin overlay on stock
 [verl](https://github.com/volcengine/verl) 0.8** (no trainer fork: verl is imported as a
-library and driven through its public extension points). You can reproduce the paper's
-experiments or extend the framework with your own datasets, environments, and algorithms.
+library and driven through its public extension points). The paper's full experiment
+matrix is configured (176 configs; the GRPO arms are GPU-verified end-to-end, while
+PPO/decentralized/larger backbones are code-audited pending GPU smoke — see the
+[verification status](fedagent/docs/migration.md#verification-status)), and the framework
+is extensible with your own datasets, environments, and algorithms.
 
 FedAgent is the reference implementation for the paper, which formalizes agent
 heterogeneity at two structurally distinct levels (task vs environment) and derives an
