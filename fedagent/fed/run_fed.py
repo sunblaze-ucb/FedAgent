@@ -109,7 +109,10 @@ DEFAULTS = {
     "webshop_run_service": str(PKG_DIR / "envs" / "webshop" / "service" / "run_service.sh"),
     "webshop_base_port": 8080,              # client c's service -> webshop_base_port + c*replicas + j (K=1 -> +c)
     "webshop_pool_size": 8,                 # env pool per service (must be >= gen_batch)
-    "search_return_n": 200,                 # WEBSHOP_SEARCH_RETURN_N: BM25 top-K (paper=200; engine default 50 drops targets under env-het filtering)
+    "search_return_n": 50,                  # WEBSHOP_SEARCH_RETURN_N: BM25 top-K. 50 = the engine/original
+                                            #   default every NON-het baseline trained with; the paper scopes
+                                            #   200 to ENV-het arms ONLY (main.tex:1347) and those configs pin
+                                            #   it explicitly (200 keeps targets findable under catalog filtering)
     # --- env_kind=alfworld: per-client remote ALFWorld services + game-shard heterogeneity ---
     "alfworld_run_service": str(PKG_DIR / "envs" / "alfworld" / "service" / "run_service.sh"),
     "alfworld_base_port": 8200,             # client c's service -> alfworld_base_port + c*replicas + j
@@ -551,7 +554,7 @@ def start_webshop_services(cfg, env_base: dict, client_ids: Optional[List[int]] 
                 env.update({
                     "WEBSHOP_PORT": str(port),
                     "WEBSHOP_POOL_SIZE": str(per_pool),
-                    "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 200)),
+                    "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 50)),
                     # "" (uniform/decentralized/baseline families) maps to the original's
                     # 'uniform' per-client goal SHARD, same as the ALFWorld default below —
                     # NOT the full pool (the val service stays unsharded via its explicit "").
@@ -772,7 +775,7 @@ def start_val_service(cfg, env_base: dict) -> List[dict]:
             env.update({
                 "WEBSHOP_PORT": str(port),
                 "WEBSHOP_POOL_SIZE": str((-(-pool // reps) + 2) if reps > 1 else pool),
-                "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 200)),
+                "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 50)),
                 "WEBSHOP_SPLIT": "val",          # held-out goals[0:VAL_SIZE]
                 "PARTITION_STRATEGY": "",        # UNPERTURBED (no catalog/goal/variant skew)
                 "CLIENT_ID": "0", "CLIENT_NUM": "1",

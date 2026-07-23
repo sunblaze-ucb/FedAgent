@@ -21,6 +21,7 @@ save_freq: 4
 wait_between_clients: 8
 
 partition_strategy: catalog_split   # env heterogeneity (disjoint catalogs)
+search_return_n: 200        # ENV-het perturbs the catalog -> paper top-K (non-het default is 50)
 env_div: 0.7
 keep_ratio: 0.7
 min_goals_per_client: 100

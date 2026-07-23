@@ -21,6 +21,7 @@ save_freq: 4
 wait_between_clients: 8
 
 partition_strategy: lookalike          # env-variant V4: lookalike-injected catalog, UNIFORM goals
+search_return_n: 200        # ENV-het perturbs the catalog -> paper top-K (non-het default is 50)
 webshop_pool_size: 16
 webshop_base_port: 8108
 

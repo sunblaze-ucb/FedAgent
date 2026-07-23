@@ -31,6 +31,7 @@ wait_between_clients: 8                        # WebShop teardown is heavier; gi
 
 # --- env-level heterogeneity: Catalog Split (paper Variant 1) ---
 partition_strategy: catalog_split
+search_return_n: 200        # ENV-het perturbs the catalog -> paper top-K (non-het default is 50)
 env_div: 0.7                                  # heterogeneity strength
 keep_ratio: 0.7                               # distractor density
 min_goals_per_client: 100

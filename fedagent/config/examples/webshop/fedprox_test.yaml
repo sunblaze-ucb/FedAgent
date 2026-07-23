@@ -20,6 +20,7 @@ save_freq: 2
 wait_between_clients: 5
 
 partition_strategy: catalog_split
+search_return_n: 200        # ENV-het perturbs the catalog -> paper top-K (non-het default is 50)
 env_div: 0.7
 keep_ratio: 0.7
 min_goals_per_client: 100
