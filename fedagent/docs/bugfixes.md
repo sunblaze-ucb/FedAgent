@@ -39,6 +39,21 @@ on everything EXCEPT the critic loss chain, which was then hand-verified line by
    has NO 0.5 (`fork core_algos.py:542`) and instead divides each micro loss by the
    gradient-accumulation count (`fork dp_critic.py:243: loss = vf_loss / self.gradient_accumulation`).
 
+**Upstream confirmation (added 2026-07-23):** this is verl's OWN bug, not a migration artifact.
+The vendored `others/verl` is byte-clean upstream `verl-project/verl` @ `7aed6b2` (2026-06-01;
+the only local patch is the 2-line weight-transfer jobid change, different files), the 0.8
+engine refactor REMOVED the old `verl/workers/critic/dp_critic.py` (whose
+`/gradient_accumulation` was correct), and upstream fixed the regression themselves a month
+after our pin: `2eb020a` "[algo] fix: normalize critic value loss over the global mini-batch,
+not per micro-batch" (#6957, 2026-07-07) -- the fix passes dp_size/batch_num_tokens/
+global_batch_size into the critic's agg_loss "as the actor's ppo_loss does", i.e. the same
+mechanism as this overlay's `global_token_paper_coef` mode, but KEEPS the 0.5 (upstream
+convention). So even a verl upgrade past #6957 does not give paper parity -- `legacy_exact`
+remains necessary -- and it changes what the wrapper receives: rescaling the POST-fix
+value_loss would double-correct. `enable_critic_loss_parity` therefore carries a
+source-version guard (`_assert_stock_value_loss`) that refuses loudly on a post-#6957
+value_loss (locked by `tests/test_ppo_critic_loss.py::test_source_guard_rejects_post_6957_value_loss`).
+
 An independent counter-audit (`bugfix/ppo_critic_normalization_and_recipe_fidelity_audit.md`
 in the parent working area) reproduced the same chain and CORRECTED three earlier framings,
 all accepted after verification: (a) "effective critic lr 2e-5" is WRONG -- AdamW is

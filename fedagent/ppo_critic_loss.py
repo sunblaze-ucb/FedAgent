@@ -88,6 +88,30 @@ def _wrap_value_loss(mode: str, orig):
     return value_loss_parity
 
 
+def _assert_stock_value_loss(fn) -> None:
+    """Source-version guard: this wrapper assumes the PRE-#6957 stock value_loss (returns
+    0.5 x LOCAL per-micro token-mean). Upstream verl fixed the normalization itself in
+    2eb020a ("[algo] fix: normalize critic value loss over the global mini-batch, not per
+    micro-batch", #6957, 2026-07-07 -- after our pinned 7aed6b2): its value_loss consumes
+    dp_size/batch_num_tokens/global_batch_size exactly like ppo_loss. Rescaling THAT output
+    would double-correct, so refuse loudly on a post-fix verl (the modes then need
+    re-deriving: post-fix stock == global-token with the 0.5 kept)."""
+    import inspect
+
+    try:
+        src = inspect.getsource(fn)
+    except (OSError, TypeError):
+        return  # source unavailable (frozen/patched): fall through, the KeyError guard remains
+    if "batch_num_tokens" in src or "global_batch_info" in src:
+        raise RuntimeError(
+            "[critic-loss] this verl's value_loss ALREADY consumes the engine's global batch "
+            "info (upstream #6957 / 2eb020a or later) -- the legacy_exact/global_token rescale "
+            "would double-correct. Re-derive fedagent/ppo_critic_loss.py for this verl "
+            "(post-fix stock == global token-mean WITH the 0.5; legacy_exact then needs only "
+            "the coefficient + micro-weighting delta) before arming."
+        )
+
+
 def enable_critic_loss_parity(mode: str) -> bool:
     """Rebind verl.workers.utils.losses.value_loss to the parity wrapper. Idempotent."""
     global _PATCHED
@@ -95,6 +119,7 @@ def enable_critic_loss_parity(mode: str) -> bool:
         return False
     import verl.workers.utils.losses as _losses
 
+    _assert_stock_value_loss(_losses.value_loss)
     _losses.value_loss = _wrap_value_loss(mode, _losses.value_loss)
     _PATCHED = True
     print(f"[critic-loss] enabled: mode={mode} (verl.workers.utils.losses.value_loss wrapped; "

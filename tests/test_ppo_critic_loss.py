@@ -122,3 +122,21 @@ def test_missing_global_info_fails_closed():
         assert "global batch info" in str(e)
     else:
         raise AssertionError("expected RuntimeError when engine info is absent")
+
+
+def test_source_guard_rejects_post_6957_value_loss():
+    # upstream 2eb020a (#6957) makes value_loss consume the global batch info itself;
+    # rescaling that output would double-correct -> the guard must refuse loudly.
+    from fedagent.ppo_critic_loss import _assert_stock_value_loss
+
+    def post_fix_value_loss(config, model_output, data, dp_group=None):
+        batch_num_tokens = data["batch_num_tokens"]  # the post-#6957 signature marker
+        return batch_num_tokens, {}
+
+    try:
+        _assert_stock_value_loss(post_fix_value_loss)
+    except RuntimeError as e:
+        assert "double-correct" in str(e)
+    else:
+        raise AssertionError("expected RuntimeError for a post-#6957 value_loss")
+    _assert_stock_value_loss(_stock_value_loss)   # pre-fix shape passes
