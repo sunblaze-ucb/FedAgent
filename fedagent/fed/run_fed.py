@@ -328,6 +328,38 @@ def find_resume_round(cfg, is_ppo: bool):
     return 0, None, None
 
 
+def quarantine_stale_rounds(cfg, last_complete: int) -> None:
+    """RESUME hygiene: rename round dirs ABOVE the last completed round out of the way
+    (-> _stale_rounds/round_K.N) before re-running them. A crashed attempt leaves partial
+    artifacts there (client checkpoints, logs, eval dumps); the re-run re-trains from
+    scratch (trainer.resume_mode=disable), but the checkpoint scan (latest_actor_dir)
+    picks the HIGHEST global_step holding shards -- if the attempts' step counts differ
+    (config tweaked between attempts, epoch_resample flipped), the dead attempt's
+    higher-step checkpoint would win the scan and PRE-CRASH weights would be FedAvg'd.
+    Renaming the whole dir aside guarantees every re-run round starts empty. Renamed, not
+    deleted (crash forensics; the log flags them safe to delete). Every summary/eval
+    re-reader addresses exact ``round_<k>`` paths (no round_* glob anywhere), so archived
+    attempts can never leak back into curves. Side effect by design: --fresh into a
+    populated output_dir archives ALL its prior rounds this way instead of interleaving
+    two runs' artifacts in one tree."""
+    out = Path(cfg.output_dir)
+    if not out.is_dir():
+        return
+    for d in sorted(out.glob("round_*")):
+        tail = d.name[len("round_"):]
+        if not tail.isdigit() or int(tail) <= last_complete:
+            continue
+        dest_root = out / "_stale_rounds"
+        dest_root.mkdir(exist_ok=True)
+        n = 0
+        while (dest_root / f"{d.name}.{n}").exists():
+            n += 1
+        dest = dest_root / f"{d.name}.{n}"
+        d.rename(dest)
+        log(f"RESUME: quarantined incomplete {d.name}/ -> {dest.relative_to(out)}/ "
+            f"(partial artifacts of a crashed attempt; safe to delete)")
+
+
 def seed_prior_histories(cfg, start_round: int):
     """RESUME: rebuild the pre-resume rounds (< start_round) of the summary's val_curve /
     client_curve / rounds so a resumed run's federated_summary.json is COMPLETE (the paper
@@ -464,6 +496,45 @@ def _wait_signal(path: Path, proc: BgProc, what: str, poll_s: float = 2.0,
         waited += poll_s
         if timeout and waited > timeout:
             raise RuntimeError(f"timed out ({timeout:.0f}s) waiting for {what}")
+
+
+def _wait_launch_port_retry(proc: BgProc, mk_proc, done_path: Path, what: str,
+                            log_path: Path, xdir: Path) -> BgProc:
+    """``_wait_signal`` for a worker launched THIS call, with ONE relaunch iff it died at
+    startup and its log tail carries a port-collision signature -- the BgProc twin of
+    ``stream_port_retry`` (see fedagent/port_band.py; before this, a launch-time collision
+    on the cross-round/lane paths killed the whole run and cost a full outer-loop resume).
+    Launch-time only by design: a port collision strikes at engine init, before any client
+    trains, so a fresh launch (same cmd/env via ``mk_proc``) re-probes and clears it. A
+    worker dying in a LATER round is NOT retried -- its launch cmd bakes the launch round's
+    model_path, so a mid-run relaunch would train from stale weights; that path stays
+    fail-fast (the outer resume re-enters the round cleanly). ``mk_proc`` must also
+    re-register the new proc wherever teardown looks for it (xstate/lane dict), so a
+    failing RETRY still gets stopped by the caller's finally. Returns the proc that
+    produced the done signal."""
+    from fedagent.port_band import port_collision_in_log
+
+    try:
+        _wait_signal(done_path, proc, what)
+        return proc
+    except RuntimeError:
+        if proc.alive():
+            raise                      # timeout with a live worker -- not a launch death
+        try:
+            proc.wait(timeout=10)      # join the log pump so the tail is fully on disk
+        except Exception:
+            pass
+        if not port_collision_in_log(log_path):
+            raise
+        import shutil as _sh
+        _sh.move(str(log_path), f"{log_path}.portfail")
+        log(f"[warn] {what}: worker died at launch with a port-collision signature; "
+            f"relaunching once (failed log -> {log_path}.portfail)")
+        for stale in [*xdir.glob("go_*"), *xdir.glob("done_*"), xdir / "stop"]:
+            stale.unlink(missing_ok=True)
+        proc = mk_proc()
+        _wait_signal(done_path, proc, f"{what} [retry]")
+        return proc
 
 
 def _stop_one_xround(proc, xdir, tag: str) -> None:
@@ -1046,7 +1117,8 @@ def _port_band_env(cfg, slot: int) -> dict:
     trainer/eval (see DEFAULTS ``port_band_base``; mechanism in fedagent/port_band.py).
     ``slot`` must be unique among CONCURRENT verl processes: persistent lane l -> l;
     subprocess client -> its position in the round's selection; global eval -> 30;
-    client-circle eval -> 31 (circles are sequential among themselves). {} when disabled."""
+    client-circle eval -> 31 (circles are sequential among themselves); FedAvg
+    aggregator rendezvous -> 32 (_agg_rdzv_args). {} when disabled."""
     base = int(cfg.get("port_band_base", 26000) or 0)
     if base <= 0:
         return {}
@@ -1361,14 +1433,25 @@ def _run_round_lanes(cfg, round_num: int, selected: List[int], model_path: str, 
             log(f"lane {l}: launching long-lived worker on GPU(s) [{gpus}] "
                 f"(clients {selected[l::P]}, {per} GPUs)")
             proc = BgProc(cmd, env, log_path, tag=f"xround-l{l}")
-            lanes.append({"lane": l, "proc": proc, "xdir": xdir, "log": log_path})
+            # cmd/env retained for the one-shot launch-collision relaunch (_wait_launch_port_retry)
+            lanes.append({"lane": l, "proc": proc, "xdir": xdir, "log": log_path,
+                          "cmd": cmd, "env": env})
         xstate["lanes"] = lanes
         # lane 0 doubles as the primary handle for the shared paths (hot final eval, liveness)
         xstate["proc"], xstate["xdir"], xstate["log"] = \
             lanes[0]["proc"], lanes[0]["xdir"], lanes[0]["log"]
         for i, l in enumerate(lane_ids):
-            _wait_signal(lanes[i]["xdir"] / f"done_{round_num}", lanes[i]["proc"],
-                         f"round {round_num} lane {l} done")
+            ln = lanes[i]
+
+            def _mk(ln=ln, l=l) -> BgProc:
+                p = BgProc(ln["cmd"], ln["env"], ln["log"], tag=f"xround-l{l}")
+                ln["proc"] = p        # keep teardown (xstate["lanes"]) pointed at the LIVE proc
+                return p
+
+            ln["proc"] = _wait_launch_port_retry(ln["proc"], _mk, ln["xdir"] / f"done_{round_num}",
+                                                 f"round {round_num} lane {l} done",
+                                                 ln["log"], ln["xdir"])
+        xstate["proc"] = lanes[0]["proc"]   # re-point the primary if lane 0 was relaunched
 
     results = {}
     for c in selected:
@@ -1462,10 +1545,16 @@ def run_round_persistent(cfg, round_num: int, selected: List[int], model_path: s
             env["FEDAGENT_CROSS_ROUND"] = "1"
             env["FEDAGENT_XROUND_DIR"] = str(xdir)
             env["FEDAGENT_XROUND_START_ROUND"] = str(round_num)
-            proc = BgProc(cmd, env, log_path, tag="xround-persist")
-            xstate["proc"], xstate["xdir"], xstate["log"] = proc, xdir, log_path
+            def _mk() -> BgProc:
+                p = BgProc(cmd, env, log_path, tag="xround-persist")
+                xstate["proc"] = p        # keep teardown pointed at the LIVE proc (retry included)
+                return p
+
+            proc = _mk()
+            xstate["xdir"], xstate["log"] = xdir, log_path
             log(f"cross-round: launched long-lived worker (start round {round_num}); awaiting it")
-            _wait_signal(xdir / f"done_{round_num}", proc, f"round {round_num} done")
+            proc = _wait_launch_port_retry(proc, _mk, xdir / f"done_{round_num}",
+                                           f"round {round_num} done", log_path, xdir)
         else:
             rc = stream_port_retry(cmd, env, log_path, tag=f"r{round_num}-persist")
             if rc != 0:
@@ -1500,6 +1589,33 @@ def run_round_persistent(cfg, round_num: int, selected: List[int], model_path: s
     return results
 
 
+# FedAvg aggregator's dedicated port-band slot: clients/lanes use 0..P-1, evals 30/31. It
+# needs its own because an eval_mode=parallel async eval (slot 30) can still be running
+# when the next round's aggregation starts.
+AGG_BAND_SLOT = 32
+
+
+def _agg_rdzv_args(cfg) -> List[str]:
+    """Rendezvous args for the FedAvg torchrun. Band enabled: draw a --master_port from the
+    aggregator's own band slot -- ``--standalone`` picks a random EPHEMERAL rendezvous port
+    per aggregation (1-2 draws x every round), one of the pickers the band did not cover
+    (docs/bugfixes.md residual list; a field run lost a round at ~r43 to exactly this
+    class). The draw happens driver-side; the probe cursor rotation (probe_in_band) means
+    the caller's relaunch gets a FRESH port, not a re-race of the same one. Band disabled:
+    keep --standalone (fresh random draw per launch, so the relaunch still helps)."""
+    band = _port_band_env(cfg, AGG_BAND_SLOT).get("FEDAGENT_PORT_BAND")
+    if not band:
+        return ["--standalone"]
+    from fedagent.port_band import probe_in_band
+    start, stride = (int(x) for x in band.split(":"))
+    try:
+        port = probe_in_band(start, stride)
+    except RuntimeError as e:
+        log(f"[warn] fedavg rendezvous: {e}; falling back to --standalone")
+        return ["--standalone"]
+    return [f"--master_port={port}"]   # --master_addr defaults to 127.0.0.1 (single node)
+
+
 def fedavg(cfg, round_num: int, client_dirs: List[Path], env_base: dict,
            kind: str = "actor") -> Path:
     """FedAvg the clients' ``kind`` shards (actor|critic) under a matched-ws PG; return the
@@ -1512,26 +1628,39 @@ def fedavg(cfg, round_num: int, client_dirs: List[Path], env_base: dict,
 
     agg = (Path(cfg.output_dir) / f"round_{round_num}" / "aggregated"
            / "checkpoints" / "global_step_0" / kind)
-    cmd = [
-        "torchrun", "--standalone", f"--nproc_per_node={ws}", str(AGGREGATOR),
-        "--phase", "aggregate",
-        "--client-actor-dirs", ",".join(str(a) for a in client_dirs),
-        "--output-actor-dir", str(agg),
-        "--global-step", "0",
-    ]
-    if cfg.weights:
-        cmd += ["--weights", cfg.weights]
     log_path = Path(cfg.output_dir) / f"round_{round_num}" / "aggregated" / f"aggregate_{kind}.log"
-    # --standalone gives this torchrun its OWN rendezvous (a free port, not the default
-    # localhost:29500), so concurrent FedAvg aggregations on one node -- parallel clients,
-    # or two run_fed experiments sharing a node -- don't collide on 29500 (one would die
-    # rc=1 mid-aggregate). Clear any inherited torch-distributed env so it cannot override
-    # --standalone's auto-assigned port. Affects only the aggregator's comm port: the FedAvg
-    # math, rollout, and eval are untouched. (PPO critic FedAvg routes through here too.)
+    # Rendezvous: a banded --master_port when the port band is on (_agg_rdzv_args), else
+    # --standalone gives this torchrun its OWN random-port rendezvous (not the default
+    # localhost:29500), so two run_fed experiments sharing a node don't collide on 29500
+    # (one would die rc=1 mid-aggregate). Clear any inherited torch-distributed env so it
+    # cannot override the chosen rendezvous. Affects only the aggregator's comm port: the
+    # FedAvg math, rollout, and eval are untouched. (PPO critic FedAvg routes through here
+    # too.) Either way the draw has a probe->bind TOCTOU window, so one relaunch on a
+    # collision signature rebuilds the cmd with a FRESH port (banded: the probe cursor
+    # advanced; --standalone: torchrun redraws).
     agg_env = dict(env_base)
     for _k in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE", "LOCAL_RANK"):
         agg_env.pop(_k, None)
-    rc = stream(cmd, agg_env, log_path, tag=f"agg-{kind}-r{round_num}")
+    for attempt in (1, 2):
+        cmd = [
+            "torchrun", *_agg_rdzv_args(cfg), f"--nproc_per_node={ws}", str(AGGREGATOR),
+            "--phase", "aggregate",
+            "--client-actor-dirs", ",".join(str(a) for a in client_dirs),
+            "--output-actor-dir", str(agg),
+            "--global-step", "0",
+        ]
+        if cfg.weights:
+            cmd += ["--weights", cfg.weights]
+        rc = stream(cmd, agg_env, log_path, tag=f"agg-{kind}-r{round_num}")
+        if rc == 0 or attempt == 2:
+            break
+        from fedagent.port_band import port_collision_in_log
+        if not port_collision_in_log(log_path):
+            break
+        import shutil as _sh
+        _sh.move(str(log_path), f"{log_path}.portfail")
+        log(f"[warn] agg-{kind}-r{round_num}: port-collision signature (rc={rc}); relaunching "
+            f"once on a fresh port (failed log -> {log_path}.portfail)")
     if rc != 0:
         raise RuntimeError(f"FedAvg {kind} round {round_num} FAILED (rc={rc}); see {log_path}")
     if not list(agg.glob("model_world_size_*_rank_*.pt")):
@@ -1887,6 +2016,11 @@ def run(cfg) -> dict:
                     log(f"RESUME: carried {len(_ph)} round record(s) into the summary; worker "
                         f"teardown re-derives val points/circles from the on-disk dumps "
                         f"(resumed_from_round={_k})")
+
+        # RESUME hygiene: archive partial artifacts of any round above the last completed
+        # one so every re-run round starts from an empty dir (quarantine_stale_rounds --
+        # else a dead attempt's higher-step checkpoint could win latest_actor_dir's scan).
+        quarantine_stale_rounds(cfg, start_round - 1)
 
         # round-0 point: the base model on the unperturbed val set (paper val_before_train)
         if do_eval and cfg.val_before_train and start_round == 1:

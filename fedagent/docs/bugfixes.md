@@ -5,6 +5,47 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-23: RESUME could FedAvg a dead attempt's checkpoint — a re-run round inherited the crashed attempt's partial artifacts, and `latest_actor_dir` picks the HIGHEST global_step
+
+- **Files:** `fedagent/fed/run_fed.py` (`quarantine_stale_rounds` + its call right after
+  the resume scan in `run()`); offline regression in `tests/test_launch_reliability.py`.
+- **Severity:** latent correctness. Never observed corrupting a run — in the common case
+  (crash + re-run under the SAME config) the re-run saves at the same step numbers and
+  overwrites the dead attempt's files, so the scan picks the fresh checkpoint. The hole
+  needs a step-count change between attempts to open (see below), which is exactly what
+  happens when someone tweaks a config after a crash before relaunching.
+
+### Mechanism
+
+Round-level resume (`find_resume_round`) treats `round_k/aggregated/hf` as the completion
+marker and re-runs everything above the last complete round. The re-run itself is clean —
+clients pass `trainer.resume_mode=disable`, so verl never loads a partial checkpoint. But
+the crashed attempt's `round_K/` dir stayed in place, and the post-training scan
+(`latest_actor_dir`) returns the highest `global_step_N` that holds FSDP shards:
+
+- Attempts with EQUAL step counts: same step numbers → dead attempt's files overwritten →
+  correct result (why this never bit in practice).
+- Attempt 2 with FEWER steps (config tweaked between attempts: `total_training_steps`
+  lowered, `epochs_per_round`/`epoch_resample` changed, dataset shrunk): the dead
+  attempt's higher-step checkpoint SURVIVES next to the fresh lower-step one, wins the
+  scan, and its PRE-CRASH weights get FedAvg'd into the round — silently, since the shards
+  are complete and well-formed. Same exposure for the stale critic dir (PPO), stale eval
+  dumps, and stale `training.log`-derived metrics.
+
+### Fix
+
+`quarantine_stale_rounds(cfg, start_round - 1)` runs right after the resume scan: every
+`round_j` dir with `j > last_complete` is RENAMED to `_stale_rounds/round_j.N` (N bumps on
+repeated crashes; rename not delete — crash forensics; the log flags them safe to delete).
+Every re-run round therefore starts from an empty dir, killing the whole class (stale
+checkpoints, partial shard sets, stale eval dumps/metrics) rather than the one symptom.
+Safety notes: `round_0` (base-eval dir) is never archived; consumers all address exact
+`round_<k>` paths (verified: no `round_*` glob in the package), so archived dirs cannot
+leak back into curves; `--fresh` into a populated `output_dir` now archives ALL prior
+rounds aside instead of interleaving two runs' artifacts in one tree. This also hardens
+the port-collision recovery path (entry below), which is precisely a die → resume →
+re-run-the-round cycle.
+
 ## 2026-07-23: port-band regression (same-day fix): ONE static VLLM_PORT per job made every concurrent vLLM replica race the same start → deterministic EADDRINUSE at engine init
 
 - **Files:** `fedagent/port_band.py` (`assign_vllm_port` per-process pid-salted assignment;
@@ -70,16 +111,53 @@ Residuals that CANNOT be zeroed at this layer (accepted, with coverage notes):
 1. **pid-salt collisions**: `(pid·7919) % 42` is a bijection on any 42-consecutive-pid
    window (7919 coprime to 42), so near-simultaneously spawned replicas always get
    distinct starts; two pids exactly a multiple of 42 apart still share one. Covered by
-   `stream_port_retry` on the subprocess-client and single-persistent paths; NOT
-   auto-retried on parallel lanes / cross-round (round-level resume is the backstop
-   there) — a deliberate scope line, not an oversight.
+   `stream_port_retry` on the subprocess-client and single-persistent paths, and (round-2
+   hardening below) by `_wait_launch_port_retry` on the cross-round/lane LAUNCH; a
+   long-lived worker dying in a later round stays fail-fast (its relaunch cmd would bake
+   the launch round's stale model_path) — round-level resume is the backstop there.
 2. **The probe-close → real-bind TOCTOU** itself: only vLLM/torch handing over BOUND
    sockets could remove it. Inside a private per-slot band the only realistic squatter
-   is another tenant explicitly binding 26000-29199 — pick `port_band_base` away from
+   is another tenant explicitly binding 26000-29299 — pick `port_band_base` away from
    locally-used service ranges if that ever happens.
-3. **The FedAvg aggregator's `torchrun --standalone` rendezvous port** is still a stock
-   ephemeral draw (short-lived, strictly sequential, one per round) — left unpinned;
-   a collision there fails the round loudly and `resume` re-runs it.
+3. ~~The FedAvg aggregator's `torchrun --standalone` rendezvous port~~ — CLOSED by the
+   round-2 hardening below (banded `--master_port` + one relaunch on a fresh port).
+   Remaining unpinned pickers: **Ray internals** (gcs/raylet/worker ports — pinning them
+   means threading port ranges through verl's internal `ray.init()`; not worth the new
+   config surface at the observed ~1 collision/40 rounds with self-healing recovery).
+
+### Round-2 hardening (same day, after a field RANDOM-ephemeral collision at ~round 43 of a 70-round run)
+
+A run on the field machine lost ~10 min to a collision on port 32859 — ephemeral range,
+i.e. a draw the band never covered (band disabled by the operator's `port_band_base: 0`
+workaround, and/or one of the residual pickers above). Training self-healed exactly as
+designed (outer babysit loop → `resume` → re-run round 43), but for 70-round unattended
+runs the remaining exposure was worth shrinking:
+
+- **FedAvg aggregator banded + retried** (`run_fed._agg_rdzv_args`, slot 32 — its own
+  slot because an `eval_mode=parallel` async eval of round r can still be running when
+  round r+1 aggregates): `torchrun --standalone` drew a random EPHEMERAL rendezvous port
+  1-2× per round with NO retry — a collision failed the round and cost a full
+  resume re-run. Now: band on → `--master_port=<probe_in_band(slot 32)>`; band off →
+  `--standalone` kept. Either way the launch loop relaunches ONCE on a collision
+  signature, rebuilding the cmd so the retry gets a FRESH port (banded: the probe cursor
+  advanced; standalone: torchrun redraws). Band-exhausted falls back OPEN to
+  `--standalone` (aggregation must not die because the band is busy; the trainer-side
+  probe stays fail-closed).
+- **Cross-round / lane workers: one-shot LAUNCH relaunch** (`_wait_launch_port_retry`,
+  the `BgProc` twin of `stream_port_retry`): a port collision strikes at engine init,
+  before any client trains, so relaunching the same cmd/env is always safe there. The
+  relaunch re-registers the new proc in `xstate` first, so a failing retry still gets
+  torn down by the run's `finally`. Failed log → `<log>.portfail`, stale
+  `go_*`/`done_*`/`stop` signals cleared pre-relaunch.
+- **RESUME quarantines incomplete rounds** — see the stale-round entry above this one:
+  the collision-recovery path (die → resume → re-run round) is exactly the path that
+  used to leave a dead attempt's partial artifacts in the re-run round's dir.
+
+Offline regression: `tests/test_launch_reliability.py` (5) — banded slot-32 rendezvous
+args + rotation across draws, fail-open on exhausted band / band off, quarantine
+semantics (archive-above-last-complete, suffix on re-crash, `round_0` never archived),
+real-`BgProc` relaunch on a signature death (forensics + signal hygiene asserted), and
+re-raise without relaunch on a non-port death.
 
 ## 2026-07-23: vLLM/verl random-port collisions: per-round trainer rebuilds redraw ephemeral listen ports → occasional "Address already in use" kills the round on shared-netns hosts
 
@@ -134,8 +212,9 @@ against the installed vLLM 0.11.0 and the pinned verl:
 1. **Private port bands, outside the ephemeral range.** run_fed gives every launched
    trainer/eval process `FEDAGENT_PORT_BAND="<start>:<stride>"` with
    `start = port_band_base + slot*stride` (default 26000 + slot×100; slots: persistent
-   lane l, subprocess client = position in the round, global eval 30, circle eval 31 —
-   unique among CONCURRENT processes; max 29200 < 32768). sitecustomize rebinds verl's
+   lane l, subprocess client = position in the round, global eval 30, circle eval 31,
+   FedAvg aggregator rendezvous 32 — unique among CONCURRENT processes;
+   max 29300 < 32768). sitecustomize rebinds verl's
    `_get_free_port` to probe INSIDE the band (fail-closed if the band is exhausted — a
    silent fallback to the lottery would resurrect the bug unobserved), and `VLLM_PORT` is
    set to the band midpoint so vLLM's native upward probing works the upper half. The
@@ -148,17 +227,22 @@ against the installed vLLM 0.11.0 and the pinned verl:
    matches `Address already in use` / `EADDRINUSE` / `DistNetworkError` (deliberately NOT
    vllm's benign "Port X is already in use, trying port X+1" probe line). The failed log
    is preserved as `<log>.portfail`; the retry rewrites the canonical path so metrics
-   parsing and checkpoint scans are unaffected. Cross-round lanes are not retried (a
-   long-lived worker's death mid-stream is what round-level resume is for).
+   parsing and checkpoint scans are unaffected. Cross-round/lane workers get the same
+   one-shot treatment at LAUNCH only (`_wait_launch_port_retry`, round-2 hardening in the
+   entry above); a long-lived worker's death in a later round is what round-level resume
+   is for.
 
 `port_band_base: 0` restores stock random ports (A/B or if 26000-29999 is contested on
 some host).
 
 ### Verification
 
-- `tests/test_port_band.py` (4, offline): probing returns the first free port and skips a
-  live squatter; exhausted band fails closed; env parsing; the signature matcher fires on
-  the real torch error text and NOT on vllm's benign probe line.
+- `tests/test_port_band.py` (6, offline): salted probing returns the expected start and
+  skips a live squatter; consecutive draws rotate; exhausted band fails closed; env
+  parsing; pid-salted `VLLM_PORT` assignment overrides an inherited static value; the
+  signature matcher fires on the real torch error text (and Ray's lowercase variant) and
+  NOT on vllm's benign probe line. Plus `tests/test_launch_reliability.py` (5) for the
+  round-2 hardening layer (aggregator rendezvous / launch relaunch / quarantine).
 - Real-verl rebind exercised in `fedagent-verl08`: `WorkerHelper._get_free_port()` draw
   lands in-band (26000), idempotent re-arm refused.
 
