@@ -1052,8 +1052,12 @@ def _port_band_env(cfg, slot: int) -> dict:
         return {}
     stride = max(int(cfg.get("port_band_stride", 100) or 100), 8)
     start = base + slot * stride
-    return {"FEDAGENT_PORT_BAND": f"{start}:{stride}",   # verl _get_free_port -> lower half
-            "VLLM_PORT": str(start + stride // 2)}       # vLLM probes upward from midpoint
+    # NO static VLLM_PORT here: one shared value made every concurrent vLLM replica of the
+    # job (one per GPU at TP<world) probe upward from the SAME start and win the same port
+    # -> deterministic EADDRINUSE at engine init (2026-07-23 field regression). Each process
+    # instead pid-salts its own VLLM_PORT inside the band's upper half at sitecustomize time
+    # (fedagent/port_band.py assign_vllm_port).
+    return {"FEDAGENT_PORT_BAND": f"{start}:{stride}"}
 
 
 def stream_port_retry(cmd, env, log_path, tag: str) -> int:

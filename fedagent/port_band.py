@@ -75,16 +75,36 @@ def _parse_band():
     return start, span
 
 
-def probe_in_band(start: int, span: int) -> int:
-    """First bindable port in [start, start+span) -- the banded replacement for a bare
-    bind(("", 0)) draw. Raises (fail-closed) if the whole band is occupied: silently
-    falling back to the ephemeral lottery would resurrect the bug unobserved."""
+_CURSORS: dict = {}   # (start, span) -> next probe offset (per process)
+
+
+def probe_in_band(start: int, span: int, salt=None) -> int:
+    """A bindable port in [start, start+span) -- the banded replacement for a bare
+    bind(("", 0)) draw. Two hardenings over naive first-free scanning (2026-07-23
+    regression fix, docs/bugfixes.md "port-band same-start race"):
+
+    - the scan STARTS at a per-process pid-salted offset (``salt``), so concurrent
+      processes sharing one band (e.g. Ray workers of the same trainer) probe from
+      DIFFERENT starting points instead of all racing the first free port;
+    - a per-process rotating cursor advances past every returned port, so consecutive
+      draws differ even while the earlier port is probed-but-not-yet-bound (the
+      probe socket closes before the consumer binds -- first-free would hand the
+      SAME port out twice).
+
+    Raises (fail-closed) if the whole band is occupied: silently falling back to the
+    ephemeral lottery would resurrect the original bug unobserved."""
     import socket
 
-    for port in range(start, start + span):
+    key = (start, span)
+    cur = _CURSORS.get(key)
+    if cur is None:
+        cur = ((os.getpid() * 7919) if salt is None else salt) % span
+    for k in range(span):
+        port = start + (cur + k) % span
         try:
             with socket.socket() as sock:
                 sock.bind(("", port))
+                _CURSORS[key] = (cur + k + 1) % span
                 return sock.getsockname()[1]
         except OSError:
             continue
@@ -92,6 +112,27 @@ def probe_in_band(start: int, span: int) -> int:
         f"[port-band] no free port in [{start}, {start + span}) -- band exhausted; "
         f"raise port_band_stride or clear stale listeners on this host."
     )
+
+
+def assign_vllm_port() -> bool:
+    """Give THIS process its own pid-salted VLLM_PORT inside the band's upper half,
+    OVERRIDING any inherited value. The 4a85d12 design exported one static VLLM_PORT
+    per launched job -- but verl's rollout starts one vLLM replica PER GPU (TP<world)
+    concurrently, all inheriting that same value, and vLLM's upward probing closes its
+    probe socket before the engine binds: every replica probed the same start and won
+    the same port -> deterministic EADDRINUSE at engine init (observed in the field at
+    round-1 init on a 4-GPU run). sitecustomize runs in every process (driver, Ray
+    workers, spawned engine cores), so assigning here spreads the replicas' starting
+    points; vLLM's own probing handles the rest."""
+    band = _parse_band()
+    if band is None:
+        return False
+    start, span = band
+    half = max(1, span // 2)
+    headroom = 8                                  # room to probe upward past the salt
+    salt = (os.getpid() * 7919) % max(1, half - headroom)
+    os.environ["VLLM_PORT"] = str(start + half + salt)
+    return True
 
 
 def enable_port_band() -> bool:
@@ -123,6 +164,7 @@ def install_deferred_port_band_patch() -> bool:
 
     if _parse_band() is None or _PATCHED:
         return False
+    assign_vllm_port()   # per-process pid-salted VLLM_PORT (see its docstring; 4a85d12 regression fix)
     TARGET = "verl.single_controller.base.worker"
     if TARGET in sys.modules:
         return enable_port_band()

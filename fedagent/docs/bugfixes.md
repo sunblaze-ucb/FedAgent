@@ -5,7 +5,59 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-23: port-band regression (same-day fix): ONE static VLLM_PORT per job made every concurrent vLLM replica race the same start → deterministic EADDRINUSE at engine init
+
+- **Files:** `fedagent/port_band.py` (`assign_vllm_port` per-process pid-salted assignment;
+  `probe_in_band` pid-salted start + rotating cursor); `fedagent/fed/run_fed.py`
+  (`_port_band_env` no longer injects a static `VLLM_PORT`); `tests/test_port_band.py`
+  (+2 tests, 6 total). Regression introduced by `4a85d12` earlier the same day.
+- **Severity:** availability — with `port_band_base` on (the default) and `n_gpus > TP`,
+  round-1 engine init fails deterministically. Found in the field: a 4-GPU FedAgent run
+  died at round-1 vLLM init with EADDRINUSE on 26050 (slot-0 band midpoint), immediately
+  after pulling `4a85d12`.
+
+### How it was found / mechanism
+
+The banding design gave each launched JOB one band and exported one static
+`VLLM_PORT = band midpoint` into its env. What it missed: verl's rollout starts **one
+vLLM replica per GPU** (at `TP < world`, e.g. the paper's 4×TP1 shape = 4 replicas),
+concurrently, all inheriting that same env — and vLLM's `VLLM_PORT` probing
+(`_get_open_port`: bind-test upward from the start, **close the probe socket**, hand the
+number to the engine which binds later) means simultaneous probers starting from the
+SAME value all "win" the same port before any of them binds it. The original ephemeral
+lottery collided occasionally; the shared-start band collided **every time** there was
+more than one replica. A second, latent in-process flavor: `probe_in_band` (verl's
+picker) scanned first-free from the band start every call, so two draws before the first
+consumer bound its port returned the same number twice.
+
+The field workaround (`port_band_base: 0`) was sound: it disables banding but keeps
+`stream_port_retry`, which is independent — the original occasional collision stays
+self-healing.
+
+### Fix
+
+- `assign_vllm_port()`: each PROCESS (sitecustomize runs in the driver, every Ray
+  worker, and spawned engine cores) computes its own `VLLM_PORT = band_upper_half +
+  (pid*7919) % (half-8)`, **overriding** the inherited value — concurrent replicas now
+  probe upward from spread-out starts; vLLM's native probing handles the rest.
+- `probe_in_band()`: scan starts at a pid-salted offset (cross-process spread) and a
+  per-process rotating cursor advances past every returned port (consecutive draws
+  differ even while earlier ports are probed-but-unbound).
+- `_port_band_env` exports only `FEDAGENT_PORT_BAND`; no static `VLLM_PORT`.
+
+### Verification
+
+`tests/test_port_band.py` (6): salted start honored, squatter skipped, consecutive
+draws differ WITHOUT binding, exhausted band fails closed, `assign_vllm_port` lands in
+the upper half + overrides a stale static value + distinct pids get distinct starts.
+Field re-enable: pull, drop the `port_band_base: 0` override, relaunch.
+
 ## 2026-07-23: vLLM/verl random-port collisions: per-round trainer rebuilds redraw ephemeral listen ports → occasional "Address already in use" kills the round on shared-netns hosts
+
+> **Regression note (fixed same day):** the version of this fix shipped in `4a85d12`
+> exported ONE static `VLLM_PORT` per job — with multiple rollout replicas (`n_gpus>TP`)
+> they all raced the same start and died at engine init. See the entry directly above
+> for the per-process pid-salted redesign; the description below is otherwise current.
 
 - **Files:** new `fedagent/port_band.py` (band probing + verl `_get_free_port` rebind +
   deferred hook + collision-signature matcher); `sitecustomize.py` (5th arming block, gated

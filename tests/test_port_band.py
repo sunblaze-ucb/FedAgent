@@ -15,8 +15,10 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from fedagent.port_band import (  # noqa: E402
+    _CURSORS,
     PORT_COLLISION_SIGS,
     _parse_band,
+    assign_vllm_port,
     port_collision_in_log,
     probe_in_band,
 )
@@ -41,16 +43,32 @@ def _free_base(span: int = 8) -> int:
     pytest.skip("no quiet band available on this host")
 
 
-def test_probe_returns_first_free_and_skips_occupied():
+def test_probe_returns_salted_start_and_skips_occupied():
     base = _free_base()
-    assert probe_in_band(base, 8) == base            # empty band -> first port
+    _CURSORS.clear()
+    assert probe_in_band(base, 8, salt=0) == base    # empty band, salt 0 -> first port
+    _CURSORS.clear()
     with socket.socket() as squat:
         squat.bind(("", base))                       # occupy the first port
-        assert probe_in_band(base, 8) == base + 1    # probing skips it
+        assert probe_in_band(base, 8, salt=0) == base + 1    # probing skips it
+    _CURSORS.clear()
+    assert probe_in_band(base, 8, salt=3) == base + 3   # pid-salt spreads process starts
+
+
+def test_consecutive_draws_differ_even_before_binding():
+    # the probe socket closes before the CONSUMER binds; without the rotating cursor a
+    # second draw would hand out the SAME still-unbound port (the 2026-07-23 same-start
+    # regression class, in-process flavor).
+    base = _free_base()
+    _CURSORS.clear()
+    a = probe_in_band(base, 8, salt=0)
+    b = probe_in_band(base, 8, salt=0)
+    assert a == base and b == base + 1 and a != b
 
 
 def test_probe_fails_closed_when_band_exhausted():
     base = _free_base()
+    _CURSORS.clear()
     s1, s2 = socket.socket(), socket.socket()
     try:
         s1.bind(("", base))
@@ -59,6 +77,21 @@ def test_probe_fails_closed_when_band_exhausted():
             probe_in_band(base, 2)
     finally:
         s1.close(), s2.close()
+
+
+def test_assign_vllm_port_salted_upper_half(monkeypatch):
+    monkeypatch.setenv("FEDAGENT_PORT_BAND", "26000:100")
+    monkeypatch.setenv("VLLM_PORT", "26050")     # stale static value MUST be overridden
+    monkeypatch.setattr(os, "getpid", lambda: 12345)
+    assert assign_vllm_port() is True
+    v = int(os.environ["VLLM_PORT"])
+    assert 26050 <= v < 26092                    # upper half, probing headroom respected
+    assert v == 26050 + (12345 * 7919) % 42
+    monkeypatch.setattr(os, "getpid", lambda: 12346)
+    assign_vllm_port()                           # distinct pid -> distinct start (the
+    assert int(os.environ["VLLM_PORT"]) != v     # regression was ONE start shared by all)
+    monkeypatch.delenv("FEDAGENT_PORT_BAND")
+    assert assign_vllm_port() is False           # no band -> untouched
 
 
 def test_parse_band_env(monkeypatch):
