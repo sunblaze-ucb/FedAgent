@@ -78,8 +78,10 @@ def _action_history(memory: List[Dict[str, str]], history_length: int) -> tuple[
     """Format the last ``history_length`` (obs, action) pairs exactly like env_manager.
 
     Returns (action_history_text, valid_history_length). ``memory`` entries are
-    ``{"text_obs": <raw obs BEFORE the action>, "action": <action text>}`` — the raw obs,
-    matching legacy ``pre_text_obs``.
+    ``{"text_obs": <obs BEFORE the action>, "action": <action text>}`` — the obs exactly as
+    the legacy fed manager stored ``pre_text_obs``: for WebShop that is the ``format_obs``
+    output (prefix-stripped, parts single-quoted — see webshop_env._format_obs), for
+    ALFWorld the raw text (its fed manager has no format hook).
     """
     recent = memory[-history_length:]
     valid = len(recent)

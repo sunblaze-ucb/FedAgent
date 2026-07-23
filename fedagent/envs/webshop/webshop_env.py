@@ -11,6 +11,15 @@ model's text in and formats observations out using verl-agent's WebShop prompt c
 (scientific-equivalence bar). The concat-chat ``GymTextAgentLoop`` supplies multi-turn
 history as the literal chat, so per-turn observations carry only the current page +
 admissible actions (task is in the first turn / chat history).
+
+Observation rendering matches the FED baseline, not the plain env_manager: the paper's
+federated runs (main_ppo_fed.py -> fed_make_envs -> fed_env_manager.WebshopEnvironmentManager)
+post-process EVERY observation with ``format_obs`` -- drop the page prefix up to and including
+the instruction segment, and single-quote each remaining `` [SEP] `` part -- before it reaches
+the prompt OR the history memory. ``_format_obs`` below replicates that verbatim (audit finding
+webshop-env-1: this client previously fed the engine-raw text, a per-turn train+eval prompt
+divergence from the baseline; ALFWorld's fed manager has no such hook, so it was WebShop-only).
+``FEDAGENT_WEBSHOP_FORMAT_OBS=0`` restores the raw rendering for A/B forensics only.
 """
 import asyncio
 import os
@@ -60,6 +69,26 @@ def _extract_task(obs: str) -> str:
     return (obs or "").strip()
 
 
+def _format_obs(raw: str, task: str) -> str:
+    """Verbatim replica of the fed baseline's ``WebshopEnvironmentManager.format_obs``
+    (paper-reproduce-verl-agent third_party/verl-agent/agent_system/environments/
+    fed_env_manager.py:387-398): split on `` [SEP] ``, locate the instruction segment,
+    keep only what FOLLOWS it, and single-quote every remaining part. Applied to every
+    reset/step observation before it enters the prompt or the history memory -- exactly
+    where the original applied it. On any miss, fall back to the raw text (the original's
+    bare ``except`` did the same); a stripped-comparison retry guards against cosmetic
+    whitespace drift between ``_extract_task`` and the page rendering.
+    """
+    parts = raw.split(" [SEP] ")
+    try:
+        index = parts.index(task)
+    except ValueError:
+        index = next((k for k, p in enumerate(parts) if p.strip() == task), None)
+        if index is None:
+            return raw
+    return " [SEP] ".join(f"'{p}'" for p in parts[index + 1:])
+
+
 class WebShopEnv(BaseTextEnv):
     def __init__(self, env_config: Optional[Dict[str, Any]] = None):
         super().__init__(env_config)
@@ -80,8 +109,11 @@ class WebShopEnv(BaseTextEnv):
         # AUTHORITATIVE so ONE shared env spec drives both modes; spec history_length is the fallback.
         self._history_length = int(os.environ.get("FEDAGENT_HISTORY_LENGTH")
                                    or self.env_config.get("history_length", 0))
-        self._memory: list = []     # [{"text_obs": <raw obs before action>, "action": <projected action>}]
-        self._pre_obs = ""          # raw obs that led to the pending action (legacy pre_text_obs)
+        # fed-baseline observation rendering (_format_obs). Default ON = faithful; the kill
+        # switch exists only so a pre-fix run can be reproduced for A/B forensics.
+        self._format_obs_on = os.environ.get("FEDAGENT_WEBSHOP_FORMAT_OBS", "1") != "0"
+        self._memory: list = []     # [{"text_obs": <formatted obs before action>, "action": <projected action>}]
+        self._pre_obs = ""          # formatted obs that led to the pending action (legacy fed pre_text_obs)
         self._client: Optional[httpx.AsyncClient] = None
 
     def _c(self) -> httpx.AsyncClient:
@@ -136,17 +168,18 @@ class WebShopEnv(BaseTextEnv):
         self._step_id = 0   # fresh episode -> restart the /step idempotency counter (server does too)
         d = r.json()
         raw = d.get("obs", "") or ""
-        self._task = _extract_task(raw)
+        self._task = _extract_task(raw)   # extract from RAW (formatting strips the instruction)
         self._goal_id = d.get("goal_id")   # asin (hardness-labelling pass only); None normally
         avail_str = _fmt_actions(d.get("available_actions", {}))
+        obs_txt = _format_obs(raw, self._task) if self._format_obs_on else raw
         if self._history_length > 0:        # WINDOWED (faithful) mode: full legacy template
             self._memory = []
-            self._pre_obs = raw
-            obs_str = build_webshop_obs(task=self._task, memory=self._memory, current_obs=raw,
+            self._pre_obs = obs_txt
+            obs_str = build_webshop_obs(task=self._task, memory=self._memory, current_obs=obs_txt,
                                         available_str=avail_str, history_length=self._history_length,
                                         init=True)
-        else:                               # concat mode (unchanged): per-turn body only
-            obs_str = _FIRST_OBS.format(task=self._task, obs=raw, actions=avail_str)
+        else:                               # concat mode: per-turn body only (fed rendering too)
+            obs_str = _FIRST_OBS.format(task=self._task, obs=obs_txt, actions=avail_str)
         return {"obs_str": obs_str}, {}
 
     async def step(self, action_str: str) -> Tuple[Obs, float, bool, Dict[str, Any]]:
@@ -161,17 +194,19 @@ class WebShopEnv(BaseTextEnv):
         d = r.json()
         raw = d.get("obs", "") or ""
         avail_str = _fmt_actions(d.get("available_actions", {}))
+        obs_txt = _format_obs(raw, self._task) if self._format_obs_on else raw
         if self._history_length > 0:        # WINDOWED (faithful) mode
-            # store (raw obs that led to this action, the PROJECTED action) — matches legacy
-            # memory.store({text_obs: pre_text_obs, action: projection_f(text)}). The service
-            # parses the action server-side and returns it as "action" (fallback: raw text).
+            # store (FORMATTED obs that led to this action, the PROJECTED action) — matches the
+            # fed baseline's memory.store({text_obs: pre_text_obs, action: projection_f(text)}),
+            # whose pre_text_obs was the format_obs output. The service parses the action
+            # server-side and returns it as "action" (fallback: raw text).
             self._memory.append({"text_obs": self._pre_obs, "action": d.get("action", action_str)})
-            self._pre_obs = raw
-            obs_str = build_webshop_obs(task=self._task, memory=self._memory, current_obs=raw,
+            self._pre_obs = obs_txt
+            obs_str = build_webshop_obs(task=self._task, memory=self._memory, current_obs=obs_txt,
                                         available_str=avail_str, history_length=self._history_length,
                                         init=False)
-        else:                               # concat mode (unchanged)
-            obs_str = _STEP_OBS.format(obs=raw, actions=avail_str)
+        else:                               # concat mode (fed rendering too)
+            obs_str = _STEP_OBS.format(obs=obs_txt, actions=avail_str)
         info = {
             "success": bool(d.get("success", False)),
             "is_action_valid": bool(d.get("is_action_valid", True)),
