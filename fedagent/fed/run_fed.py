@@ -109,6 +109,16 @@ DEFAULTS = {
     "webshop_run_service": str(PKG_DIR / "envs" / "webshop" / "service" / "run_service.sh"),
     "webshop_base_port": 8080,              # client c's service -> webshop_base_port + c*replicas + j (K=1 -> +c)
     "webshop_pool_size": 8,                 # env pool per service (must be >= gen_batch)
+    "port_band_base": 26000,                # deterministic per-process port bands for the RANDOM-port
+                                            #   pickers inside each verl trainer/eval (vLLM get_open_port +
+                                            #   verl WorkerHelper._get_free_port): process slot s gets
+                                            #   [base+s*stride, +stride) via FEDAGENT_PORT_BAND, with
+                                            #   VLLM_PORT at the band midpoint. Sits BELOW the ephemeral
+                                            #   range (32768+) so shared-netns collisions ("Address already
+                                            #   in use" killing a round) vanish; both pickers probe within
+                                            #   the band (docs/bugfixes.md "random-port collisions").
+                                            #   0 => stock random ephemeral ports.
+    "port_band_stride": 100,                # ports per process band (>= ~8 needed per trainer)
     "search_return_n": 50,                  # WEBSHOP_SEARCH_RETURN_N: BM25 top-K. 50 = the engine/original
                                             #   default every NON-het baseline trained with; the paper scopes
                                             #   200 to ENV-het arms ONLY (main.tex:1347) and those configs pin
@@ -920,6 +930,7 @@ def _build_eval(cfg, model_path: str, round_num: int, env_base: dict, val_url: s
         cmd.append(f"actor_rollout_ref.rollout.gpu_memory_utilization={mem_util}")
     inject_rollout_mode(cmd, cfg)                            # windowed (default) -> WindowedAgentLoopManager
     env = dict(env_base)
+    env.update(_port_band_env(cfg, 30 if client_id is None else 31))  # eval-reserved band slots
     env.pop("FEDPROX_MU", None)                              # eval must never enable the proximal term
     env["VERL_RAY_JOB_ID"] = (f"{_RUN_TAG}-eval-r{round_num}"
                               + (f"-c{client_id}" if client_id is not None else ""))  # disjoint socket
@@ -1030,8 +1041,42 @@ def select_clients(round_num: int, total: int, per_round: int, base_seed: int,
     return sorted(rng.sample(range(total), per_round))
 
 
+def _port_band_env(cfg, slot: int) -> dict:
+    """Deterministic per-process port band for the random-port pickers inside a verl
+    trainer/eval (see DEFAULTS ``port_band_base``; mechanism in fedagent/port_band.py).
+    ``slot`` must be unique among CONCURRENT verl processes: persistent lane l -> l;
+    subprocess client -> its position in the round's selection; global eval -> 30;
+    client-circle eval -> 31 (circles are sequential among themselves). {} when disabled."""
+    base = int(cfg.get("port_band_base", 26000) or 0)
+    if base <= 0:
+        return {}
+    stride = max(int(cfg.get("port_band_stride", 100) or 100), 8)
+    start = base + slot * stride
+    return {"FEDAGENT_PORT_BAND": f"{start}:{stride}",   # verl _get_free_port -> lower half
+            "VLLM_PORT": str(start + stride // 2)}       # vLLM probes upward from midpoint
+
+
+def stream_port_retry(cmd, env, log_path, tag: str) -> int:
+    """``stream()`` with ONE relaunch iff the failed attempt's log tail carries a
+    port-collision signature (random-port TOCTOU: vLLM/verl/Ray pickers; see
+    fedagent/port_band.py). A fresh launch re-probes and virtually always clears it.
+    The failed log is preserved as <log>.portfail and the retry rewrites the canonical
+    path, so downstream consumers (metrics parser, checkpoint scan) stay pointed at it."""
+    from fedagent.port_band import port_collision_in_log
+
+    rc = stream(cmd, env, log_path, tag=tag)
+    if rc != 0 and port_collision_in_log(log_path):
+        import shutil as _sh
+        _sh.move(str(log_path), f"{log_path}.portfail")
+        log(f"[warn] {tag}: port-collision signature (rc={rc}); relaunching once "
+            f"(failed log -> {log_path}.portfail)")
+        rc = stream(cmd, env, log_path, tag=f"{tag}-retry")
+    return rc
+
+
 def run_client(cfg, round_num: int, client_id: int, model_path: str,
-               env_base: dict, critic_model_path: Optional[str] = None) -> tuple:
+               env_base: dict, critic_model_path: Optional[str] = None,
+               band_slot: int = 0) -> tuple:
     """Train one client for one round; return (actor_dir, critic_dir_or_None).
 
     GRPO: critic_dir is None. PPO (cfg.adv_estimator=="gae"): the value model trains from
@@ -1092,6 +1137,7 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
     # sitecustomize path runs at interpreter startup in every process (gated on FEDPROX_MU)
     # without touching the runtime_env, so GPU isolation is preserved.
     env = dict(env_base)
+    env.update(_port_band_env(cfg, band_slot))   # quiet port band for vLLM/verl port draws
     # distinct, reproducible env instances per client (AgenticDataset reads this);
     # round-invariant so a client's task distribution is stable across rounds.
     # Round-threaded data seed: like the ORIGINAL fed sampler, seed per (round, client) so each
@@ -1125,7 +1171,7 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
         env["FEDPROX_MU"] = str(cfg.fedprox_mu)
 
     log_path = ckpt_root.parent / "training.log"
-    rc = stream(cmd, env, log_path, tag=f"r{round_num}c{client_id}")
+    rc = stream_port_retry(cmd, env, log_path, tag=f"r{round_num}c{client_id}")
     if rc != 0:
         raise RuntimeError(f"client {client_id} round {round_num} FAILED (rc={rc}); see {log_path}")
 
@@ -1202,6 +1248,7 @@ def _persistent_cmd_env(cfg, plan: List[dict], plan_path: Path, model_path: str,
 
     env = dict(env_base)
     _lt = f"-l{lane}" if lane is not None else ""
+    env.update(_port_band_env(cfg, lane or 0))   # quiet port band for vLLM/verl port draws (per lane)
     env["FEDAGENT_PERSISTENT"] = "1"             # sitecustomize -> arm the reload patch on workers
     env["VERL_RAY_JOB_ID"] = f"{_RUN_TAG}-persist{_lt}"  # disjoint weight-xfer socket per worker
     env["FEDAGENT_PERSISTENT_PLAN"] = str(plan_path)
@@ -1416,7 +1463,7 @@ def run_round_persistent(cfg, round_num: int, selected: List[int], model_path: s
             log(f"cross-round: launched long-lived worker (start round {round_num}); awaiting it")
             _wait_signal(xdir / f"done_{round_num}", proc, f"round {round_num} done")
         else:
-            rc = stream(cmd, env, log_path, tag=f"r{round_num}-persist")
+            rc = stream_port_retry(cmd, env, log_path, tag=f"r{round_num}-persist")
             if rc != 0:
                 raise RuntimeError(f"persistent round {round_num} FAILED (rc={rc}); see {log_path}")
 
@@ -1918,9 +1965,10 @@ def run(cfg) -> dict:
                         if critic is not None:
                             client_critics.append(critic)
                 else:
-                    for c in selected:
+                    for ci, c in enumerate(selected):
                         actor, critic = run_client(cfg, r, c, current_model, env_base,
-                                                   critic_model_path=current_critic)
+                                                   critic_model_path=current_critic,
+                                                   band_slot=ci)
                         client_actors.append(actor)
                         if critic is not None:
                             client_critics.append(critic)

@@ -5,6 +5,82 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-23: vLLM/verl random-port collisions: per-round trainer rebuilds redraw ephemeral listen ports → occasional "Address already in use" kills the round on shared-netns hosts
+
+- **Files:** new `fedagent/port_band.py` (band probing + verl `_get_free_port` rebind +
+  deferred hook + collision-signature matcher); `sitecustomize.py` (5th arming block, gated
+  on `FEDAGENT_PORT_BAND`); `fedagent/fed/run_fed.py` (`port_band_base`/`port_band_stride`
+  DEFAULTS + `_port_band_env(cfg, slot)` injected into the subprocess-client, persistent
+  (per-lane), and eval builders + `stream_port_retry` one-shot relaunch at the client and
+  persistent launch sites); offline regression `tests/test_port_band.py`. Root cause lives
+  in stock vLLM/verl port pickers; the fix is overlay-side (thin-overlay policy).
+- **Severity:** robustness/infra, not science — a collision kills the round mid-run (resume
+  recovers, manually). Probability scales with rounds × lanes × evals on a busy shared
+  network namespace; observed in the wild on a devbox WebShop-PPO-hardness run (`r7-persist`
+  died on a port in the ephemeral range).
+
+### How it was found
+
+A production run on another machine died at round 7 with the torch TCPStore signature
+(`The server socket has failed to listen ... errno: 98 - Address already in use`) on port
+54147 — squarely inside Linux's default ephemeral range (32768-60999). Mechanism verified
+against the installed vLLM 0.11.0 and the pinned verl:
+
+1. **vLLM** `_get_open_port()` (vllm/utils): with `VLLM_PORT` unset it does
+   `bind(("", 0))` → takes the kernel-assigned EPHEMERAL number → **closes the probe
+   socket** → the engine binds it later (distributed_init_method TCPStore / DP master /
+   api server). Classic use-after-probe TOCTOU: anything in the shared netns can grab the
+   number in the window. With `VLLM_PORT` SET, vllm instead probes UPWARD from that value
+   until a bind succeeds — collision-tolerant by design.
+2. **verl** `WorkerHelper._get_free_port` (`single_controller/base/worker.py:59`) is the
+   same bare `bind(("", 0))` draw, feeding the FSDP process-group `MASTER_PORT`
+   (`single_controller/ray/base.py:637`) — and has NO env knob upstream. So pinning vLLM
+   alone would NOT have cured the class; both pickers had to move.
+3. **FedAgent amplifies the lottery**: subprocess mode and the per-round persistent worker
+   rebuild the trainer EVERY round → every round × lane × eval redraws ports → hundreds of
+   draws per 70-round run; "occasional" becomes "expected a few times per run".
+
+### Impact
+
+- A collision aborts engine init → the client/persistent step dies → the run stops until
+  someone reruns (round-level resume then continues — the observed run had already done
+  `resumed_from_round=4` once). No numbers are corrupted; pure availability/babysitting
+  cost. Unrelated to the ZMQ IPC weight-transfer collision patched earlier
+  (`tools/setup/patches/`): same "concurrent verl on one node" family, different socket.
+
+### Fix (two layers; both needed for an operational cure)
+
+1. **Private port bands, outside the ephemeral range.** run_fed gives every launched
+   trainer/eval process `FEDAGENT_PORT_BAND="<start>:<stride>"` with
+   `start = port_band_base + slot*stride` (default 26000 + slot×100; slots: persistent
+   lane l, subprocess client = position in the round, global eval 30, circle eval 31 —
+   unique among CONCURRENT processes; max 29200 < 32768). sitecustomize rebinds verl's
+   `_get_free_port` to probe INSIDE the band (fail-closed if the band is exhausted — a
+   silent fallback to the lottery would resurrect the bug unobserved), and `VLLM_PORT` is
+   set to the band midpoint so vLLM's native upward probing works the upper half. The
+   kernel never hands out <32768 as outgoing source ports, so the only possible squatter
+   in a band is our own previous process's stale listener — which probing skips.
+2. **One-shot relaunch on the collision signature.** The literal TOCTOU window
+   (probe-close → real-bind) cannot be zeroed at the overlay level (that needs vLLM/torch
+   to hand over BOUND sockets), and Ray keeps its own internal pickers — so
+   `stream_port_retry` relaunches the client/persistent step ONCE iff the dead log's tail
+   matches `Address already in use` / `EADDRINUSE` / `DistNetworkError` (deliberately NOT
+   vllm's benign "Port X is already in use, trying port X+1" probe line). The failed log
+   is preserved as `<log>.portfail`; the retry rewrites the canonical path so metrics
+   parsing and checkpoint scans are unaffected. Cross-round lanes are not retried (a
+   long-lived worker's death mid-stream is what round-level resume is for).
+
+`port_band_base: 0` restores stock random ports (A/B or if 26000-29999 is contested on
+some host).
+
+### Verification
+
+- `tests/test_port_band.py` (4, offline): probing returns the first free port and skips a
+  live squatter; exhausted band fails closed; env parsing; the signature matcher fires on
+  the real torch error text and NOT on vllm's benign probe line.
+- Real-verl rebind exercised in `fedagent-verl08`: `WorkerHelper._get_free_port()` draw
+  lands in-band (26000), idempotent re-arm refused.
+
 ## 2026-07-23: bf16 merge truncation: verl's model_merger quantized the fp32-aggregated weights to bf16 at every round boundary (the fork kept fp32 end-to-end)
 
 - **Files:** new `fedagent/merge_fp32.py` (source-guarded rebind of the two truncating merger

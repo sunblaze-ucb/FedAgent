@@ -91,3 +91,19 @@ if os.environ.get("FEDAGENT_MERGE_FP32") == "1" and importlib.util.find_spec("ve
             "patch could not be armed -- refusing to silently truncate the aggregated "
             "weights to bf16."
         )
+
+# Deterministic port bands (docs/bugfixes.md 2026-07-23 "vLLM/verl random-port collisions"):
+# vLLM's get_open_port and verl's WorkerHelper._get_free_port both draw random EPHEMERAL
+# ports with a use-after-probe window -- on shared-netns hosts the draw occasionally
+# collides and the round dies with "Address already in use". run_fed gives each launched
+# trainer/eval a private band via FEDAGENT_PORT_BAND (+ VLLM_PORT at the band midpoint);
+# this hook confines verl's draws to that band. Same deferral + fail-closed rationale.
+if os.environ.get("FEDAGENT_PORT_BAND") and importlib.util.find_spec("verl") is not None:
+    from fedagent.port_band import install_deferred_port_band_patch
+
+    if not install_deferred_port_band_patch():
+        raise RuntimeError(
+            f"sitecustomize: FEDAGENT_PORT_BAND={os.environ.get('FEDAGENT_PORT_BAND')} and "
+            "verl is present, but the port-band patch could not be armed -- refusing to fall "
+            "back to the ephemeral-range port lottery."
+        )
