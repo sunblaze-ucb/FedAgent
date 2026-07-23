@@ -5,6 +5,168 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-23: bf16 merge truncation: verl's model_merger quantized the fp32-aggregated weights to bf16 at every round boundary (the fork kept fp32 end-to-end)
+
+- **Files:** new `fedagent/merge_fp32.py` (source-guarded rebind of the two truncating merger
+  methods + deferred import hook); `sitecustomize.py` (4th arming block, gated on
+  `FEDAGENT_MERGE_FP32=1`); `fedagent/fed/run_fed.py` (`merge_fp32` DEFAULT **on** +
+  `merge_to_hf(fp32=...)` for the two AGGREGATED call sites only); offline regression
+  `tests/test_merge_fp32.py`. Root cause lives in stock verl
+  (`others/verl/verl/model_merger/{fsdp_model_merger,base_model_merger}.py`) but the fix is
+  overlay-side (thin-overlay policy: never fork verl).
+- **Severity:** science-fidelity, BOTH algos, BOTH envs, every config whose round loop goes
+  through the HF merge — subprocess mode, persistent + `hf_export: every_round` (the
+  accelerated-recipe default; `reload_client_model` loads the merged HF dir), and resume.
+  `hf_export: final`'s direct shard reload never hit it. Register ID `fedavg-aggregation-4`
+  (the last unfixed *medium migration-bug* in `review/review_docs_2/03_findings_register.md`).
+- **Status note:** bounded — ALFWorld trained to ~63% through this truncation, so it is not a
+  smoking gun for any observed regression; it is a systematic per-round precision loss the
+  fork's path simply did not have.
+
+### How it was found
+
+2026-07-23 triage of the two review registers against HEAD ("这里还有什么bug要改吗"): most
+register items were already fixed or are paper-vs-code decisions; `fedavg-aggregation-4` was
+the one remaining medium. Before fixing, the *entire* round-boundary chain was re-verified so
+the fix would provably land end-to-end:
+
+1. Client FSDP model shards are saved fp32 (FSDP master weights).
+2. `fedagent/fed/aggregate_fedavg_fsdp.py` averages **in place on the loaded shards**
+   (`acc.mul_(w0); acc.add_(other, alpha=w)`) — no dtype cast anywhere → the aggregated FSDP
+   shards stay fp32. (So the aggregator is NOT the truncation point.)
+3. `run_fed.merge_to_hf` shells out to `python -m verl.model_merger merge`; stock verl casts
+   there: `fsdp_model_merger._load_and_merge_state_dicts` collects every shard as
+   `tensor._local_tensor.bfloat16()` (`:169`, DTensor) / `tensor.bfloat16()` (`:181`, plain),
+   and `base_model_merger.save_hf_model_and_tokenizer` builds the save skeleton with
+   `torch_dtype=torch.bfloat16` (`:379`, which also stamps config.json). The pinned verl
+   (7aed6b2) has **no dtype knob** on the merger CLI.
+4. The NEXT round's load would preserve whatever the file has: verl's training load forces
+   `torch_dtype=fp32` (`transformer_impl.py:236-238` "if it is training, we force torch_dtype
+   to fp32") — i.e. today's fp32 masters start from bf16-quantized values, and an fp32 HF file
+   would be consumed exactly. This is what makes the fix effective end-to-end.
+
+### Impact (ranked)
+
+1. **Per-round quantization of the aggregated update.** bf16 keeps ~8 bits of mantissa
+   (relative ULP ≈ 0.4%). At actor lr 1e-6 and a few dozen optimizer steps per client-round,
+   the per-round aggregated weight motion is comparable to the bf16 ULP at typical weight
+   magnitudes — a fraction of each round's *averaged* update is rounded away, every round, for
+   70 rounds. It is rounding (unbiased), not drift, which is why it is bounded — but the fork
+   ran this path losslessly, so it is a pure fidelity deviation.
+2. **FedAvg precision claim.** The aggregation itself IS fp32 (and `verify` checks it), but
+   the *delivered* model each round was bf16 — the paper's "fp32 aggregation" guarantee only
+   held up to the merge.
+3. **NOT affected:** rollout/eval numerics (vLLM casts to bf16 by config either way), the
+   within-round training dtype (bf16 mixed precision, same as fork), `hf_export: final` runs.
+
+### Fix
+
+`fedagent/merge_fp32.py` **recompiles the two stock methods from their own source** with the
+casts flipped (`.bfloat16()` → `.float()` ×2; skeleton `torch.bfloat16` → `torch.float32` ×1)
+and rebinds them. The rebind is **guarded by exact marker counts** — if a verl upgrade changes
+either method, arming raises with a re-derive instruction instead of silently rebinding (same
+upgrade-trap discipline as `ppo_critic_loss._assert_stock_value_loss`). Armed via
+`FEDAGENT_MERGE_FP32=1` + the sitecustomize deferred hook in the merger *subprocess* only;
+`run_fed` sets it for the two **aggregated** merges (`cfg.merge_fp32`, default on) and leaves
+the client-end-eval merge bf16 (it only feeds the bf16 vLLM eval rollout). Disk cost: ~2× on
+aggregated `hf/` only (1.5B: 3.1→6.2 GB/round, pruned as usual); `merge_fp32: false` restores
+stock behavior for A/B.
+
+### Verification
+
+- `tests/test_merge_fp32.py` (3): the rebind flips dtypes and preserves fp32 bit-exactly on a
+  value bf16 cannot represent; marker-count drift fails closed ("re-derive"); a
+  vendored-source contract test reads verl's REAL files (via `find_spec`, no import) and
+  asserts the exact counts the runtime guard expects — a verl bump breaks CI, not round 1.
+- Real-verl rebind exercised in the `fedagent-verl08` env: applies, idempotent, module
+  globals (DTensor / init_empty_weights) resolve from the recompiled functions.
+
+## 2026-07-23: FedProx anchored the PPO critic too — verl 0.8 puts actor AND critic on the same FSDPEngine class the patch wrapped (fork anchored dp_actor only)
+
+- **Files:** `fedagent/fedprox.py` (`_make_optimizer_step` factory + value-model pass-through
+  + docstring); `fedagent/fed/run_fed.py` (`fedprox_mu` DEFAULTS comment documenting the
+  paper-equivalent ablation knob, fork default mu=0.01 — closes register `fedprox-7` too);
+  new `tests/test_fedprox_actor_only.py`. Register ID `fedprox-6`.
+- **Severity:** dormant landmine — **no paper run uses FedProx** (mu=0 everywhere, no FedProx
+  table row), so nothing shipped was affected. Any future PPO+FedProx ablation would have
+  silently gained a critic regularizer the fork's recipe never contained.
+
+### How it was found
+
+Register `fedprox-6` claimed the divergence; verified rather than trusted: the fork's FedProx
+commit (`8c6a000`) patches `dp_actor.update_policy` and never touches `dp_critic`, while our
+overlay wraps `FSDPEngine.optimizer_step` at CLASS level — and in verl 0.8's unified-engine
+design the PPO critic worker builds the *same* `FSDPEngine` class (the old `dp_critic.py` was
+deleted in the 0.8 refactor). The original docstring even shows the blind spot: it argued
+"GRPO has no critic and the ref never steps" — true, but PPO's critic both exists and steps.
+The clean discriminator came from verl itself: `EngineRegistry` registers engines by
+`model_config.model_type` — `"language_model"` (actor) vs `"value_model"` (critic)
+(`transformer_impl.py:921` / `:1297`) — so no parameter-name sniffing is needed.
+
+### Impact
+
+- With `fedprox_mu > 0` on a `gae` config, every critic optimizer step would have added
+  `mu * (w_c - w_c^t)` pulling the value head toward the round-start critic — a *different
+  algorithm* from the fork's FedProx (actor-only proximal term), biasing the ablation it was
+  meant to run. GRPO+FedProx was and is unaffected (no critic engine exists).
+
+### Fix
+
+`_make_optimizer_step(orig, mu)` passes engines with `model_config.model_type ==
+"value_model"` straight through (no snapshot, no proximal grad); absent `model_config` keeps
+the old behavior (back-compat for single-engine paths). Startup log now says "actor-only".
+
+### Verification
+
+`tests/test_fedprox_actor_only.py` (3, offline): a drifted `language_model` engine receives
+exactly `mu*(w-w_t)` gradient; a `value_model` engine receives zero AND takes no `w_t`
+snapshot; an engine without `model_config` is anchored (back-compat).
+
+## 2026-07-23: `search_return_n` defaulted to 200 — the ENV-het value — so any config that didn't pin it ran non-het WebShop with a 4× BM25 pool; 9 shipped examples were doing exactly that
+
+- **Files:** `fedagent/fed/run_fed.py` (DEFAULTS 200→**50** + the two `cfg.get(...)`
+  fallbacks in the train/val service builders); 11 env-het example configs now pin
+  `search_return_n: 200` explicitly. Register ID `webshop-env-12`.
+- **Severity:** config-hygiene with one real in-repo casualty class: all **192 generated
+  paper/paper_accelerated configs pin the key explicitly** (uniform 50 / env-het 200) and
+  were never affected — no paper run is implicated. But 9 shipped **non-het examples**
+  (`homog_long`, `probe_signal`, `scaled/{homog,centralized,ppo,task,pref,coverage,hardness}`)
+  carried no pin and silently ran at 200.
+
+### How it was found
+
+The register filed this as a "footgun for hand-written configs". During the 2026-07-23 fix
+triage the actual blast radius was measured: `grep -rL search_return_n` over `config/`
+showed every generated config pinned (so the flip is zero-risk for paper runs) — and that the
+footgun had **already fired inside the repo**: the 9 non-het examples above inherited the 200
+default. The paper scopes 200 to ENV-heterogeneity only (`main.tex:1347`); the fork exported
+`SEARCH_RETURN_N` for env-het runs and every non-het baseline trained at the engine default
+50.
+
+### Impact
+
+- `SEARCH_RETURN_N` is the BM25 retrieval pool the search page paginates over — it changes
+  the "Total results: N" text, the reachable pagination depth, and which products an agent
+  can reach at all. A non-het run at 200 is a *different environment* from the 0915 baselines
+  (50): its numbers are not comparable to any baseline curve. Direction of harm: examples and
+  any hand-written config only; generated paper configs were immune.
+- The env-het arms NEED 200 (catalog filtering drops targets out of a 50-pool), which is why
+  the old default chose 200 — but a default must serve the *unmarked* case, and the unmarked
+  case is non-het.
+
+### Fix
+
+Default flipped to 50 (the engine/original non-het value); the 11 env-het examples that
+relied on the 200 default (`2cl_catalog_split`, `envhet_long`, `fedprox_test`,
+`scaled/{catalog,bm25field,bm25reweight,lookalike,ppo_lookalike,rank,envhet_fedprox,local}`)
+now pin `search_return_n: 200` next to their `partition_strategy`. Non-het examples need no
+edit — the new default IS their faithful value. Generated configs: no change (all pinned).
+
+### Verification
+
+`grep -h search_return_n config/paper*/**` → uniform 50 ×176, env-het 200 ×16 (unchanged);
+examples: env-het all pin 200, non-het carry no key and now resolve to 50.
+
 ## 2026-07-22: PPO critic loss scale: stock verl 0.8's value_loss skips the engine's global normalization (+ a 0.5 the fork never had) -> critic gradient = 0.5 x M = 2x the paper fork at the paper recipe
 
 - **Files:** new `fedagent/ppo_critic_loss.py` (value_loss parity wrapper + deferred import
