@@ -62,8 +62,17 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
                 # inside the windowed template the env returned.
                 messages = [{"role": "user", "content": cur_obs}]
                 prompt_ids = await self._tokenize_chat(messages)
-                if len(prompt_ids) >= self._max_ctx - 1:        # never exceed the server ctx window
-                    prompt_ids = prompt_ids[-(self._max_ctx - 1):]
+                # Cap the GENERATION prompt at prompt_length -- the SAME budget the emitted
+                # training sample is cut to below -- not at max_ctx-1. The legacy stack tokenized
+                # ONCE at max_prompt_length and used that tensor for generation AND training
+                # (rollout_loop.py:115-137); capping only at max_ctx-1 here let the policy act on
+                # up to max_ctx-1 tokens while the stored sample was re-cut to prompt_length, so
+                # prompts in (prompt_length, max_ctx-1] TRAINED on a head-truncated context (the
+                # task line goes first under left-truncation) while carrying the full reward.
+                # min() keeps the server-ctx guard for configs where prompt_length >= max_ctx.
+                cap = min(self.prompt_length, self._max_ctx - 1)
+                if len(prompt_ids) > cap:
+                    prompt_ids = prompt_ids[-cap:]
                 out = await self.server_manager.generate(
                     request_id=uuid4().hex, prompt_ids=prompt_ids, sampling_params=sampling_params
                 )
