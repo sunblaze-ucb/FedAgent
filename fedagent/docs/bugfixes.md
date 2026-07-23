@@ -5,6 +5,167 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-22: PPO critic loss scale: stock verl 0.8's value_loss skips the engine's global normalization (+ a 0.5 the fork never had) -> critic gradient = 0.5 x M = 2x the paper fork at the paper recipe
+
+- **Files:** new `fedagent/ppo_critic_loss.py` (value_loss parity wrapper + deferred import
+  hook); `sitecustomize.py` (arming, gated on `FEDAGENT_CRITIC_LOSS_MODE`);
+  `fedagent/fed/run_fed.py` (`critic_loss_mode` DEFAULT + gae-only env injection in both
+  client builders); offline regression `tests/test_ppo_critic_loss.py`. Root cause lives in
+  stock verl (`others/verl/verl/workers/utils/losses.py`, `trainer/ppo/core_algos.py`) but the
+  fix is overlay-side (thin-overlay policy: never fork verl).
+- **Severity:** science-fidelity, PPO/gae-only (GRPO builds no critic), BOTH envs, every PPO
+  config in both trees. Actor is unaffected.
+- **Status note:** the *practical* performance impact at the paper recipe is bounded by two
+  dampeners (see Impact), so this is a fidelity/invariance fix, not a smoking-gun for any
+  observed regression.
+
+### How it was found
+
+Follow-up to the 2026-07-22 "does PPO have remaining problems?" deep-check. A windowed-PPO
+semantics diff (GAE horizon, whitening, masks, critic knobs, federation) came back IDENTICAL
+on everything EXCEPT the critic loss chain, which was then hand-verified line by line:
+
+1. verl 0.8's FSDP engine backwards EVERY micro-batch with no 1/M division
+   (`transformer_impl.forward_backward_batch:654-660`) -- by design: it pre-computes the
+   GLOBAL normalizers and injects them into the batch (`batch_num_tokens` DP-all-reduced +
+   `dp_size`, `transformer_impl.py:620-627`; `global_batch_size` = global mini ROWS from
+   `ray_trainer._update_critic:1339-1351`), expecting the loss fn to divide by them.
+2. The actor's `ppo_loss` DOES consume them (`losses.py:65-68` -> `**config.global_batch_info`
+   in every `agg_loss` call) -> actor loss is M/DP-invariant.
+3. The critic's `value_loss` does NOT (`losses.py:167-173` calls `compute_value_loss` bare;
+   its `agg_loss` token-mean then defaults to the LOCAL micro mask sum) -> per-micro local
+   token-mean, summed over M micros.
+4. verl 0.8's `compute_value_loss` multiplies by 0.5 (`core_algos.py:2121`); the paper fork's
+   has NO 0.5 (`fork core_algos.py:542`) and instead divides each micro loss by the
+   gradient-accumulation count (`fork dp_critic.py:243: loss = vf_loss / self.gradient_accumulation`).
+
+An independent counter-audit (`bugfix/ppo_critic_normalization_and_recipe_fidelity_audit.md`
+in the parent working area) reproduced the same chain and CORRECTED three earlier framings,
+all accepted after verification: (a) "effective critic lr 2e-5" is WRONG -- AdamW is
+approximately invariant to a constant gradient rescale (m/sqrt(v) cancels c) and grad-clip 1.0
+was active on 87.7% (WebShop) / 93.1% (ALFWorld) of the 0915 production critic steps
+(median pre-clip norms 12.5 / 29.1), where clip(2g)=clip(g) exactly; (b) therefore "halve the
+critic lr" is NOT a valid workaround (it undercorrects when clip is inactive and
+overcorrects when it binds); (c) the 0.5 itself is a standard PPO convention, not an upstream
+bug -- the fidelity break is the missing normalization plus the coefficient DIFFERENCE vs the
+fork.
+
+### The bug (net effect)
+
+Per optimizer step, the migrated critic's pre-clip gradient is `0.5 x M` times the fork's
+objective, where `M = critic_mini_per_rank / critic_micro_per_gpu` (= 16/4 = **4** at the
+paper recipe, so **2x**), and the scale silently drifts with `critic.ppo_micro_batch_size_per_gpu`,
+DP world size, `rollout.n`, and dynamic batching -- the same recipe on a different GPU count
+trains a different critic objective.
+
+### Impact
+
+1. **Fidelity/invariance (the real problem):** the critic objective is not the fork's and not
+   config-invariant. Any PPO-vs-paper comparison carries an uncontrolled critic-scale factor.
+2. **Bounded practical damage at the paper recipe:** with grad-clip 1.0 binding on ~90% of
+   critic steps a pure 2x rescale is erased (identical post-clip gradient), and AdamW largely
+   cancels a CONSTANT rescale on the rest. The residual effect concentrates in steps near the
+   clip threshold and in the token-weighting difference -- real but small; do NOT attribute
+   large curve gaps to this alone.
+3. **PPO-only, env-symmetric:** cannot explain any WebShop-vs-ALFWorld asymmetry.
+
+### The fix
+
+`fedagent/ppo_critic_loss.py` wraps `verl.workers.utils.losses.value_loss` and rescales its
+(0.5 x local-token-mean) per-micro output so the engine's Sigma-backward + FSDP DP-mean
+reproduces an explicit, named contract (`critic_loss_mode` in run_fed DEFAULTS):
+
+- **`legacy_exact` (DEFAULT):** `scale = 2 * dp_size * micro_rows / global_batch_size`
+  == `2/M` for equal-size micros (paper configs divide evenly) -> per-micro loss
+  `micro_token_mean / M`, i.e. the fork's `Sigma micro_mean / M`, coefficient 1.0. For
+  strict old-run comparability.
+- **`global_token_paper_coef`:** `scale = 2 * dp_size * micro_tokens / batch_num_tokens` ->
+  a true global-token-mean (micro/DP-invariant even for unequal micros), coefficient 1.0.
+  NOT byte-equivalent to the fork under unequal micro token counts -- a named alternative,
+  not the default.
+- **`upstream_standard`:** no patch (stock 0.5 x per-micro), for A/B forensics.
+
+Armed exactly like FedProx: run_fed sets `FEDAGENT_CRITIC_LOSS_MODE` ONLY for gae clients
+(both subprocess and persistent builders); the repo-root `sitecustomize` installs a deferred
+import hook on `verl.workers.utils.losses` (so torch is never imported before Ray assigns
+per-rank CUDA devices) and the rebind lands in every process BEFORE `ray_trainer`'s lazy
+`from ... import value_loss` (init_workers, ray_trainer.py:879) builds the critic worker's
+loss_fn partial. Fail-closed: a non-token-mean `loss_agg_mode` or missing engine metadata
+raises instead of silently training on the stock scale; `[critic-loss] enabled: mode=...` is
+printed for log verification, and `critic/vf_loss_scale` is emitted in the critic metrics.
+
+### Verification
+
+- `tests/test_ppo_critic_loss.py` (6 tests): `legacy_exact` == the fork objective
+  (`(1/(dp*M)) Sigma micro_means`, no 0.5) across a 2-rank x 2-micro grid; micro-split
+  invariance for equal-row micros; `global_token_paper_coef` == global token-mean under
+  UNEQUAL micro token counts and DP splits; the stock/legacy ratio == 0.5*M == 2.0 at the
+  paper-recipe shape (dp=4, M=4); fail-closed on non-token-mean mode and on missing engine
+  metadata. Full suite 21 passed.
+- Live check for the first PPO run: expect `critic/vf_loss_scale = 0.5` per micro at the
+  paper recipe (2/M, M=4) and `[critic-loss] enabled: mode=legacy_exact` in every client log.
+
+### Scope note -- the OPEN recipe-provenance decision this fix does NOT cover
+
+The same counter-audit surfaced, and launch artifacts confirm, that the EXECUTED 0915
+production recipe (the runs behind the paper numbers) differs from both the 2026-intended
+config tree and the migrated tree: PPO ran `train 32 x n1` with mini 4 (WebShop) / 32
+(ALFWorld) on 1 GPU; and (found in this session's follow-up) GRPO ran actor mini **16** rows
+(WebShop) / **128** rows (ALFWorld) vs the tree's 64 -- i.e. production WebShop GRPO took ~4x
+MORE optimizer steps per rollout batch than the migrated recipe while ALFWorld took ~2x FEWER,
+an env-ASYMMETRIC delta aligned with the observed "WebShop drops, ALFWorld doesn't". The 0915
+WebShop val set was `goals[0:128]` (val_data_size=128), not the migrated `goals[0:64]`.
+Which contract to reproduce (executed-0915 vs intended-tree) is a science decision, tracked
+outside this entry; do not label the current recipes "A/B-equivalent to the paper runs" until
+it is made.
+
+---
+
+## 2026-07-22: Windowed rollout: generation saw up to max_ctx-1 prompt tokens but the emitted training sample was re-cut to prompt_length -> silent head-truncated training context
+
+- **Files:** `fedagent/agent_loops/windowed_agent_loop.py` (generation prompt cap).
+- **Severity:** low-frequency science-correctness, windowed mode (the paper default), both
+  algos. ALFWorld is the exposed env (mismatch window (2048, 2559]); WebShop is structurally
+  safe at paper budgets (the 13000-char NO_HIS guard caps the template at ~3250 tokens <
+  prompt_length 4096).
+
+### How it was found
+
+Fresh-eyes residual sweep after the format_obs / epoch-resampling fixes: the loop capped the
+GENERATION prompt at `max_ctx - 1` (= max_model_len - 1) but emitted
+`prompt_ids[-prompt_length:]` as the training sample. The legacy stack tokenized ONCE at
+`max_prompt_length` with `truncation=error` + `filter_overlong_prompts` and used that same
+tensor for generation AND training (fork rollout_loop.py:115-137) -- no gen/train mismatch
+was possible there.
+
+### The bug
+
+For a windowed prompt of length L with `prompt_length < L <= max_ctx-1`, the policy ACTED on
+the full L tokens but the stored sample kept only the last `prompt_length` -- left-truncation
+cuts the template HEAD first, i.e. the framing plus "Your task is to: {task}" line -- while
+still carrying the full broadcast episode return and per-turn penalty. Training then
+optimizes logprobs of an action under a context (task-less) the policy never actually saw.
+Reachable on ALFWorld windowed (`prompt_length ~2048`, `max_ctx-1 = 2559`) for verbose scenes
+with long admissible-action lists; rare, but each occurrence is a corrupted training row.
+
+### The fix
+
+Generation now caps the prompt at `min(prompt_length, max_ctx - 1)` -- the SAME budget the
+emitted sample keeps -- restoring the legacy single-truncation semantics (gen context ==
+train context, always). `prompt_length + response_length <= max_model_len` holds in every
+shipped config (4096+512<=4608; 2048+512<=2560), so the server-ctx guard only binds in exotic
+configs, where `min()` keeps it. The (now no-op) `[-prompt_length:]` cut on the emitted
+sample stays as belt-and-braces.
+
+### Verification
+
+`py_compile` clean; full offline suite 21 passed (the loop itself needs a live vLLM server --
+the invariant `len(gen prompt) <= prompt_length == len(emitted prompt)` is enforced by
+construction after the one-line cap change). Live check: on the next ALFWorld windowed run,
+grep any turn with prompt length > 2048 -- there should be none post-fix.
+
+---
+
 ## 2026-07-22: WebShop observation fidelity: the overlay never applied the fed baseline's `format_obs` -> every turn's prompt (and history) diverged from the paper stack (WebShop-only)
 
 - **Files:** `fedagent/envs/webshop/webshop_env.py` (new `_format_obs` + reset/step wiring);
