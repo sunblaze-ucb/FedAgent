@@ -5,6 +5,299 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-22: WebShop observation fidelity: the overlay never applied the fed baseline's `format_obs` -> every turn's prompt (and history) diverged from the paper stack (WebShop-only)
+
+- **Files:** `fedagent/envs/webshop/webshop_env.py` (new `_format_obs` + reset/step wiring);
+  `fedagent/envs/legacy_prompts.py` (stale "raw obs" docstring); offline regression
+  `tests/test_webshop_format_obs.py`.
+- **Severity:** science-correctness / paper fidelity, WebShop-only, EVERY turn, train AND eval,
+  ALL WebShop arms (uniform, task-het, env-het; GRPO and PPO; subprocess and accelerated).
+  This is the migration audit's `webshop-env-1` (HIGH, CONFIRMED migration-bug), open since the
+  audit shipped.
+- **Provenance:** re-surfaced by the 2026-07-22 regression investigation into "WebShop GRPO
+  uniform (accelerated recipe) trains well below the paper stack while the ALFWorld twin
+  matches"; see "How it was found" below for the elimination chain that left this standing.
+
+### How it was found
+
+The symptom was a differential: qwen2.5-1.5B WebShop GRPO uniform on the accelerated recipe
+ended far below the paper number, the ALFWorld twin did not -- and it persisted on latest
+main, i.e. AFTER the goal-shuffle-race fixes. The investigation ran as an elimination over
+everything that could be WebShop-only or WebShop-sensitive:
+
+1. **Timeline first.** `git reflog` showed the run checkout sat at `b72941a` (07-20) until
+   07-22 16:45 -- so every LOCAL webshop artifact predates `afa440f` and is race-era
+   (explains those runs: GRPO groups compared 8 unrelated goals). But a re-run on
+   latest-of-07-22 code still under-performed, so the race could not be the whole story.
+2. **Magnitude calibration.** Original-stack uniform 1.5B GRPO: 0.617@r65 (paper 61.5 +/-
+   3.9). Every migrated-stack WebShop 1.5B checkpoint on this machine peaked <= 0.31
+   (checkpoint inventory), with `grpo_ws_std4` even regressing 0.297@r54 -> 0.172@r70. A
+   2-3x plateau gap is a broken-training-signal signature, not noise.
+3. **Eliminated with evidence:** training reward semantics (sparse {0,10} on BOTH stacks
+   since `ea85c96` -- `git log -S` on the server's reward hunk); the GRPO grouping chain at
+   HEAD (traced dataset row seed -> `repeat(interleave)` copies seed+uid unperturbed
+   (ray_trainer.py:1439-1448,1497) -> `/reset` maps seed->goal as a pure function with the
+   random `session_id` irrelevant (server.py:404-417) -> startup guard pins identical pool
+   goal order -> stock grpo groups by uid: same-goal groups CONFIRMED); the acceleration
+   layer itself (every knob parameter-level A/B'd <= the 9.3e-5 GPU-nondeterminism floor,
+   WebShop GRPO actor 9.8e-6, fused kernels 1.116e-5); the val protocol (both stacks: fixed
+   goals[0:64], 64 episodes, temp 0.4 -- the original fed config sets `val_batch_size: 64`,
+   so `range(64)` = a permutation of the same fixed set); and an ALFWorld control audit
+   (reward, prompts, parsing, mechanics, val: IDENTICAL down to file:line).
+4. **What survived was the audit's own `webshop-env-1`.** Cross-checking the migration
+   audit's findings register against HEAD showed the finding still open: `grep -rn
+   format_obs fedagent/` returns ZERO hits. A counter-claim ("format_obs is a dead no-op,
+   there is no divergence") was adjudicated and REFUTED: it had audited `env_manager`'s
+   WebShop manager (whose `format_obs` matches `<instruction>` tags that never occur -- a
+   genuine no-op), but the paper's fed entrypoint routes `main_ppo_fed.py:95,100 ->
+   fed_make_envs -> fed_env_manager.WebshopEnvironmentManager`, whose `format_obs`
+   (fed_env_manager.py:387-398) is real and applied at every reset/step. The same
+   env_manager-vs-fed_env_manager trap that caused the original migration miss nearly
+   survived the re-audit -- worth remembering: for baseline semantics, ALWAYS trace from the
+   executed entrypoint, not from the class the code "looks like" it ports.
+5. **The asymmetry check closed the loop:** `fed_env_manager.py` class listing shows ONLY
+   `WebshopEnvironmentManager` defines `format_obs` (line 387); the ALFWorld manager has no
+   formatting hook -- so this bug class CANNOT touch ALFWorld, matching the observed
+   "WebShop drops, ALFWorld doesn't" exactly.
+
+### The bug
+
+The paper's federated runs do NOT consume the engine-raw observation. The fed path
+(`main_ppo_fed.py:95,100` -> `fed_make_envs` -> `fed_env_manager.WebshopEnvironmentManager`)
+post-processes EVERY reset/step observation with `format_obs`
+(fed_env_manager.py:345,360-362,387-398): split on `` [SEP] ``, find the segment equal to the
+episode's instruction, DROP everything up to and including it, and single-quote each remaining
+part -- then stores the FORMATTED text as `pre_text_obs`, so the windowed history entries are
+formatted too. Example (reset page):
+
+```
+raw:       WebShop [SEP] Instruction: [SEP] i need a gluten free vanilla cake mix ... [SEP] Search
+baseline:  'Search'
+```
+
+The overlay client instead fed the raw page text into BOTH the current-obs slot and the
+history memory (`webshop_env.py` pre-fix lines 145,168,170: `_pre_obs = raw`,
+`memory.append({"text_obs": raw_pre_obs, ...})`, `current_obs=raw`).
+
+Root cause of the miss: the overlay replicated `env_manager`'s WebShop manager, whose own
+`format_obs` matches `<instruction>...</instruction>` tags that the text engine never emits --
+an inert no-op -- and whose `extract_task` therefore falls back to a generic string. The FED
+override (`fed_env_manager.py`, the class the paper runs actually executed) both extracts the
+real task (`parts[2]` after asserting `parts[1] == "Instruction:"`) and applies the real
+formatting. The audit's `agent-loop-rollout-3` / `webshop-env-8` findings verified the
+TEMPLATE byte-identical -- the divergence is in the observation STRING fed into that template,
+which is exactly what `webshop-env-1` flagged.
+
+### Impact
+
+Ranked by how much it distorts results:
+
+1. **The training-input distribution is not the paper's (policy-learning quality, direction
+   unproven but nonzero).** Every windowed prompt carried up to 4 copies of the instruction
+   (task line + current obs + 2 history entries; typ. ~30-60 tokens each -> ~100-200 tokens of
+   pure repetition per prompt) and lost the quote delimiters around every page part (asins,
+   titles, prices, buttons -- ~10-80 parts on results/item pages) that the baseline policy
+   conditions on when learning `click[<exact button text>]`. A 1.5B policy trained from the
+   same base on this rendering is learning a DIFFERENT (noisier, more redundant) input
+   encoding than the one that produced the paper's 61.5%; any WebShop-vs-paper comparison
+   conflates algorithm fidelity with this prompt-format shift. ALFWorld is untouched, so the
+   published webshop/alfworld asymmetry of the overlay's runs is partly attributable here.
+2. **Baseline non-comparability is one-way but total.** Pre-fix WebShop numbers are internally
+   consistent (the policy was trained AND evaled on raw rendering -- eval is not OOD for it),
+   so pre-fix runs are valid experiments of a DIFFERENT recipe; they are NOT reproductions of
+   the paper recipe, and pre/post-fix curves must never share a figure.
+3. **The 13000-char NO_HIS fallback boundary moved.** `build_webshop_obs` drops to the
+   no-history template above 13000 chars (legacy guard). Formatting shortens the obs by the
+   duplicated instruction+prefix but lengthens it by 2 quote chars/part; borderline pages
+   therefore flip templates at DIFFERENT points than the baseline -- occasional qualitative
+   prompt changes (history silently dropped) at pages where the baseline kept it, and vice
+   versa.
+4. **Hardness labels measured a different difficulty.** Both label generations to date
+   (including the post-race `d6f3c9b` regeneration) rolled the reference out under raw
+   rendering; measured per-goal difficulty is difficulty-UNDER-RAW-RENDERING. Post-fix
+   training rolls out formatted -- the labels are now a (mildly) mismatched difficulty
+   ranking for the hardness arm until regenerated.
+5. **Sub-turn plumbing was faithful all along** -- reward {0,10}, invalid-action penalty,
+   projection, seeds, val protocol were verbatim (audit B-list) -- so this delta was invisible
+   to every equivalence check that compared rewards/weights rather than prompt BYTES; the
+   acceleration A/B equivalences (accel vs non-accel, both raw) remain valid.
+
+**Still valid:** same-broken-way A/B comparisons where both sides used raw rendering (all
+acceleration A/Bs, PPO-vs-GRPO on the overlay, task-het arm contrasts run entirely pre-fix);
+ALFWorld everything; learning-curve SHAPES as qualitative evidence.
+
+### The fix
+
+`_format_obs(raw, task)` is a verbatim replica of the fed original: `parts.index(task)`,
+quote-join of `parts[index+1:]`, raw-text fallback on a miss exactly like the original's bare
+`except` -- plus one defensive extension, a stripped-comparison retry before the fallback, so
+cosmetic whitespace drift between `_extract_task` and the page rendering cannot silently
+disable the formatting (the failure mode that made the original no-op invisible). Applied at
+reset AND step, BEFORE the text enters the prompt or the history memory, in both windowed and
+concat modes (the fed manager formatted regardless of mode); the task is still extracted from
+the RAW obs (formatting removes the instruction segment). `FEDAGENT_WEBSHOP_FORMAT_OBS=0`
+restores the raw rendering solely to reproduce pre-fix runs for A/B forensics.
+
+### Verification
+
+- `tests/test_webshop_format_obs.py` locks `_extract_task`/`_format_obs` BYTE-FOR-BYTE against
+  a verbatim re-implementation of the fed originals (extract_task assert included) over
+  landing/results/item pages; plus the landing-page `'Search'` form, the prefix-drop +
+  all-parts-quoted invariants, the raw fallback on instruction-free pages, and the
+  stripped-match guard. 6 tests green.
+- `py_compile` clean; the concat-glue suite (4 tests) unaffected.
+- The formatting layer is client-side only: service, engine, reward, and seed->goal mapping
+  are byte-untouched (no service restart needed beyond normal redeploy).
+
+**Recipe boundary:** every WebShop artifact produced with the raw rendering -- ALL overlay
+training runs to date and both hardness-label generations -- belongs to the pre-fix recipe.
+Do not mix pre/post-fix curves; regenerate hardness labels with a reference rolled out under
+the fixed rendering before relying on the hardness arm; re-run any WebShop-vs-paper
+comparison from scratch on post-fix code.
+
+---
+
+## 2026-07-22: Per-epoch goal resampling: E local epochs replayed the SAME n_envs goals; the original drew fresh goals every epoch (24 -> 8 distinct per client-round at paper E=3)
+
+- **Files:** `fedagent/data/agentic_dataset.py` (E-expansion + widened window guard),
+  `fedagent/fed/run_fed.py` (`epoch_resample` DEFAULT + both client cmd builders -- subprocess
+  AND persistent/accelerated); offline regression `tests/test_agentic_dataset_epochs.py`.
+- **Severity:** science-correctness, both envs, both algos, all E>1 configs in BOTH config
+  trees (`config/paper` + `config/paper_accelerated`). This is the migration audit's
+  `data-dataset-seeds-6` (medium, REVISED: "E local epochs replay the SAME per-round goal
+  batch; original & paper re-sample every epoch").
+- **Provenance:** same 2026-07-22 regression investigation as the entry above. Mechanically
+  env-agnostic, but the observed damage is WebShop-shaped (see Impact #2): ALFWorld's
+  accelerated twin matched the paper regardless, WebShop's did not.
+
+### How it was found
+
+Second survivor of the same elimination chain (see the entry above for what was ruled out).
+The audit register carried `data-dataset-seeds-6` as a REVISED medium ("E local epochs replay
+the SAME per-round goal batch; original & paper re-sample every epoch"); the regression
+investigation re-confirmed it live at HEAD by reading the three links of the chain in the
+CURRENT code rather than trusting the register's snapshot:
+
+1. `AgenticDataset` materializes rows ONCE per process with seeds `base*100_000 + si*1_000
+   + i` -- nothing epoch-dependent (agentic_dataset.py).
+2. run_fed threads `FEDAGENT_BASE_SEED = base + round*100 + client` -- per (round, client),
+   NOT per epoch; its own comment claims parity with "the ORIGINAL fed sampler" but the
+   original's freshness was per-RESET, i.e. per epoch (envs.py:677), not per round.
+3. verl 0.8's fit loop is `for epoch in range(total_epochs): for batch in train_dataloader`
+   (ray_trainer.py:1422) over a StatefulDataLoader with no `set_epoch` hook anywhere -- the
+   dataset rows are provably identical across epochs.
+
+The WebShop-vs-ALFWorld asymmetry initially argued AGAINST this bug mattering (it hits both
+envs mechanically). What re-ranked it upward was the reward-density interaction surfaced by
+the grouping audit: WebShop's strict perfect-match `{0,10}` reward makes all-zero GRPO groups
+(zero gradient) the COMMON case early, so goal variety is precisely WebShop's scarcest
+resource -- ALFWorld's mixed-outcome groups make the same 3x variety cut nearly free. An
+env-symmetric mechanism with an env-asymmetric cost matched the symptom where every
+env-symmetric-cost hypothesis had already been eliminated.
+
+### The bug
+
+The original fed sampler drew a FRESH goal batch at every local epoch: WebShop
+`WebshopMultiProcessEnv.reset` -> `self._rng.choice(self.goal_idxs, size=env_num,
+replace=False)` on a persistent, advancing `RandomState` (envs.py:677 -- each epoch's single
+step calls `reset()` once, so E=3 epochs = 3 independent 8-of-shard draws, up to 24 distinct
+goals per client-round); ALFWorld advanced its shuffled game iterator across resets, same
+effect. The overlay's `AgenticDataset` materializes FIXED rows at construction (seed
+`base*100_000 + si*1_000 + i`, agentic_dataset.py) with `FEDAGENT_BASE_SEED` threaded per
+(round, client) but NOT per epoch (run_fed.py), and verl's dataloader re-iterates the SAME
+rows every epoch (`for epoch in range(total_epochs): for batch in train_dataloader`,
+ray_trainer.py:1422) -- so all E epochs replayed the same n_envs goals: 8 distinct, each
+trained 3x, per client-round.
+
+### Impact
+
+Ranked by how much it distorts results:
+
+1. **Per-round task exposure shrank 3x at paper settings.** GRPO: 8 distinct goals/round
+   instead of ~24 (3 draws of 8 without replacement within a draw); PPO: 64 instead of ~192.
+   Across a 70-round, M=2 run that is ~1,120 goal-draws instead of ~3,360 over the 6,410-goal
+   train pool -- a client selected k times covers <= 8k of its 100-goal shard instead of
+   <= 24k. The optimizer takes the SAME number of steps but sees a third of the task variety;
+   steps 2-3 of every round partially memorize the round's 8 goals rather than sampling the
+   shard, which is not the paper's sampling process (main.tex documents per-epoch
+   re-sampling; the run_fed comment even says "re-draws goals ... every round (covering the
+   shard over T rounds)" -- true per round, silently false per epoch).
+2. **WebShop's GRPO bootstrap is disproportionately sensitive (the asymmetry channel).**
+   WebShop's training reward is the strict perfect-match `{0,10}` (score==1.0 only) and the
+   1.5B zero-shot success is ~0-3%, so early groups are usually ALL-ZERO -- and an all-zero
+   group has zero within-group variance, hence ZERO GRPO gradient (`(score-mean)/(std+eps)`).
+   The learning signal per round is roughly (number of distinct goals with at least one
+   success in 8 tries); cutting distinct goals 24 -> 8 cuts the expected number of informative
+   groups per round ~3x exactly in the regime where they are rarest. If the round's 8 goals
+   happen to all be too hard for the current policy, the ENTIRE round (all 3 steps) yields ~no
+   gradient -- the original would have re-rolled goals twice more within that round. ALFWorld
+   (~10-30% early success, mixed groups almost surely) barely notices the same reduction --
+   matching the observed "WebShop drops, ALFWorld doesn't".
+3. **Curriculum/coverage semantics of small shards drifted.** `min_goals_per_client=100`-style
+   arms were designed as repetition over a fixed 100-goal shard with fresh per-epoch draws;
+   the replay made within-round repetition deterministic (same 8, 3x) and cross-round coverage
+   slower, subtly changing the effective curriculum of every heterogeneity arm on both envs.
+4. **No bias, no leakage.** The replayed goals are drawn from the correct shard with the
+   correct round-threaded seed; val is untouched. This is a variance/coverage distortion, not
+   a correctness break -- aggregate metrics remain unbiased for the recipe that ran, they are
+   just not the paper's recipe.
+
+**Still valid:** E=1 configs (byte-identical rows); the eval protocol and every val metric;
+same-broken-way A/B comparisons (both sides replayed identically -- all acceleration A/Bs);
+FedAvg/aggregation numerics.
+
+### The fix
+
+`epoch_resample` (run_fed DEFAULTS, **true**): both client builders (subprocess
+`_train_client` and persistent `_persistent_cmd_env`) launch clients with
+`trainer.total_epochs=1` + env `FEDAGENT_DATA_EPOCHS=E` +
+`FEDAGENT_DATA_EPOCHS_FILE=<train spec>`, and `AgenticDataset` emits each spec's rows E times
+with a DISTINCT per-epoch-slot seed:
+
+```
+seed = base*100_000 + si*1_000 + e*n_envs + i     # e = epoch slot, epoch-major order
+```
+
+Same optimizer-step count (E x n_envs / train_batch_size: GRPO 3x8/8=3 steps, PPO 3x64/64=3
+steps; `total_training_steps = len(dl)*total_epochs` is invariant), fresh goals per epoch
+slot -- the original sampler's semantics, now deterministic and resume-safe. Design points:
+
+- `e=0` reproduces the historical layout exactly, so E=1/unset runs are BYTE-identical
+  (no behavior change outside E>1 federated clients).
+- The `_FILE` guard is load-bearing in the persistent (accelerated) path: the worker builds
+  its worker-eval dataloader (`FEDAGENT_WORKER_EVAL` = the VAL spec) in the SAME process, and
+  the val set must stay exactly n_envs episodes; expansion is confined to the file it names.
+  (The client's own `data.val_files` equals the train spec in both builders; that dataset is
+  never iterated -- `val_before_train=false`, `test_freq` pinned -- so its expansion is inert.)
+- The cross-spec seed-window guard now checks the EXPANDED row count
+  (`n_envs * E > 1000` with later specs present refuses loudly, was `n_envs > 1000`).
+- Goal identity within a group is untouched: the GRPO group is still verl's `rollout.n`
+  repeats of ONE row (one seed -> one goal), so the same-goal-per-group invariant verified in
+  the shuffle-race entry holds verbatim.
+- `epoch_resample: false` reproduces the pre-fix replay behavior for old-run forensics.
+
+### Verification
+
+- `tests/test_agentic_dataset_epochs.py` (5 tests green) locks: the expanded layout (E=3,
+  n_envs=4 -> 12 rows, `e*4+i` stride, epoch-major, all seeds distinct), the E=1/unset no-op
+  (byte-identical seeds), the `_FILE` guard (a sibling val spec stays at n_envs), and the
+  widened window guard (400 x 3 > 1000 -> ValueError).
+- Helper smoke on real DEFAULTS: E=3 default -> (resample on, trainer_epochs 1);
+  `epoch_resample: false` -> (off, 3); E=1 -> (off, 1).
+- grep-verified: the two client builders are the ONLY producers of `trainer.total_epochs`, so
+  eval/final-eval/aggregation invocations are untouched; `FEDAGENT_DATA_EPOCHS` is consumed
+  only by `AgenticDataset`.
+- Step-count math: `len(dataloader)` grows E-fold while `total_epochs` drops to 1 -- LR
+  schedule (constant), save cadence (`save_freq=100000` -> round-last step), and
+  `total_training_steps=null` handling are all invariant.
+
+**Recipe boundary:** for E>1 runs the served goal stream changes vs pre-fix main -- that is
+the point (it restores the original sampler's semantics). Pre-fix curves are a different
+recipe; do not resume a pre-fix run into post-fix code mid-figure. Old behavior remains one
+switch away (`epoch_resample: false`) for exact reproduction of past runs.
+
+---
+
 ## 2026-07-22: Concat loop: inter-turn glue mis-slice on reasoning-model templates (Qwen3-family) → eaten turn boundary
 
 - **Files:** `fedagent/agent_loops/gym_text_agent_loop.py`; new verl-free helper
