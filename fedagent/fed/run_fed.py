@@ -147,6 +147,11 @@ DEFAULTS = {
                                              #   selected, so the paper's (unused) FedProx ablation == any paper
                                              #   config + `fedprox_mu: 0.01` (see config/examples/webshop/fedprox_test.yaml)
     "cleanup_checkpoints": True,             # delete consumed FSDP shards after each merge (disk hygiene)
+    "merge_fp32": True,                      # keep the AGGREGATED FSDP->HF merge in fp32 (the fork kept fp32
+                                             #   across the round boundary; stock verl's merger truncates to
+                                             #   bf16 -- docs/bugfixes.md "bf16 merge truncation"). Costs ~2x
+                                             #   disk on aggregated hf/ only (1.5B: 3.1->6.2GB/round, pruned as
+                                             #   usual); client-eval merges stay bf16. false => stock bf16.
     "resume": True,                          # rerun with the same --output-dir => scan for the highest
                                              #   completed round k (round_k/aggregated/hf, + critic_hf for
                                              #   PPO) and continue at k+1; false / --fresh => round 1
@@ -1487,13 +1492,18 @@ def fedavg(cfg, round_num: int, client_dirs: List[Path], env_base: dict,
 
 
 def merge_to_hf(cfg, round_num: int, agg_dir: Path, env_base: dict,
-                kind: str = "actor", out_hf: Optional[Path] = None) -> Path:
+                kind: str = "actor", out_hf: Optional[Path] = None,
+                fp32: bool = False) -> Path:
     """Merge aggregated FSDP shards -> a complete HF model dir for the next round's model.path
     (actor) or critic.model.path (critic). The merger auto-detects the architecture from the
     shard's huggingface/config.json (both serialize as ...ForCausalLM; the value model just
     carries an extra scalar value head), so no per-kind flag is needed. ``out_hf`` overrides the
     default aggregated/ path -- used by the client-end eval to merge a single client's actor to
-    round_<r>/client_<c>/hf (which survives cleanup_round_checkpoints)."""
+    round_<r>/client_<c>/hf (which survives cleanup_round_checkpoints). ``fp32=True`` arms
+    fedagent/merge_fp32.py in the merger subprocess (via sitecustomize) so the fp32-aggregated
+    weights are NOT truncated to bf16 on this hop -- pass it for the AGGREGATED merges the next
+    round trains from (cfg.merge_fp32); client-eval merges stay bf16 (they only feed the bf16
+    vLLM eval rollout)."""
     sub = "hf" if kind == "actor" else f"{kind}_hf"
     hf_dir = Path(out_hf) if out_hf is not None else (
         Path(cfg.output_dir) / f"round_{round_num}" / "aggregated" / sub)
@@ -1503,8 +1513,11 @@ def merge_to_hf(cfg, round_num: int, agg_dir: Path, env_base: dict,
         "--local_dir", str(agg_dir),
         "--target_dir", str(hf_dir),
     ]
+    env = dict(env_base)
+    if fp32:
+        env["FEDAGENT_MERGE_FP32"] = "1"   # sitecustomize arms the fp32 rebind in the subprocess
     log_path = hf_dir.parent / f"merge_{kind}.log"
-    rc = stream(cmd, env_base, log_path, tag=f"merge-{kind}-r{round_num}")
+    rc = stream(cmd, env, log_path, tag=f"merge-{kind}-r{round_num}")
     if rc != 0:
         raise RuntimeError(f"model_merger {kind} round {round_num} FAILED (rc={rc}); see {log_path}")
     if not (hf_dir / "config.json").is_file():
@@ -1928,7 +1941,8 @@ def run(cfg) -> dict:
             # only the FINAL model is exported to HF (the user-facing artifact).
             hf_dir = None
             if hf_export == "every_round" or last_round:
-                hf_dir = merge_to_hf(cfg, r, agg_actor, env_base, kind="actor")
+                hf_dir = merge_to_hf(cfg, r, agg_actor, env_base, kind="actor",
+                                     fp32=bool(cfg.get("merge_fp32", True)))
 
             agg_critic, critic_hf = None, None
             if is_ppo:
@@ -1939,7 +1953,8 @@ def run(cfg) -> dict:
                         f"the value model (check critic.checkpoint.save_contents includes 'model')")
                 agg_critic = fedavg(cfg, r, client_critics, env_base, kind="critic")
                 if hf_export == "every_round" or last_round:
-                    critic_hf = merge_to_hf(cfg, r, agg_critic, env_base, kind="critic")
+                    critic_hf = merge_to_hf(cfg, r, agg_critic, env_base, kind="critic",
+                                            fp32=bool(cfg.get("merge_fp32", True)))
 
             # client-end eval (paper per-client "circle" marks, §7.4): score EACH client's post-training
             # model on the unperturbed val service. MUST run before cleanup (it reads the client shards

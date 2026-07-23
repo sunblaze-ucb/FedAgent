@@ -76,3 +76,18 @@ if _critic_mode and _critic_mode != "upstream_standard" and importlib.util.find_
             "the critic-loss patch could not be armed -- refusing to train with the "
             "unnormalized stock critic loss."
         )
+
+# fp32 FedAvg merge (docs/bugfixes.md 2026-07-23 "bf16 merge truncation"): stock verl's
+# model_merger casts the fp32-AGGREGATED shards to bf16 on the FSDP->HF hop at every round
+# boundary; the fork kept fp32 end-to-end. run_fed sets FEDAGENT_MERGE_FP32=1 only in the
+# aggregated-merge subprocess env (merge_to_hf(fp32=True); client-eval merges stay bf16).
+# Same deferral + fail-closed rationale as FedProx above.
+if os.environ.get("FEDAGENT_MERGE_FP32") == "1" and importlib.util.find_spec("verl") is not None:
+    from fedagent.merge_fp32 import install_deferred_merge_fp32_patch
+
+    if not install_deferred_merge_fp32_patch():
+        raise RuntimeError(
+            "sitecustomize: FEDAGENT_MERGE_FP32=1 and verl is present, but the fp32-merge "
+            "patch could not be armed -- refusing to silently truncate the aggregated "
+            "weights to bf16."
+        )
