@@ -14,8 +14,12 @@ Round r:
         python -m fedagent.main_ppo_fed ...
             actor_rollout_ref.model.path=model_r
             trainer.default_local_dir=round_r/client_c/checkpoints
-            trainer.total_epochs=E
+            trainer.total_epochs=1                        # E lives in the E-expanded dataset
           env  FEDAGENT_BASE_SEED=base_seed+round*100+c   # round-threaded per-client env seed
+          env  FEDAGENT_DATA_EPOCHS=E                     # epoch_resample (DEFAULT): AgenticDataset
+                                                          # emits E x n_envs rows (fresh goals per
+                                                          # epoch slot, original fed-sampler semantics);
+                                                          # epoch_resample:false -> total_epochs=E replay
         -> round_r/client_c/checkpoints/global_step_K/actor   (FSDP shards, ws=n_gpus)
     FedAvg: torchrun --nproc_per_node=ws fedagent/fed/aggregate_fedavg_fsdp.py
             --client-actor-dirs <c0>,<c1> --output-actor-dir round_r/aggregated/.../actor
@@ -72,6 +76,13 @@ DEFAULTS = {
     "clients_per_round": 2,
     "total_rounds": 2,
     "epochs_per_round": 1,
+    # Per-epoch goal RESAMPLING (paper fidelity; audit data-dataset-seeds-6). The original fed
+    # sampler drew a FRESH goal batch every local epoch; a verl dataset replays the same rows
+    # every epoch. True (DEFAULT) launches clients with trainer.total_epochs=1 +
+    # FEDAGENT_DATA_EPOCHS=E so AgenticDataset emits E x n_envs rows (one fresh draw per epoch
+    # slot) -- identical optimizer-step count, original goal diversity. False = the pre-fix
+    # replay behavior (E epochs x the SAME n_envs goals), kept only to reproduce old runs.
+    "epoch_resample": True,
     "base_seed": 42,
     "n_gpus_per_node": 2,
     "total_training_steps": 1,              # cap per client-round (keep the smoke fast)
@@ -1013,6 +1024,10 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
     # entry; the GPU split (trainer.n_gpus_per_node vs rollout.n_gpus_per_node) comes from
     # client_overrides. Subprocess path only (gated in run()).
     entry = "fedagent.main_one_step_off" if cfg.get("one_step_off", False) else "fedagent.main_ppo_fed"
+    # epoch_resample (DEFAULTS): E epochs become ONE pass over an E-expanded dataset
+    # (FEDAGENT_DATA_EPOCHS in AgenticDataset) -- same steps/round, fresh goals per epoch slot.
+    resample = _epoch_resample_on(cfg)
+    trainer_epochs = _persistent_trainer_epochs(cfg)
     cmd = [
         sys.executable, "-m", entry,
         f"data.train_files={cfg.env_spec}",
@@ -1023,7 +1038,7 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
         f"actor_rollout_ref.rollout.agent.agent_loop_config_path={cfg.agent_config_path}",
         f"trainer.default_local_dir={ckpt_root}",
         f"trainer.n_gpus_per_node={cfg.n_gpus_per_node}",
-        f"trainer.total_epochs={cfg.epochs_per_round}",
+        f"trainer.total_epochs={trainer_epochs}",
         f"trainer.save_freq={cfg.save_freq}",
         "trainer.val_before_train=false",
         # Federation owns "resume" at the ROUND level (each client starts from the merged HF via
@@ -1068,6 +1083,11 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
     # term every client would train on the SAME goals every round. Stride 100 (round) + client_id
     # (<100) is collision-free and keeps AgenticDataset's seed*100000 < 2**32.
     env["FEDAGENT_BASE_SEED"] = str(cfg.base_seed + round_num * 100 + client_id)
+    if resample:
+        # AgenticDataset expands each spec x E with per-epoch-slot seeds; the _FILE guard keeps
+        # any other spec loaded in this process (e.g. a val spec) at its literal n_envs.
+        env["FEDAGENT_DATA_EPOCHS"] = str(cfg.epochs_per_round)
+        env["FEDAGENT_DATA_EPOCHS_FILE"] = str(cfg.env_spec)
     env["VERL_RAY_JOB_ID"] = f"{_RUN_TAG}-train-c{client_id}-r{round_num}"  # disjoint weight-xfer socket
     if cfg.env_kind == "webshop":
         # talk to THIS client's WebShop service (its disjoint Catalog-Split env)
@@ -1108,6 +1128,17 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
 PERSISTENT_MAIN = "fedagent.fed.persistent_main"
 
 
+def _epoch_resample_on(cfg) -> bool:
+    """epoch_resample (DEFAULTS): per-epoch goal resampling is active for this run."""
+    return bool(cfg.get("epoch_resample", True)) and int(cfg.epochs_per_round) > 1
+
+
+def _persistent_trainer_epochs(cfg) -> int:
+    """trainer.total_epochs for a client fit(): 1 when resampling (the E epochs live as an
+    E-expanded dataset -- FEDAGENT_DATA_EPOCHS in AgenticDataset), else the literal E."""
+    return 1 if _epoch_resample_on(cfg) else int(cfg.epochs_per_round)
+
+
 def _persistent_cmd_env(cfg, plan: List[dict], plan_path: Path, model_path: str,
                         critic_model_path: Optional[str], round_num: int, env_base: dict,
                         n_gpus: int, worker_eval: bool, lane: Optional[int] = None):
@@ -1126,7 +1157,7 @@ def _persistent_cmd_env(cfg, plan: List[dict], plan_path: Path, model_path: str,
         f"actor_rollout_ref.rollout.agent.agent_loop_config_path={cfg.agent_config_path}",
         f"trainer.default_local_dir={plan[0]['out_dir']}",   # the plan overrides this per client
         f"trainer.n_gpus_per_node={n_gpus}",
-        f"trainer.total_epochs={cfg.epochs_per_round}",
+        f"trainer.total_epochs={_persistent_trainer_epochs(cfg)}",
         f"trainer.save_freq={cfg.save_freq}",
         "trainer.val_before_train=false",
         "trainer.resume_mode=disable",
@@ -1150,6 +1181,13 @@ def _persistent_cmd_env(cfg, plan: List[dict], plan_path: Path, model_path: str,
     env["FEDAGENT_PERSISTENT"] = "1"             # sitecustomize -> arm the reload patch on workers
     env["VERL_RAY_JOB_ID"] = f"{_RUN_TAG}-persist{_lt}"  # disjoint weight-xfer socket per worker
     env["FEDAGENT_PERSISTENT_PLAN"] = str(plan_path)
+    if _epoch_resample_on(cfg):
+        # E-expanded train dataset (fresh goals per epoch slot) with trainer.total_epochs=1.
+        # The _FILE guard is LOAD-BEARING here: the persistent worker ALSO builds the worker-eval
+        # dataloader (FEDAGENT_WORKER_EVAL = the val spec) in this same process, and the val set
+        # must stay exactly n_envs episodes.
+        env["FEDAGENT_DATA_EPOCHS"] = str(cfg.epochs_per_round)
+        env["FEDAGENT_DATA_EPOCHS_FILE"] = str(cfg.env_spec)
     if worker_eval and str(cfg.get("eval_mode", "inline")).lower() == "worker" and cfg.get("val_env_spec"):
         # eval_mode=worker: the worker evals each round's starting model on its HOT engine (no
         # second vLLM). It dumps round_<k>/eval/val_samples; the orchestrator reads them + evals

@@ -14,7 +14,10 @@ Input: an env-spec YAML (``data.train_files``) of the form::
         agent_name: gym_text     # optional (default: gym_text)
         config: {lo: 1, hi: 50}
 
-Output: ``n_envs`` rows per spec, each a distinct env instance (distinct ``seed``).
+Output: ``n_envs`` rows per spec, each a distinct env instance (distinct ``seed``);
+with ``FEDAGENT_DATA_EPOCHS=E`` (set by run_fed together with ``trainer.total_epochs=1``),
+``E x n_envs`` rows per spec -- one fresh n_envs draw per local epoch, restoring the
+original fed sampler's per-epoch resampling (see the inline comment).
 GRPO grouping is handled downstream by verl's ``rollout.n`` (each row is repeated n
 times -> one GRPO group per env instance).
 
@@ -59,37 +62,58 @@ class AgenticDataset(Dataset):
         # goals[VAL_SIZE+K : VAL_SIZE+K+n_envs]. Lets 6410 goals be labeled in resilient chunks.
         seed_offset = int(os.environ.get("FEDAGENT_SEED_OFFSET", 0))
 
+        # Per-epoch goal resampling (paper fidelity; audit data-dataset-seeds-6): the ORIGINAL
+        # fed sampler drew a FRESH goal batch at every local epoch (WebShop: persistent
+        # RandomState advanced by each envs.reset; ALFWorld: the game iterator advanced), so E
+        # epochs/round saw up to E x n_envs distinct tasks. A verl dataset replays IDENTICAL
+        # rows every epoch, which silently shrank that to n_envs (same goals x E). run_fed
+        # therefore launches clients with trainer.total_epochs=1 + FEDAGENT_DATA_EPOCHS=E, and
+        # this dataset emits each spec's rows E times with a DISTINCT per-epoch-slot seed
+        # (e * n_envs stride, epoch-major order) -- same optimizer-step count, original
+        # diversity restored. FEDAGENT_DATA_EPOCHS_FILE (when set) restricts the expansion to
+        # that one spec file: the persistent worker builds its worker-eval dataloader (the val
+        # spec) in the SAME process, and the val set must stay exactly n_envs episodes.
+        data_epochs = max(1, int(os.environ.get("FEDAGENT_DATA_EPOCHS", 1) or 1))
+        epochs_file = os.environ.get("FEDAGENT_DATA_EPOCHS_FILE")
+        if data_epochs > 1 and epochs_file:
+            my_path = data_files[0] if isinstance(data_files, (list, tuple)) else data_files
+            if os.path.realpath(str(my_path)) != os.path.realpath(epochs_file):
+                data_epochs = 1
+
         self.items: List[Dict[str, Any]] = []
-        # Seed layout gives each spec a 1000-wide window (si * 1_000 + i): a non-last
-        # spec with n_envs > 1000 would silently ALIAS into the next spec's seed range
-        # (two rows -> the same env seed -> the same served goal). Refuse loudly.
+        # Seed layout gives each spec a 1000-wide window (si * 1_000 + e*n_envs + i): a non-last
+        # spec whose EXPANDED row count (n_envs * data_epochs) exceeds 1000 would silently ALIAS
+        # into the next spec's seed range (two rows -> the same env seed -> the same served
+        # goal). Refuse loudly.
         for si, s in enumerate(specs[:-1]):
-            if int(s.get("n_envs", 64)) > 1000:
+            if int(s.get("n_envs", 64)) * data_epochs > 1000:
                 raise ValueError(
-                    f"spec {si} ({s.get('name')}) has n_envs={s.get('n_envs')} > 1000 with "
-                    f"later specs present; row seeds would collide across specs (si*1000+i layout)")
+                    f"spec {si} ({s.get('name')}) has n_envs={s.get('n_envs')} x "
+                    f"FEDAGENT_DATA_EPOCHS={data_epochs} > 1000 rows with later specs present; "
+                    f"row seeds would collide across specs (si*1000 + e*n_envs + i layout)")
         for si, s in enumerate(specs):
             n = int(s.get("n_envs", 64))
             max_turns = int(s.get("max_turns", 6))
             env_cfg = s.get("config", {}) or {}
             name = s.get("name", "TinyGuess")
             agent_name = s.get("agent_name", DEFAULT_AGENT_LOOP)
-            for i in range(n):
-                self.items.append(
-                    {
-                        "env_name": name,
-                        "seed": base_seed * 100_000 + si * 1_000 + i + seed_offset,
-                        "config": env_cfg,
-                        "max_turns": max_turns,
-                        "agent_name": agent_name,
-                        "data_source": name.lower(),
-                        # verl's agent-loop postprocess stores kwargs["raw_prompt"]; our
-                        # loop builds its own prompt from the env, so this is a placeholder.
-                        "raw_prompt": [{"role": "user", "content": f"<{name} episode>"}],
-                        # single non-colliding dummy tensor (see module docstring).
-                        "ds_dummy": torch.tensor([0]),
-                    }
-                )
+            for e in range(data_epochs):        # e=0 with data_epochs=1 == the historical layout
+                for i in range(n):
+                    self.items.append(
+                        {
+                            "env_name": name,
+                            "seed": base_seed * 100_000 + si * 1_000 + e * n + i + seed_offset,
+                            "config": env_cfg,
+                            "max_turns": max_turns,
+                            "agent_name": agent_name,
+                            "data_source": name.lower(),
+                            # verl's agent-loop postprocess stores kwargs["raw_prompt"]; our
+                            # loop builds its own prompt from the env, so this is a placeholder.
+                            "raw_prompt": [{"role": "user", "content": f"<{name} episode>"}],
+                            # single non-colliding dummy tensor (see module docstring).
+                            "ds_dummy": torch.tensor([0]),
+                        }
+                    )
 
     @staticmethod
     def _load_specs(data_files) -> List[Dict[str, Any]]:
