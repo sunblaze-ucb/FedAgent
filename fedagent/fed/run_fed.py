@@ -83,6 +83,13 @@ DEFAULTS = {
     # slot) -- identical optimizer-step count, original goal diversity. False = the pre-fix
     # replay behavior (E epochs x the SAME n_envs goals), kept only to reproduce old runs.
     "epoch_resample": True,
+    # PPO critic value-loss contract (docs/bugfixes.md 2026-07-22): stock verl 0.8's value_loss
+    # is per-micro-normalized (+0.5), so the critic gradient scales with 0.5 x micro-count
+    # (2x the paper fork at the paper recipe). "legacy_exact" (DEFAULT) restores the fork's
+    # coefficient-1.0, /M objective via the fedagent.ppo_critic_loss overlay (armed through
+    # sitecustomize in every gae client process). "global_token_paper_coef" = micro/DP-invariant
+    # global token-mean (still coefficient 1.0). "upstream_standard" = stock verl (no patch).
+    "critic_loss_mode": "legacy_exact",
     "base_seed": 42,
     "n_gpus_per_node": 2,
     "total_training_steps": 1,              # cap per client-round (keep the smoke fast)
@@ -1088,6 +1095,12 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
         # any other spec loaded in this process (e.g. a val spec) at its literal n_envs.
         env["FEDAGENT_DATA_EPOCHS"] = str(cfg.epochs_per_round)
         env["FEDAGENT_DATA_EPOCHS_FILE"] = str(cfg.env_spec)
+    if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
+        # critic value-loss parity (DEFAULTS: critic_loss_mode); sitecustomize arms the
+        # deferred value_loss wrap in this client + its Ray workers. gae-only: GRPO has no critic.
+        _clm = str(cfg.get("critic_loss_mode", "legacy_exact"))
+        if _clm != "upstream_standard":
+            env["FEDAGENT_CRITIC_LOSS_MODE"] = _clm
     env["VERL_RAY_JOB_ID"] = f"{_RUN_TAG}-train-c{client_id}-r{round_num}"  # disjoint weight-xfer socket
     if cfg.env_kind == "webshop":
         # talk to THIS client's WebShop service (its disjoint Catalog-Split env)
@@ -1188,6 +1201,12 @@ def _persistent_cmd_env(cfg, plan: List[dict], plan_path: Path, model_path: str,
         # must stay exactly n_envs episodes.
         env["FEDAGENT_DATA_EPOCHS"] = str(cfg.epochs_per_round)
         env["FEDAGENT_DATA_EPOCHS_FILE"] = str(cfg.env_spec)
+    if str(cfg.get("adv_estimator", "grpo")).lower() == "gae":
+        # critic value-loss parity (see _train_client): armed via sitecustomize in the
+        # persistent worker + its Ray workers too (reload_critic_model path included).
+        _clm = str(cfg.get("critic_loss_mode", "legacy_exact"))
+        if _clm != "upstream_standard":
+            env["FEDAGENT_CRITIC_LOSS_MODE"] = _clm
     if worker_eval and str(cfg.get("eval_mode", "inline")).lower() == "worker" and cfg.get("val_env_spec"):
         # eval_mode=worker: the worker evals each round's starting model on its HOT engine (no
         # second vLLM). It dumps round_<k>/eval/val_samples; the orchestrator reads them + evals

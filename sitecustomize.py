@@ -59,3 +59,20 @@ if os.environ.get("FEDAGENT_PERSISTENT") == "1" and importlib.util.find_spec("ve
             "sitecustomize: FEDAGENT_PERSISTENT=1 and verl is present, but the persistent "
             "worker patch could not be armed -- refusing to run without reload_client_model."
         )
+
+# PPO critic value-loss parity (docs/bugfixes.md 2026-07-22 "critic loss scale"): stock verl
+# 0.8's value_loss skips the engine's global-batch normalization (the actor's ppo_loss uses
+# it, losses.py:65-68) and adds a 0.5 the paper fork never had -> the critic's pre-clip
+# gradient scales with 0.5*M (critic micro count; 2x at the paper recipe). run_fed sets
+# FEDAGENT_CRITIC_LOSS_MODE only for gae (PPO) clients; GRPO/service processes never arm it.
+# Same deferral + fail-closed rationale as FedProx above.
+_critic_mode = os.environ.get("FEDAGENT_CRITIC_LOSS_MODE", "")
+if _critic_mode and _critic_mode != "upstream_standard" and importlib.util.find_spec("verl") is not None:
+    from fedagent.ppo_critic_loss import install_deferred_critic_loss_patch
+
+    if not install_deferred_critic_loss_patch(_critic_mode):
+        raise RuntimeError(
+            f"sitecustomize: FEDAGENT_CRITIC_LOSS_MODE={_critic_mode} and verl is present, but "
+            "the critic-loss patch could not be armed -- refusing to train with the "
+            "unnormalized stock critic loss."
+        )
