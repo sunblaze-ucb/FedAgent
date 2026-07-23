@@ -48,16 +48,20 @@ PORT_COLLISION_SIGS = (
 
 
 def port_collision_in_log(log_path, tail_bytes: int = 65536) -> bool:
-    """True iff the tail of ``log_path`` carries a port-collision signature."""
+    """True iff the tail of ``log_path`` carries a port-collision signature.
+    Case-INSENSITIVE: torch prints "Address already in use" but Ray/grpc surfaces the
+    same errno as lowercase "address already in use" -- a cased match would miss those
+    and skip the retry. vLLM's benign probe line ("Port X is already in use, trying
+    port X+1") stays excluded either way: it never contains the word "address"."""
     try:
         with open(log_path, "rb") as f:
             f.seek(0, 2)
             size = f.tell()
             f.seek(max(0, size - tail_bytes))
-            tail = f.read().decode("utf-8", "replace")
+            tail = f.read().decode("utf-8", "replace").lower()
     except OSError:
         return False
-    return any(sig in tail for sig in PORT_COLLISION_SIGS)
+    return any(sig.lower() in tail for sig in PORT_COLLISION_SIGS)
 
 
 def _parse_band():
@@ -145,7 +149,13 @@ def enable_port_band() -> bool:
     from verl.single_controller.base.worker import WorkerHelper
 
     start, span = band
-    WorkerHelper._get_free_port = staticmethod(lambda: probe_in_band(start, span))
+    # STRICT half partition (hardening on the same-start regression fix): verl draws ONLY
+    # from the lower half; assign_vllm_port salts vLLM into the upper half. Without the
+    # cap, a verl draw could claim-but-not-yet-bind a port in vLLM's territory (the PG
+    # master binds its TCPStore LATE, after handing the number to workers) while a vLLM
+    # replica probes, binds it first, and the late binder dies with EADDRINUSE.
+    lower = max(1, span // 2)
+    WorkerHelper._get_free_port = staticmethod(lambda: probe_in_band(start, lower))
     _PATCHED = True
     print(f"[port-band] enabled: verl master-port draws confined to [{start}, {start + span}) "
           f"(vLLM half starts at VLLM_PORT={os.environ.get('VLLM_PORT', '<unset>')})", flush=True)

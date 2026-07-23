@@ -52,6 +52,35 @@ draws differ WITHOUT binding, exhausted band fails closed, `assign_vllm_port` la
 the upper half + overrides a stale static value + distinct pids get distinct starts.
 Field re-enable: pull, drop the `port_band_base: 0` override, relaunch.
 
+### Hardening + residual-risk accounting (added later the same day, after a "is it REALLY solved" pass)
+
+Two more gaps closed:
+
+- **Strict half partition.** verl's rebound picker scanned the WHOLE band, so a verl
+  draw could claim-but-not-yet-bind a port in vLLM's upper half (the PG master binds
+  its TCPStore late) while a vLLM replica probed and bound it first → late-binder
+  EADDRINUSE. verl now draws from the lower half only; the pickers can no longer cross.
+- **Case-insensitive retry signatures.** torch prints "Address already in use" but
+  Ray/grpc surfaces the same errno lowercase — the cased match would have skipped the
+  retry exactly when Ray's own (unpinnable) internal ports collided. vLLM's benign
+  probe line stays excluded (it never contains "address").
+
+Residuals that CANNOT be zeroed at this layer (accepted, with coverage notes):
+
+1. **pid-salt collisions**: `(pid·7919) % 42` is a bijection on any 42-consecutive-pid
+   window (7919 coprime to 42), so near-simultaneously spawned replicas always get
+   distinct starts; two pids exactly a multiple of 42 apart still share one. Covered by
+   `stream_port_retry` on the subprocess-client and single-persistent paths; NOT
+   auto-retried on parallel lanes / cross-round (round-level resume is the backstop
+   there) — a deliberate scope line, not an oversight.
+2. **The probe-close → real-bind TOCTOU** itself: only vLLM/torch handing over BOUND
+   sockets could remove it. Inside a private per-slot band the only realistic squatter
+   is another tenant explicitly binding 26000-29199 — pick `port_band_base` away from
+   locally-used service ranges if that ever happens.
+3. **The FedAvg aggregator's `torchrun --standalone` rendezvous port** is still a stock
+   ephemeral draw (short-lived, strictly sequential, one per round) — left unpinned;
+   a collision there fails the round loudly and `resume` re-runs it.
+
 ## 2026-07-23: vLLM/verl random-port collisions: per-round trainer rebuilds redraw ephemeral listen ports → occasional "Address already in use" kills the round on shared-netns hosts
 
 > **Regression note (fixed same day):** the version of this fix shipped in `4a85d12`

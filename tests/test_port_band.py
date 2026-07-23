@@ -110,6 +110,12 @@ def test_collision_signature_matcher(tmp_path):
                     "network address. ... (errno: 98 - Address already in use).\n")
     assert port_collision_in_log(dead)
 
+    # Ray/grpc surface the same errno LOWERCASE -- the matcher must be case-insensitive
+    ray_dead = tmp_path / "ray_dead.log"
+    ray_dead.write_text("RuntimeError: Failed to start the GCS server: "
+                        "bind: address already in use\n")
+    assert port_collision_in_log(ray_dead)
+
     # vllm's BENIGN in-band probe line must NOT trigger a retry
     benign = tmp_path / "benign.log"
     benign.write_text("INFO ... Port 26050 is already in use, trying port 26051\n"
