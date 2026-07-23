@@ -10,9 +10,14 @@ Seam (verl 0.8): verl/workers/engine/fsdp/transformer_impl.py
   - FSDPEngine.optimizer_step() clips grads then calls optimizer.step().
 We wrap it: snapshot w_t on the first call (params still == the loaded global model),
 then on every call add the proximal grad per LOCAL shard (FSDP1 sharded view / FSDP2
-DTensor -> elementwise on each shard is correct). GRPO has no critic and the ref
-policy never steps, so patching the base engine's optimizer_step affects only the
-actor. Mirrors verl-agent 0.3.1 dp_actor.update_policy (snapshot + grad.add_).
+DTensor -> elementwise on each shard is correct). The anchor is ACTOR-ONLY, matching
+the fork (8c6a000 patched dp_actor.update_policy and left dp_critic untouched): verl
+0.8 builds the actor AND the PPO critic on this same FSDPEngine class, so the wrapper
+explicitly passes value-model engines through unanchored
+(engine.model_config.model_type == "value_model", the discriminator EngineRegistry
+itself registers by -- transformer_impl.py:921/:1297); GRPO builds no critic and the
+ref policy never steps. Mirrors verl-agent 0.3.1 dp_actor.update_policy
+(snapshot + grad.add_).
 
 Enabled by run_fed via env var FEDPROX_MU>0 (so aggregation_method=fedprox uses it;
 plain FedAvg leaves mu=0 = no-op).
@@ -22,16 +27,15 @@ import os
 _PATCHED = False
 
 
-def enable_fedprox(mu: float) -> bool:
-    """Monkeypatch FSDPEngine.optimizer_step to add the FedProx proximal gradient. Idempotent."""
-    global _PATCHED
-    if mu is None or mu <= 0 or _PATCHED:
-        return False
-    from verl.workers.engine.fsdp.transformer_impl import FSDPEngine
-
-    _orig_optimizer_step = FSDPEngine.optimizer_step
-
+def _make_optimizer_step(orig, mu: float):
+    """Build the wrapped optimizer_step. ACTOR-ONLY: value-model engines (the PPO critic;
+    engine.model_config.model_type == "value_model") pass straight through, matching the
+    fork's dp_actor-only patch -- 8c6a000 never touched dp_critic, so anchoring the critic
+    would be a NEW regularizer the paper recipe does not contain."""
     def optimizer_step(self):
+        mc = getattr(self, "model_config", None)
+        if getattr(mc, "model_type", "language_model") == "value_model":
+            return orig(self)   # PPO critic: never anchored (fork parity)
         snap = getattr(self, "_fedprox_w_t", None)
         if snap is None:
             # first step of this round-process: params still == loaded global model w_t
@@ -41,11 +45,22 @@ def enable_fedprox(mu: float) -> bool:
             if p.grad is not None and n in snap:
                 # per-local-shard: grad += mu * (w - w_t)   (FSDP/DTensor elementwise-safe)
                 p.grad.add_(p.data - snap[n].to(p.grad.device), alpha=mu)
-        return _orig_optimizer_step(self)
+        return orig(self)
 
-    FSDPEngine.optimizer_step = optimizer_step
+    return optimizer_step
+
+
+def enable_fedprox(mu: float) -> bool:
+    """Monkeypatch FSDPEngine.optimizer_step to add the FedProx proximal gradient. Idempotent."""
+    global _PATCHED
+    if mu is None or mu <= 0 or _PATCHED:
+        return False
+    from verl.workers.engine.fsdp.transformer_impl import FSDPEngine
+
+    FSDPEngine.optimizer_step = _make_optimizer_step(FSDPEngine.optimizer_step, mu)
     _PATCHED = True
-    print(f"[fedprox] enabled: proximal mu={mu} (FSDPEngine.optimizer_step patched)", flush=True)
+    print(f"[fedprox] enabled: proximal mu={mu} (FSDPEngine.optimizer_step patched; "
+          f"actor-only -- value_model engines pass through)", flush=True)
     return True
 
 

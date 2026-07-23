@@ -142,7 +142,10 @@ DEFAULTS = {
     # round r's FedAvg/merge/eval by LAUNCHING r+1's services early + health-checking at adoption.
     # Pure scheduling, zero numerical impact. Default off until A/B-validated; flip on for paper runs.
     "prewarm_next_round_services": False,
-    "fedprox_mu": 0.0,                       # >0 => FedProx proximal term (else FedAvg)
+    "fedprox_mu": 0.0,                       # >0 => FedProx proximal term on the ACTOR only (else plain FedAvg).
+                                             #   The fork defaulted mu=0.01 whenever aggregation_method=fedprox was
+                                             #   selected, so the paper's (unused) FedProx ablation == any paper
+                                             #   config + `fedprox_mu: 0.01` (see config/examples/webshop/fedprox_test.yaml)
     "cleanup_checkpoints": True,             # delete consumed FSDP shards after each merge (disk hygiene)
     "resume": True,                          # rerun with the same --output-dir => scan for the highest
                                              #   completed round k (round_k/aggregated/hf, + critic_hf for
