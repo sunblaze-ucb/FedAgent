@@ -47,6 +47,7 @@ set in the YAML or via `client_overrides`.
 |---|---|---|---|
 | `--config <yaml>` | - | - | the federated config (you almost always pass this) |
 | `--model-path <dir>` | `model_path` | `""` → auto-discover Qwen2.5-0.5B | base model for round 1 (offline: a local HF snapshot) |
+| `--critic-path <dir>` | `critic_model_path` | `""` → auto | **PPO only**: value model the first trained round starts from (see [Warm-starting from another run](#warm-starting-from-another-run)) |
 | `--output-dir <dir>` | `output_dir` | `/tmp/...tinyguess` | where `round_*/`, logs, checkpoints, summary land |
 | `--rounds <T>` | `total_rounds` | `2` | shorten/lengthen the run |
 | `--clients <N>` | `total_clients` | `2` | also caps `clients_per_round` to ≤ N |
@@ -366,6 +367,34 @@ summary alone. Under `hf_export: final` there are no per-round HF dirs, so the s
 finds nothing and the run starts fresh; resume is an `every_round`-export feature. Consumed
 FSDP shards are deleted after each merge to keep peak disk to ~one round (toggle with
 `cleanup_checkpoints`; an 8-round run otherwise grew to 367 GB).
+
+## Warm-starting from another run
+
+Resume (above) is the **preferred** continuation path: same `--output-dir`, just raise
+`total_rounds`, and actor, critic, and the summary's curves all carry over. Use a warm
+start only when you want a *new* `--output-dir` (a branch off an existing run):
+
+```bash
+python -m fedagent.fed.run_fed --config <cfg> --output-dir <NEW_dir> \
+    --model-path  <prev_run>/round_37/aggregated/hf
+```
+
+**PPO: the value model matters as much as the policy.** `--model-path` seeds the actor
+only. If the seed is an aggregated dir, run_fed automatically picks up the aggregated
+critic beside it (`round_37/aggregated/critic_hf`) and logs
+`PPO critic WARM START: ...`; pass `--critic-path <dir>` to point somewhere else. When no
+usable critic is found, the value head is **randomly initialized** — the run prints a
+boxed `[warn]` block, because an uncalibrated baseline makes the opening rounds' GAE
+advantages unreliable and the policy can regress before the critic catches up. Pointing
+`--critic-path` at an *actor* dir is a hard error (that is the mistake the flag exists to
+prevent); omit it to reset the head on purpose. `federated_summary.json` records
+`critic_init` (`resume` | `auto-sibling` | `explicit` | `fresh-value-head`) and
+`start_critic`. GRPO has no critic, so none of this applies.
+
+Two things a warm start does **not** carry over, by design: the summary restarts at
+round 0 (plot the full trajectory by stitching both runs' `val_curve`s), and the
+round counter restarts at 1 — a 70-round warm start off round 37 is ~107 cumulative
+rounds of training, not a clean 107-round run.
 
 ## Outputs
 

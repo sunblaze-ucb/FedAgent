@@ -5,6 +5,94 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-24: PPO warm start silently RESET the critic — `model_path` was the only seed entry, so a continuation run inherited the policy but opened with a randomly initialized value head
+
+- **Files:** `fedagent/fed/run_fed.py` (`critic_model_path` DEFAULT + `--critic-path`;
+  `hf_weight_keys` / `has_value_head` / `is_aggregated_actor` / `resolve_start_critic`;
+  provenance log + `critic_init`/`start_critic` in the summary); offline regression
+  `tests/test_critic_warm_start.py`.
+- **Severity:** science, PPO-only, and **silent** — the run logged a critic path (which
+  happened to be the *actor's*) and said nothing about the value head being random.
+  Observed in the field: a WebShop PPO continuation seeded from `round_37/aggregated/hf`
+  into a fresh `--output-dir`.
+
+### Mechanism
+
+Continuation was designed to run through `resume` (same `output_dir`), which restores
+actor **and** critic and refuses to call a PPO round complete unless the merged critic
+exists (`find_resume_round`). `model_path` means "the pretrained base for round 1".
+Pointing `model_path` at a previous run's `round_<k>/aggregated/hf` to seed a NEW
+`output_dir` is a warm start the design never covered:
+
+```python
+current_critic = base_model if is_ppo else None   # base_model == the seed ACTOR dir
+```
+
+verl then builds the critic as `...ForTokenClassification(num_labels=1)`
+(`workers/engine/fsdp/transformer_impl.py:264`) over that actor checkpoint. The backbone
+weights match and load; the `score.{weight,bias}` head does not exist there and is
+**randomly initialized**. So the policy is warm and its value baseline is noise.
+
+Consequences, in order of importance:
+
+1. **GAE is uncalibrated for the opening rounds.** With `δ_t = r_t + γV(s_{t+1}) − V(s_t)`
+   and a random `V`, advantages are at best baseline-free returns (in WebShop's sparse
+   {0,10} that hands every token of a successful trajectory the same large positive
+   advantage — no within-trajectory credit assignment) and at worst state-dependent noise
+   that points some good actions the wrong way. PPO's clipping bounds step size, not
+   direction, so the warm-started policy can regress before the critic catches up.
+2. **No workaround existed.** `client_overrides` cannot supply `critic.model.path` —
+   run_fed appends its own value *after* the overrides, so it always wins
+   (`run_client`). And `trainer.critic_warmup` is not a fix here: each client is a fresh
+   verl job per round, so `global_steps` restarts every round and the warmup would be
+   re-paid every round, forever.
+3. **The trained critic was on disk the whole time.** `round_<k>/aggregated/critic_hf` is
+   written every PPO round and survives `cleanup_round_checkpoints` (which only deletes
+   `checkpoints/` shard dirs). The asset existed; only the wiring was missing.
+
+### Fix
+
+`resolve_start_critic(cfg, base_model)` picks the first trained round's value model and
+tags its provenance: **explicit `critic_model_path`/`--critic-path` > the aggregated
+critic sitting beside an aggregated seed actor > the actor backbone (fresh head)**. The
+middle rule makes the field case correct *by default*, so nobody has to know this trap
+exists.
+
+Detecting "is this a critic?" cannot use `config.json`: verl's `model_merger` writes
+`architectures: [<Arch>ForCausalLM]` for the critic **and** the actor — verified against a
+real merged pair, where the only difference is `score.weight [1, 1536]` + `score.bias [1]`
+in the weights. `has_value_head` therefore reads tensor NAMES, and does it without
+importing torch/safetensors (this driver is deliberately verl-free): 8-byte LE header
+length + JSON header for a single file, `model.safetensors.index.json`'s `weight_map` when
+sharded, and `None` ("undeterminable", never a guess) for legacy `.bin` or a corrupt
+header.
+
+Anti-silence guarantees, so the class cannot recur unnoticed:
+
+- an explicit `--critic-path` **without** a value head is a hard `ValueError` (that is the
+  exact mistake this option exists to prevent; omit the flag to reset deliberately);
+- a warm start off an aggregated actor that still ends up with a fresh head prints a
+  boxed `[warn]` block naming both paths, the consequence, and both remedies;
+- a genuine fresh run from a pretrained base logs one line saying the head is fresh and
+  that this is expected;
+- `federated_summary.json` records `critic_init` (`resume` | `auto-sibling` | `explicit` |
+  `fresh-value-head`) and `start_critic`, so a warm-started run's provenance is on the
+  record for the paper.
+
+GRPO is untouched (no critic exists), and a PPO run from a pretrained base resolves to
+exactly its pre-fix value — no behavior change for fresh runs.
+
+### Verification
+
+- `tests/test_critic_warm_start.py` (6, offline): the fixture is checked to be a *real*
+  safetensors container (guarded `importorskip`) so the parser tests aren't vacuous;
+  head detection single-file/sharded/`v_head`; `.bin`/missing/corrupt → `None`;
+  auto-sibling resolution; fallbacks for no-sibling and pretrained-base (no regression);
+  explicit beats sibling; actor-as-critic raises; missing dir raises.
+- Against the **real** merged pair from `runs/hardness_rerun/ppo_ws_std1/round_8`:
+  actor → `False`, critic → `True`, and `resolve_start_critic` returns that round's
+  `critic_hf` with mode `auto-sibling`.
+
 ## 2026-07-23: RESUME could FedAvg a dead attempt's checkpoint — a re-run round inherited the crashed attempt's partial artifacts, and `latest_actor_dir` picks the HIGHEST global_step
 
 - **Files:** `fedagent/fed/run_fed.py` (`quarantine_stale_rounds` + its call right after

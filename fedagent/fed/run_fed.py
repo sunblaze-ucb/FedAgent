@@ -68,6 +68,10 @@ _RUN_TAG = uuid.uuid4().hex[:8]
 
 DEFAULTS = {
     "model_path": "",                       # "" => auto-discover Qwen2.5-0.5B-Instruct
+    "critic_model_path": "",                # PPO only: the value model the FIRST trained round starts
+                                            #   from. "" => auto: the aggregated critic sitting next to
+                                            #   an aggregated seed actor (warm start), else the actor
+                                            #   backbone with a fresh value head. See resolve_start_critic.
     "env_spec": str(PKG_DIR / "config" / "envs" / "tiny_guess.yaml"),
     "custom_cls_path": str(PKG_DIR / "data" / "agentic_dataset.py"),
     "agent_config_path": str(PKG_DIR / "config" / "agent.yaml"),
@@ -302,6 +306,97 @@ def _valid_hf_dir(d: Path) -> bool:
     never passes."""
     return d.is_dir() and (d / "config.json").is_file() and bool(
         list(d.glob("*.safetensors")) + list(d.glob("*.bin")))
+
+
+def hf_weight_keys(hf_dir) -> Optional[List[str]]:
+    """Tensor names in an HF dir's safetensors -- WITHOUT importing torch/safetensors.
+
+    This driver is deliberately verl/torch-free (module docstring) and this check runs
+    before any client launches, so it reads the safetensors container directly: 8 bytes of
+    little-endian header length, then that many bytes of JSON whose top-level keys are the
+    tensor names. Sharded checkpoints list the same names in model.safetensors.index.json's
+    weight_map. Returns None when the format gives no cheap answer (e.g. a legacy .bin
+    checkpoint) so callers degrade to "unknown" instead of guessing."""
+    d = Path(hf_dir)
+    idx = d / "model.safetensors.index.json"
+    if idx.is_file():
+        try:
+            return list(json.loads(idx.read_text()).get("weight_map", {}))
+        except (OSError, ValueError):
+            return None
+    files = sorted(d.glob("*.safetensors"))
+    if not files:
+        return None
+    keys: List[str] = []
+    for f in files:
+        try:
+            with open(f, "rb") as fh:
+                n = int.from_bytes(fh.read(8), "little")
+                if not 0 < n <= 100_000_000:      # sanity-bound a corrupt/truncated header
+                    return None
+                header = json.loads(fh.read(n).decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            return None
+        keys += [k for k in header if k != "__metadata__"]
+    return keys
+
+
+def has_value_head(hf_dir) -> Optional[bool]:
+    """True/False if ``hf_dir`` carries PPO's scalar value head; None if undeterminable.
+
+    A merged critic and a merged actor are INDISTINGUISHABLE by config.json -- verl's
+    model_merger writes ``architectures: [<Arch>ForCausalLM]`` for both -- so the head has
+    to be found in the weights. verl builds the critic as ``...ForTokenClassification``
+    with ``num_labels=1`` (workers/engine/fsdp/transformer_impl.py:264), whose head is
+    ``score.{weight,bias}`` (shapes [1, hidden] / [1]); the trl fallback in
+    ``load_valuehead_model`` names it ``v_head``. An actor checkpoint carries neither."""
+    keys = hf_weight_keys(hf_dir)
+    if keys is None:
+        return None
+    return any(k.startswith("score.") or "v_head" in k for k in keys)
+
+
+def is_aggregated_actor(p) -> bool:
+    """``p`` is a previous run's merged FedAvg actor (``round_<k>/aggregated/hf``), i.e. a
+    warm-start seed rather than a pretrained base model."""
+    p = Path(p)
+    return p.name == "hf" and p.parent.name == "aggregated"
+
+
+def resolve_start_critic(cfg, base_model: str):
+    """The PPO value model for the FIRST trained round -> (path, provenance tag).
+
+    Order: explicit ``cfg.critic_model_path`` > the aggregated critic sitting beside an
+    aggregated seed actor (warm start) > the actor path itself (fresh value head).
+
+    Why the middle rule exists: ``model_path`` was designed as "the pretrained base for
+    round 1", and continuation was meant to go through ``resume`` (same output_dir), which
+    restores actor AND critic and even refuses to call a PPO round complete without the
+    merged critic. Pointing ``model_path`` at a previous run's ``round_<k>/aggregated/hf``
+    to seed a NEW output_dir is a warm start the original design never covered: the actor
+    came along, the critic silently did not, and PPO then spent its opening rounds
+    regressing a randomly initialized value head while the policy trained on the resulting
+    (uncalibrated) GAE advantages. The trained critic is right there on disk --
+    ``round_<k>/aggregated/critic_hf`` is written every round and survives
+    cleanup_round_checkpoints -- so wire it up automatically. GRPO never reaches here."""
+    explicit = str(cfg.get("critic_model_path", "") or "")
+    if explicit:
+        if not _valid_hf_dir(Path(explicit)):
+            raise FileNotFoundError(
+                f"critic_model_path is not a complete HF model dir: {explicit}")
+        if has_value_head(explicit) is False:
+            raise ValueError(
+                f"critic_model_path carries no value head (no score.*/v_head weights): {explicit}\n"
+                "  That is an ACTOR checkpoint, so PPO would start from a RANDOM value head -- the\n"
+                "  exact silent reset this option exists to prevent. Point it at the aggregated\n"
+                "  critic (<run>/round_<k>/aggregated/critic_hf), or omit critic_model_path to\n"
+                "  start the value head fresh from the actor backbone deliberately.")
+        return explicit, "explicit"
+    sibling = Path(base_model).parent / "critic_hf"
+    if (is_aggregated_actor(base_model) and _valid_hf_dir(sibling)
+            and has_value_head(sibling) is not False):
+        return str(sibling), "auto-sibling"
+    return base_model, "fresh-value-head"
 
 
 def find_resume_round(cfg, is_ppo: bool):
@@ -1970,9 +2065,14 @@ def run(cfg) -> dict:
         client_history: List[dict] = []    # paper per-client "circle" marks (client_end_eval)
         pending_prewarm: List[dict] = []   # lever #2: round r+1's env services, launched early in round r
         current_model = base_model
-        # PPO round-1 value model starts from the base (random value head on the backbone),
-        # mirroring the original's critic.model.path=<base>; thereafter the aggregated critic.
-        current_critic = base_model if is_ppo else None
+        # PPO's value model for the first trained round. From a pretrained base this is the
+        # base itself (random value head on the backbone), mirroring the original's
+        # critic.model.path=<base>; when this run WARM-STARTS from a previous run's
+        # aggregated actor it is that round's aggregated critic (resolve_start_critic).
+        # Thereafter every round trains from the previous round's aggregated critic.
+        current_critic, critic_init = (
+            resolve_start_critic(cfg, base_model) if is_ppo else (None, None))
+        start_critic = current_critic
 
         # round-level resume: rerunning the same --output-dir continues at the round after the
         # last completed one (see find_resume_round for why this is faithful). --fresh disables.
@@ -1982,7 +2082,8 @@ def run(cfg) -> dict:
             if _k > 0:
                 current_model = str(_actor_hf)
                 if is_ppo:
-                    current_critic = str(_critic_hf)
+                    current_critic = str(_critic_hf)   # resume restores the trained critic too
+                    critic_init, start_critic = "resume", current_critic
                 start_round = _k + 1
                 if _k >= int(cfg.total_rounds):
                     log(f"RESUME: all {cfg.total_rounds} rounds already complete in "
@@ -2016,6 +2117,30 @@ def run(cfg) -> dict:
                     log(f"RESUME: carried {len(_ph)} round record(s) into the summary; worker "
                         f"teardown re-derives val points/circles from the on-disk dumps "
                         f"(resumed_from_round={_k})")
+
+        # PPO critic provenance, stated out loud exactly once (the reset this guards against
+        # used to be silent: the run logged a critic path that happened to be the ACTOR's and
+        # said nothing about the value head being random).
+        if is_ppo and critic_init != "resume":
+            if critic_init == "auto-sibling":
+                log(f"PPO critic WARM START: {start_critic} "
+                    "(aggregated critic found beside the seed actor)")
+            elif critic_init == "explicit":
+                log(f"PPO critic from critic_model_path: {start_critic}")
+            elif is_aggregated_actor(base_model):
+                # warm start off an aggregated actor, yet no usable critic beside it
+                log("[warn] " + "=" * 72)
+                log("[warn] PPO WARM START WITHOUT A TRAINED CRITIC -- value head is RANDOM.")
+                log(f"[warn]   seed actor : {base_model}")
+                log(f"[warn]   critic     : {start_critic} (no score.*/v_head weights)")
+                log("[warn]   GAE's baseline is uncalibrated, so the opening rounds' advantages are")
+                log("[warn]   unreliable and the policy can regress before the critic catches up.")
+                log("[warn]   Fix: --critic-path <that run's round_<k>/aggregated/critic_hf>, or")
+                log("[warn]   resume in the ORIGINAL --output-dir (restores actor AND critic).")
+                log("[warn] " + "=" * 72)
+            else:
+                log(f"PPO critic: fresh value head on {start_critic} "
+                    "(expected for a run starting from a pretrained base)")
 
         # RESUME hygiene: archive partial artifacts of any round above the last completed
         # one so every re-run round starts from an empty dir (quarantine_stale_rounds --
@@ -2263,7 +2388,11 @@ def run(cfg) -> dict:
         "base_model": base_model,
         **({"resumed_from_round": start_round - 1} if start_round > 1 else {}),
         "final_model": current_model,
-        **({"final_critic": current_critic} if is_ppo else {}),
+        # critic_init records HOW the value model entered this run (resume | auto-sibling |
+        # explicit | fresh-value-head) so a warm-started PPO run's provenance -- in
+        # particular whether its value head was inherited or reset -- is on the record.
+        **({"final_critic": current_critic, "critic_init": critic_init,
+            "start_critic": start_critic} if is_ppo else {}),
         **({"val_curve": val_history} if do_eval else {}),
         **({"client_curve": client_history} if (do_eval and client_history) else {}),
         "rounds": history,
@@ -2289,6 +2418,8 @@ def load_cfg(args) -> "OmegaConf":
         cfg = OmegaConf.merge(cfg, OmegaConf.load(args.config))
     if args.model_path is not None:
         cfg.model_path = args.model_path
+    if getattr(args, "critic_path", None) is not None:
+        cfg.critic_model_path = args.critic_path
     if args.output_dir is not None:
         cfg.output_dir = args.output_dir
     if args.rounds is not None:
@@ -2336,6 +2467,10 @@ def main():
     ap = argparse.ArgumentParser(description="FedAgent verl-0.8 federated runner")
     ap.add_argument("--config", help="federated YAML config")
     ap.add_argument("--model-path", default=None, help="base HF model dir (round 1)")
+    ap.add_argument("--critic-path", default=None,
+                    help="PPO only: HF value-model dir the first trained round starts from "
+                         "(default: the aggregated critic beside an aggregated seed actor, "
+                         "else the actor backbone with a fresh value head)")
     ap.add_argument("--output-dir", default=None)
     ap.add_argument("--rounds", type=int, default=None)
     ap.add_argument("--clients", type=int, default=None)
