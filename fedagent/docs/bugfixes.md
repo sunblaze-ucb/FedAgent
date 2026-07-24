@@ -5,6 +5,65 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-24: weight-transfer IPC namespace reused across rounds/retries — one crashed round left a stale `/tmp` socket that killed every later round of the run
+
+- **Files:** `fedagent/fed/run_fed.py` (`_unique_ipc_env` applied in `stream` + `BgProc`;
+  round added to the persistent job id; `verl_honors_job_id_override` preflight;
+  `sweep_own_ipc_sockets`); offline regression `tests/test_ipc_namespace.py`.
+- **Severity:** availability. Found from a field report: a WebShop PPO run died at round 48
+  with a stale-IPC engine error, and the same round kept dying — until the whole run was
+  restarted, which "fixed" it for reasons nobody could explain at the time.
+
+### Mechanism
+
+verl names the FSDP→vLLM weight-transfer ZMQ socket after the Ray job id
+(`ipc:///tmp/rl-colocate-zmq-<job_id>-replica-<r>-rank-<lr>.sock`). A process that dies
+hard leaves that FILE behind, so any later process computing the same path fails binding
+it. The overlay already hands each launch a `VERL_RAY_JOB_ID`
+(`tools/setup/patches/verl_weight_transfer_jobid.patch` makes verl honor it) — but
+uniqueness rested on five format strings being collectively injective, and two were not:
+
+1. **The per-round persistent worker.** `_persistent_cmd_env` used
+   `f"{_RUN_TAG}-persist{lane}"` — **no round**. `cross_round=false` relaunches a NEW
+   process every round, so every round of a run shared one socket path: round N's crash
+   poisoned N+1, N+2, … forever. A *fresh run* draws a new `_RUN_TAG` uuid — exactly why
+   restarting the run appeared to fix it while resuming into the same process did not.
+   (`cross_round=true` launches once, so it was never affected.)
+2. **The one-shot port-collision relaunches** (`stream_port_retry`,
+   `_wait_launch_port_retry`) re-ran with the dead attempt's identical id — so a crash that
+   left a socket behind was retried straight into that socket.
+
+### Fix
+
+`_unique_ipc_env` appends a process-global launch counter and is applied at the **two
+places a verl process is born** (`stream`, `BgProc.__init__`). "No two verl processes share
+a socket path" is now true *by construction* rather than by inspection of every job-id
+string; the descriptive ids are kept for debuggability, and the round was added to the
+persistent id anyway (defense in depth). No-op where no job id is set (aggregator, merger:
+no vLLM, no socket).
+
+Two supporting changes:
+
+- **Preflight (anti-silence).** Unpatched verl ignores `VERL_RAY_JOB_ID` entirely and every
+  isolated Ray cluster falls back to the same first job id `01000000` — all of a node's
+  runs then share one path, *with no error saying so*. `verl_honors_job_id_override()`
+  reads the installed source (`find_spec` on the top-level package locates without
+  executing, keeping the driver torch-free) and a missing patch now prints a boxed
+  `[warn]`. Returns `None` when the source can't be read — never a guess.
+- **`/tmp` hygiene.** `sweep_own_ipc_sockets()` unlinks this run's sockets at the end,
+  scoped strictly to its own `_RUN_TAG` so a concurrent run's LIVE sockets are never
+  touched. They otherwise accumulate one-per-launched-process for the node's lifetime
+  (the same field host also hit a full disk).
+
+### Verification
+
+- `tests/test_ipc_namespace.py` (5, offline): repeated `_unique_ipc_env` on the SAME env
+  yields distinct ids and does not mutate the caller's dict; no-op without a job id; both
+  launch primitives isolate (fake `Popen`, 3 launches → 3 namespaces); preflight
+  True/False/None against synthetic stock vs patched sources; the sweep removes only the
+  own-tag socket and leaves a foreign one.
+- Preflight against the real installed verl in `fedagent-verl08` → `True` (patch applied).
+
 ## 2026-07-24: PPO warm start silently RESET the critic — `model_path` was the only seed entry, so a continuation run inherited the policy but opened with a randomly initialized value head
 
 - **Files:** `fedagent/fed/run_fed.py` (`critic_model_path` DEFAULT + `--critic-path`;

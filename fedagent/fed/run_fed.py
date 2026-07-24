@@ -39,6 +39,7 @@ Usage (run inside the fedagent-verl08 env, on the GPU node):
 CLI flags override the YAML: --model-path --output-dir --rounds --clients.
 """
 import argparse
+import itertools
 import json
 import os
 import subprocess
@@ -308,6 +309,51 @@ def _valid_hf_dir(d: Path) -> bool:
         list(d.glob("*.safetensors")) + list(d.glob("*.bin")))
 
 
+def verl_honors_job_id_override() -> Optional[bool]:
+    """Does the INSTALLED verl honor the driver's ``VERL_RAY_JOB_ID``? True/False, or None
+    if the source could not be located.
+
+    run_fed hands every launched verl process its own weight-transfer IPC namespace
+    (``_unique_ipc_env``), but that only takes effect with
+    ``tools/setup/patches/verl_weight_transfer_jobid.patch`` applied. Stock verl derives
+    the socket path from the Ray job id, and every ISOLATED Ray cluster assigns the same
+    first job id (``01000000``) -- so unpatched, all of a node's runs (plus any dead run's
+    leftover socket file) share one path, and the injection is ignored with no error at
+    all. That silence is why the failure showed up in the field as an unexplained
+    engine crash instead of a configuration problem.
+
+    Reads the source rather than importing it: ``find_spec`` on the TOP-LEVEL package
+    locates without executing, keeping this driver torch-free."""
+    import importlib.util
+    try:
+        spec = importlib.util.find_spec("verl")
+    except (ImportError, ValueError):
+        return None
+    if spec is None or not spec.origin:
+        return None
+    src = Path(spec.origin).parent / "workers" / "rollout" / "vllm_rollout" / "vllm_rollout.py"
+    try:
+        return 'environ.get("VERL_RAY_JOB_ID")' in src.read_text()
+    except OSError:
+        return None
+
+
+def sweep_own_ipc_sockets() -> int:
+    """Unlink the weight-transfer sockets THIS run created (``_RUN_TAG``-prefixed only).
+
+    ZMQ leaves ``ipc://`` files behind on a hard exit; they otherwise pile up in /tmp for
+    the node's lifetime (one per launched verl process). Scoped strictly to our own tag --
+    a concurrent run's LIVE sockets must never be touched."""
+    n = 0
+    for sock in Path("/tmp").glob(f"rl-colocate-zmq-{_RUN_TAG}-*"):
+        try:
+            sock.unlink()
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
 def hf_weight_keys(hf_dir) -> Optional[List[str]]:
     """Tensor names in an HF dir's safetensors -- WITHOUT importing torch/safetensors.
 
@@ -515,6 +561,34 @@ def world_size_of(actor_dir: Path) -> int:
     return ws.pop()
 
 
+_IPC_LAUNCH = itertools.count()
+
+
+def _unique_ipc_env(env: dict) -> dict:
+    """A copy of ``env`` whose ``VERL_RAY_JOB_ID`` is unique to THIS launch attempt.
+
+    That variable names the FSDP->vLLM weight-transfer ZMQ IPC socket
+    (``ipc:///tmp/rl-colocate-zmq-<job_id>-replica-<r>-rank-<lr>.sock``; see
+    tools/setup/patches/). A process that dies hard leaves the socket FILE behind, so any
+    later process computing the SAME path fails binding it -- observed in the field as a
+    stale-IPC engine error that killed a round and kept recurring until the whole run was
+    restarted.
+
+    Deriving the namespace per LAUNCH makes "no two verl processes share a socket path"
+    true by construction, instead of resting on five job-id format strings being
+    collectively injective. Two real holes it closes: the per-round persistent worker
+    reused ONE id for every round of a run (round N's crash then poisoned N+1, N+2, ...),
+    and the one-shot port-collision relaunches re-ran under the dead attempt's id.
+
+    No-op for launches that set no job id (aggregator, merger: no vLLM, no socket)."""
+    base = env.get("VERL_RAY_JOB_ID")
+    if not base:
+        return env
+    out = dict(env)
+    out["VERL_RAY_JOB_ID"] = f"{base}-a{next(_IPC_LAUNCH)}"
+    return out
+
+
 def stream(cmd: List[str], env: dict, log_path: Path, tag: str) -> int:
     """Run cmd, tee combined stdout/stderr to console (tagged) and to log_path. Return rc."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -522,7 +596,7 @@ def stream(cmd: List[str], env: dict, log_path: Path, tag: str) -> int:
     log(f"  (log: {log_path})")
     with open(log_path, "w") as lf:
         proc = subprocess.Popen(
-            cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cmd, env=_unique_ipc_env(env), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1,
         )
         for line in proc.stdout:
@@ -547,7 +621,8 @@ class BgProc:
         self.tag = tag
         self._lf = open(log_path, "w", buffering=1)   # line-buffered: per-round metrics can read it mid-run
         self.proc = subprocess.Popen(
-            cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            cmd, env=_unique_ipc_env(env), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1)
         self._t = threading.Thread(target=self._pump, daemon=True)
         self._t.start()
 
@@ -1421,7 +1496,10 @@ def _persistent_cmd_env(cfg, plan: List[dict], plan_path: Path, model_path: str,
     _lt = f"-l{lane}" if lane is not None else ""
     env.update(_port_band_env(cfg, lane or 0))   # quiet port band for vLLM/verl port draws (per lane)
     env["FEDAGENT_PERSISTENT"] = "1"             # sitecustomize -> arm the reload patch on workers
-    env["VERL_RAY_JOB_ID"] = f"{_RUN_TAG}-persist{_lt}"  # disjoint weight-xfer socket per worker
+    env["VERL_RAY_JOB_ID"] = f"{_RUN_TAG}-persist{_lt}-r{round_num}"   # disjoint weight-xfer
+    # socket. The round is IN the id because the non-cross_round persistent path relaunches a
+    # NEW process every round: one shared id meant a crashed round left a stale /tmp socket that
+    # killed every later round of the run. (cross_round launches once, so its id is stable.)
     env["FEDAGENT_PERSISTENT_PLAN"] = str(plan_path)
     if _epoch_resample_on(cfg):
         # E-expanded train dataset (fresh goals per epoch slot) with trainer.total_epochs=1.
@@ -2061,6 +2139,18 @@ def run(cfg) -> dict:
                 val_history.append({"round": rnum, "model": label, **m})
 
     try:
+        # The per-launch weight-transfer IPC isolation is a 2-line verl patch away from being
+        # a no-op, and unpatched it fails SILENTLY (see verl_honors_job_id_override).
+        if verl_honors_job_id_override() is False:
+            log("[warn] " + "=" * 72)
+            log("[warn] verl does NOT honor VERL_RAY_JOB_ID -- tools/setup/patches/"
+                "verl_weight_transfer_jobid.patch is NOT applied.")
+            log("[warn]   Every isolated Ray cluster then uses job id 01000000, so concurrent")
+            log("[warn]   clients/evals -- and any crashed run's leftover /tmp socket -- share one")
+            log("[warn]   weight-transfer path: engine dies at init, or weight sync hangs at 0% GPU.")
+            log("[warn]   Apply it (2 lines, no effect on results): tools/setup/patches/README.md")
+            log("[warn] " + "=" * 72)
+
         history = []
         client_history: List[dict] = []    # paper per-client "circle" marks (client_end_eval)
         pending_prewarm: List[dict] = []   # lever #2: round r+1's env services, launched early in round r
@@ -2398,6 +2488,12 @@ def run(cfg) -> dict:
         "rounds": history,
     }
     (out / "federated_summary.json").write_text(json.dumps(summary, indent=2))
+
+    # /tmp hygiene: drop this run's weight-transfer sockets (own _RUN_TAG only). All of the
+    # run's verl processes are finished by here.
+    _swept = sweep_own_ipc_sockets()
+    if _swept:
+        log(f"cleanup: removed {_swept} weight-transfer socket(s) left in /tmp by this run")
 
     banner("FEDERATED LOOP CLOSED ✅")
     for h in history:
