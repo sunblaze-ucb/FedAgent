@@ -56,6 +56,17 @@ task_score plumbing) is SKIPPED with a warning instead of failing the call.
 ``val/reward_mean`` stays plottable on explicit request, but is deliberately
 NOT in the default set: the training reward is the binarized {0,10} success
 signal, so that curve is success_rate x10 — same information, misleading label.
+
+Each metric carries its own DISPLAY convention (``_DISPLAY``), applied
+automatically — no flag needed for publication-ready axes:
+
+    val/success_rate   x100, labelled "(%)"        — a real percentage
+    val/task_score     x100, labelled "(0-100)"    — the WebShop convention of
+                       100x the mean graded goal-match score: a 0-100 SCORE,
+                       NOT a percentage (see the paper's Metrics paragraph)
+    val/reward_mean    unscaled
+
+``--raw`` disables scaling and plots the stored [0,1] values instead.
 """
 from __future__ import annotations
 
@@ -154,6 +165,18 @@ def aggregated_curve(data: Experiment, metric: str) -> List[Tuple[int, float]]:
     return pairs
 
 
+# Per-metric display convention: (y scale, ylabel unit suffix). success_rate and task_score
+# are BOTH stored in [0,1] and BOTH shown x100, but only success_rate is a percentage --
+# Task Score is the WebShop convention of 100x the mean graded goal-match score, i.e. a
+# 0-100 score (the paper says so explicitly: "a 0--100 score, not a percentage"). Labelling
+# it "%" was wrong on every figure produced before this table existed.
+_DISPLAY = {
+    "success_rate": (100.0, "(%)"),
+    "task_score": (100.0, "(0-100)"),
+    "reward_mean": (1.0, ""),
+}
+
+
 _SUMMARY_METRIC = {
     "val/success_rate": "success_rate", "success_rate": "success_rate",
     "val/reward_mean": "reward_mean", "reward_mean": "reward_mean", "reward": "reward_mean",
@@ -209,7 +232,7 @@ def plot_training_dynamics(
     with_clients: bool = False,
     out_path: Optional[str] = None,
     round_stride: Optional[int] = None,
-    as_percent: bool = False,
+    raw: bool = False,
     title: Optional[str] = None,
     from_summary: Optional[bool] = None,
 ) -> str:
@@ -246,7 +269,7 @@ def plot_training_dynamics(
         stride = stride_hint
     else:
         stride = infer_round_stride(folder, data)
-    scale = 100.0 if as_percent else 1.0
+    scale, unit = (1.0, "") if raw else _DISPLAY.get(_metric_slug(metric), (1.0, ""))
     fig, ax = plt.subplots(figsize=(10, 6))
 
     # Cumulative training-epoch x position of each round: round N's step-0
@@ -317,7 +340,7 @@ def plot_training_dynamics(
         # instead of matplotlib's default "nice" spacing, which lands on non-data epochs (2.5).
         ax.xaxis.set_major_locator(MultipleLocator(max(stride, 1)))
     ax.set_xlim(left=0)
-    ax.set_ylabel(metric + (" (%)" if as_percent else ""), fontsize=14)
+    ax.set_ylabel(f"{metric} {unit}".strip(), fontsize=14)
     ax.set_title(title or Path(folder).name, fontsize=14, fontweight="bold")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=12, loc="best")
@@ -348,7 +371,7 @@ def plot_metric_set(
     with_clients: Optional[bool] = None,
     out_path: Optional[str] = None,
     round_stride: Optional[int] = None,
-    as_percent: bool = False,
+    raw: bool = False,
     title: Optional[str] = None,
     from_summary: Optional[bool] = None,
 ) -> List[str]:
@@ -394,12 +417,17 @@ def plot_metric_set(
                     m_out = str(Path(folder) / f"training_dynamics_{slug}{wc_tag}.pdf")
             m_title = title
             if many:
-                m_title = f"{title or Path(folder).name} — {slug.replace('_', ' ')}"
+                base_t = title or Path(folder).name
+                # ...but don't repeat the metric when the caller's title already names it
+                # ("... val task_score — task score" was the observed result).
+                low = base_t.lower()
+                m_title = base_t if (slug in low or slug.replace("_", " ") in low) else \
+                    f"{base_t} — {slug.replace('_', ' ')}"
             try:
                 outs.append(plot_training_dynamics(
                     folder, metric,
                     with_clients=wc, out_path=m_out,
-                    round_stride=round_stride, as_percent=as_percent, title=m_title,
+                    round_stride=round_stride, raw=raw, title=m_title,
                     from_summary=from_summary,
                 ))
             except ValueError as e:
@@ -443,17 +471,24 @@ def main() -> None:
                     help="training epochs per round = x-axis stride between rounds "
                          "(default: the summary's epochs_per_round when federated_summary.json "
                          "is the source, else ep-per-cl-N parsed from the run dir name)")
+    ap.add_argument("--raw", action="store_true",
+                    help="plot the stored [0,1] values instead of each metric's display "
+                         "convention (success_rate x100 '%%', task_score x100 '0-100')")
     ap.add_argument("--percent", action="store_true",
-                    help="scale the metric to a percentage (x100)")
+                    help=argparse.SUPPRESS)   # deprecated: scaling is now per-metric
     ap.add_argument("--title", default=None, help="figure title (default: run dir name; "
                     "with several metrics each gets a — <metric> suffix)")
     args = ap.parse_args()
+    if args.percent:
+        print("[plot] note: --percent is obsolete and ignored -- each metric now carries its "
+              "own scale/label (success_rate x100 '%', task_score x100 '0-100'). Use --raw "
+              "for the unscaled [0,1] values.")
     plot_metric_set(
         args.experiment_dir,
         [m.strip() for m in args.metric.split(",") if m.strip()],
         with_clients=True if args.with_clients else (False if args.no_clients else None),
         out_path=args.out,
-        round_stride=args.round_stride, as_percent=args.percent, title=args.title,
+        round_stride=args.round_stride, raw=args.raw, title=args.title,
         from_summary=False if args.client_logs else None,
     )
 

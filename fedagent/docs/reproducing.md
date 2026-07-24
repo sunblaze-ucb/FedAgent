@@ -553,9 +553,13 @@ Each run writes everything under the config's `output_dir`:
   WebShop-only, skipped with a warning where absent) + `val/success_rate`, each
   as a plain figure and a `_with_clients` overlay (the overlay pair is
   auto-skipped when the summary has no `client_curve`; `--no-clients` /
-  `--with-clients` pin one variant). Don't plot `val/reward_mean`: the training
-  reward is the binarized {0,10} success signal, so that curve is
-  success_rate ×10 under another label. On this stack it auto-reads `federated_summary.json`
+  `--with-clients` pin one variant). Axis scale and label come from the metric,
+  not from a flag: Success Rate is ×100 `(%)`, Task Score is ×100 `(0-100)` —
+  the WebShop convention of 100× the mean graded goal-match score, **a score,
+  not a percentage** (`--raw` plots the stored [0,1] values). Don't plot
+  `val/reward_mean`: the training reward is the binarized {0,10} success signal,
+  so that curve is success_rate ×10 under another label.
+  On this stack it auto-reads `federated_summary.json`
   (`val_curve` red line + `client_curve` circles, x-stride = `epochs_per_round`)
   and stays
   resume-safe, a resumed run's summary carries the pre-resume rounds. The

@@ -121,6 +121,28 @@ def test_plot_metric_set_raises_when_nothing_rendered_or_name_bad(tmp_path, monk
         ptd.plot_metric_set(str(tmp_path), ["oops", "val/success_rate"])
 
 
+def test_display_conventions_task_score_is_not_a_percentage():
+    # Task Score is 100x the mean graded goal-match score -- a 0-100 SCORE. The paper says
+    # "a 0--100 score, not a percentage"; figures used to label it "(%)" because the scale
+    # came from a global --percent flag rather than from the metric.
+    assert ptd._DISPLAY["task_score"] == (100.0, "(0-100)")
+    assert ptd._DISPLAY["success_rate"] == (100.0, "(%)")     # this one IS a percentage
+    assert ptd._DISPLAY["reward_mean"] == (1.0, "")           # raw {0,10} mean, unscaled
+
+
+def test_title_suffix_not_duplicated_when_already_named(tmp_path, monkeypatch):
+    _write_summary(tmp_path)
+    titles = []
+    monkeypatch.setattr(ptd, "plot_training_dynamics",
+                        lambda f, m, *, title=None, **kw: titles.append((m, title)) or "o")
+    ptd.plot_metric_set(str(tmp_path), ["val/task_score", "val/success_rate"],
+                        with_clients=False, title="webshop_ppo_uniform - aggregated val task_score")
+    # the caller's title already says task_score -> no " — task score" tail appended...
+    assert titles[0][1] == "webshop_ppo_uniform - aggregated val task_score"
+    # ...but success_rate is not named in it, so that one still gets disambiguated
+    assert titles[1][1].endswith("— success rate")
+
+
 def test_default_metrics_is_the_paper_pair():
     assert ptd.DEFAULT_METRICS == "val/task_score,val/success_rate"
     assert "reward_mean" not in ptd.DEFAULT_METRICS      # redundant: success_rate x10

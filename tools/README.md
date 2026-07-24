@@ -12,7 +12,7 @@ FedAvg aggregator run_fed shells out to each round is
 | [`eval_alfworld_by_tasktype.py`](eval_alfworld_by_tasktype.py) | per-task-type success breakdown on the ALFWorld validation split |
 | [`summarize_fed_run.py`](summarize_fed_run.py) | post-processes a run directory (round/client metrics, asymmetry/compounding summary) |
 | [`collect_fed_logs.sh`](collect_fed_logs.sh) | gathers per-node `training.log`s into one stage dir, then runs the summarizer |
-| [`plot_training_dynamics.py`](plot_training_dynamics.py) | training-dynamics figures — one call renders the default set of 4: the paper pair `val/task_score` + `val/success_rate`, each plain AND `_with_clients` (`val/reward_mean` is deliberately not in the set: the reward is the binarized {0,10} success signal, so it duplicates success_rate ×10); reads `federated_summary.json` (verl-0.8 runs) or the legacy `round_*/client_*/json_logs/metrics.json` |
+| [`plot_training_dynamics.py`](plot_training_dynamics.py) | training-dynamics figures — one call renders the default set of 4: the paper pair `val/task_score` + `val/success_rate`, each plain AND `_with_clients`. Scale/label are per metric (`success_rate` ×100 `(%)`; `task_score` ×100 `(0-100)` — a score, **not** a percentage; `--raw` for stored [0,1]). `val/reward_mean` is deliberately not in the set: the reward is the binarized {0,10} success signal, so it duplicates success_rate ×10. Reads `federated_summary.json` (verl-0.8 runs) or the legacy `round_*/client_*/json_logs/metrics.json` |
 
 [`setup/`](setup/) holds install-time assets: `build_fa.sh` (flash-attn source build for
 old-glibc nodes) and [`patches/`](setup/patches/) (the 2-line verl weight-transfer patch
