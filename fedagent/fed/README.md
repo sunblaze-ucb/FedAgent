@@ -97,7 +97,12 @@ scored on the same fixed set. `eval_global(...)` runs a verl **val-only** pass
 generate-and-score, never a critic, and `FEDPROX_MU` is stripped) on the aggregated global
 model **every round** (`test_freq` is inert, kept for legacy name-parity); `val_before_train` also scores the
 base model as the round-0 point. `summarize_val_dump` reads verl's validation JSONL dump
-into `{n, success_rate, reward_mean}` (mean of `traj_success` / `score`). Eval failures
+(`round_<k>/eval/val_samples/<step>.jsonl`, one row per val goal) into
+`{n, success_rate, reward_mean, task_score_mean}` (mean of `traj_success` / `score` /
+`task_score`). A row shows the **terminal** turn of its episode in windowed mode;
+`FEDAGENT_EVAL_TRAJECTORY_DUMP=1` adds an opt-in `trajectory` column with every turn
+(see [`../agent_loops/README.md`](../agent_loops/README.md#the-trajectory-column)) — the row
+count stays 1:1 either way, which is what keeps the means per-episode. Eval failures
 log a warning and never abort the run; it is measurement, not the loop. Val sampling uses
 `val_temperature` (paper: 0.4).
 

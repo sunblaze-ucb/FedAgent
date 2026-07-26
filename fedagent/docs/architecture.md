@@ -263,7 +263,10 @@ never aborts the run (it is measurement, not the loop).
 
 Per run, under `output_dir/`: `round_*/client_*/training.log` + `json_logs/metrics.json`
 (FedAgent plot format), `round_*/aggregated/hf` (the round's global model), the per-service
-logs, and `federated_summary.json` (the round history + the unperturbed val curve). Consumed
+logs, `round_*/eval/val_samples/*.jsonl` (the per-episode eval dump the val curve is computed
+from, and which Resume rebuilds a missing round from — optionally carrying each episode's full
+trajectory, see [running.md](./running.md#validation--eval)), and `federated_summary.json` (the
+round history + the unperturbed val curve). Consumed
 FSDP shards are deleted after each merge (`cleanup_checkpoints`) to bound disk to ~one round.
 
 ## See also

@@ -202,6 +202,15 @@ no client skew) and scores the aggregated **global** model:
 The round → success/reward curve is written to `federated_summary.json` (`val_curve`). A
 failed eval logs a warning and continues; it never aborts the run.
 
+**Per-episode detail.** Each eval also writes verl's own dump —
+`round_<k>/eval/val_samples/<step>.jsonl`, one row per val goal — which is what `val_curve` is
+computed from (`summarize_val_dump`) and what Resume rebuilds a missing round from. In windowed
+mode a row shows the **terminal** turn only (eval collapses each episode to its last turn to keep
+verl's 1:1 contract and the per-episode metric intact). To get the whole episode instead, set
+`FEDAGENT_EVAL_TRAJECTORY_DUMP=1` and each row gains a `trajectory` column carrying every turn's
+observation, prompt, action and reward. Opt-in because it is the dominant term in the dumps' size;
+see [`../agent_loops/README.md`](../agent_loops/README.md#the-trajectory-column).
+
 ## Concurrent runs on one node
 
 Two jobs on the same node must not collide on env-service ports. Give each a distinct
@@ -405,6 +414,11 @@ Under `output_dir/`:
 - `round_*/aggregated/hf`: the round's global model (HF format; the next round's starting
   point)
 - `<env>_service_client*.log`, `<env>_val_service.log`: per-service logs
+- `round_*/eval/val_samples/*.jsonl` (and `round_*/client_*/eval/val_samples/` under
+  `client_end_eval`): the per-episode eval dump, one row per val goal — the source of
+  `val_curve` and of Resume's rebuild of a missing round, so it survives checkpoint cleanup.
+  Terminal turn per row by default; `FEDAGENT_EVAL_TRAJECTORY_DUMP=1` adds a `trajectory`
+  column with the full episode (see [Validation / eval](#validation--eval))
 - `federated_summary.json`: round history, mode/algorithm, final model, and (if eval on)
   the unperturbed `val_curve`
 

@@ -40,15 +40,15 @@ duplicated here.
 | `merge_fp32` | `True` | 2026-07-23 | `5131b7d` | [bugfix](./bugfixes.md) |
 | `port_band_base` | `26000` | 2026-07-23 | `4a85d12` | [bugfix](./bugfixes.md); `0` = stock random ports |
 | `critic_model_path` | `""` → auto-sibling critic | 2026-07-24 | `5992fe7` | [bugfix](./bugfixes.md) |
-| eval `val_samples` rows | + `trajectory` column (whole episode) | 2026-07-25 | `b2b4cc0` | windowed eval only; `FEDAGENT_EVAL_TRAJECTORY_DUMP=0` disables; dumps get much bigger |
+| eval `trajectory` column | available, **opt-in** (`FEDAGENT_EVAL_TRAJECTORY_DUMP=1`) | 2026-07-25 | `b2b4cc0` | windowed eval only; landed default-ON, flipped to opt-in same day — dumps get much bigger when enabled |
 | WebShop option-reward comparison | goal side passes **values**, not `.items()` | 2026-07-25 | `cca3508` | [bugfix](./bugfixes.md); **raises** WebShop scores — the three shipped WebShop hardness label files are stale (ALFWorld's two are not) |
 
 ---
 
-## 2026-07-25: eval dumps carry the WHOLE trajectory, not just the terminal step
+## 2026-07-25: eval dumps CAN carry the whole trajectory, not just the terminal step (opt-in)
 
-- **Commit:** `b2b4cc0`. **Files:**
-  [`../agent_loops/windowed_agent_loop.py`](../agent_loops/windowed_agent_loop.py),
+- **Commits:** `b2b4cc0` (the column), `bc1a1c5` (default flipped ON → opt-in the same day).
+  **Files:** [`../agent_loops/windowed_agent_loop.py`](../agent_loops/windowed_agent_loop.py),
   offline regression [`../../tests/test_windowed_eval_trajectory.py`](../../tests/test_windowed_eval_trajectory.py).
   Mechanics and payload shape: [`../agent_loops/README.md`](../agent_loops/README.md#the-trajectory-column).
 
@@ -62,15 +62,20 @@ a `trajectory` column on `reward_extra_info` (the channel `goal_id`/`task_type` 
 Each turn records the env's raw windowed template, the chat-templated prompt the model actually
 saw, the emitted action, the step reward, and validity/truncation flags.
 
-**On by default**, `FEDAGENT_EVAL_TRAJECTORY_DUMP=0` to disable. Train rollouts are untouched
-(the payload is eval-only), and concat mode needs nothing — its single sample's prompt is
-already the whole conversation.
+**Opt-in**: set `FEDAGENT_EVAL_TRAJECTORY_DUMP=1` on the eval process. It landed default-ON in
+`b2b4cc0` and was flipped to opt-in the same day, because the payload is the dominant term in a
+dump's size — it scales with turns actually played (ALFWorld to 50, WebShop to 15), order 10× the
+metric-only rows — and a run that only needs `val/success_rate` should not pay for it. Any
+unrecognised flag value counts as off, so a typo cannot silently enable it. Train rollouts are
+untouched (the payload is eval-only), and concat mode needs nothing — its single sample's prompt
+is already the whole conversation.
 
-**Existing runs and tooling:** additive only. `summarize_val_dump` reads named numeric keys and
-`gen_hardness_trajectories` reads `goal_id`/`traj_success` via `.get()`, so both ignore the new
-column; older dumps without it stay readable. The cost is size: the dumps become the dominant
-artifact of a run (order 10× the metric-only rows, env- and policy-dependent since it scales
-with turns actually played). Disable it for long runs whose dumps are archived.
+**Existing runs and tooling:** additive, and now inert unless asked for. `summarize_val_dump`
+reads named numeric keys and `gen_hardness_trajectories` reads `goal_id`/`traj_success` via
+`.get()`, so both ignore the column when it is present; older dumps without it stay readable.
+With the flag unset, dumps keep exactly the pre-`b2b4cc0` shape. The only runs affected are ones
+launched from `b2b4cc0` with the flag defaulted on — their dumps carry the column and are larger,
+which is harmless but worth knowing when comparing artifact sizes.
 
 ## 2026-07-25: the WebShop reward scale changes — every shipped hardness label and every pre-fix WebShop number is now on the old scale
 

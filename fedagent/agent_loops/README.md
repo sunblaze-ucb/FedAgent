@@ -119,7 +119,7 @@ in verl's validation JSONL dump:
 - **`goal_id` / `task_type`**: added only when the env surfaces them
   (string-valued; kept in the val dump but skipped by metric aggregation). Used
   by the WebShop hardness-labelling pass and the ALFWorld eval breakdown.
-- **`trajectory`**: the whole episode, **eval rows only**, windowed mode only.
+- **`trajectory`**: the whole episode, **eval rows only**, windowed mode only, **opt-in**.
 
 ### The `trajectory` column
 
@@ -153,9 +153,12 @@ Two implementation constraints, both locked by
   pads every row out to the longest trajectory at 4 bytes/char; over dicts it yields
   `dtype=object`. It also serializes as a nested object rather than an escaped blob.
 
-On by default. `FEDAGENT_EVAL_TRAJECTORY_DUMP=0` turns it off — worth doing for long runs
-where the dumps are archived, since it is the dominant term in their size. Concat mode
-needs nothing: its single sample's prompt is already the whole conversation.
+**Opt-in**: set `FEDAGENT_EVAL_TRAJECTORY_DUMP=1` on the eval process. Off by default because
+the payload is the dominant term in a dump's size — it scales with the turns actually played
+(ALFWorld runs to 50, WebShop to 15), so a run that only needs `val/success_rate` should not
+pay for it. Turn it on for the runs you intend to read. Any unrecognised value counts as off,
+so a typo cannot silently enable it. Concat mode needs nothing: its single sample's prompt is
+already the whole conversation.
 
 The val pass in [`../fed/run_fed.py`](../fed/run_fed.py)
 (`summarize_val_dump`) reads this dump and reports
@@ -172,7 +175,7 @@ verl's name for `reward_score` in the dump), FedAgent's headline
 | `rollout_config` | `max_model_len` | context ceiling for the overflow guard (fallback `prompt_length + response_length`) |
 | row `extra_info` | `env_name`, `config`, `seed`, `max_turns` | which env, how to build/reset it, and the turn cap |
 | env var | `FEDAGENT_INVALID_ACTION_PENALTY_COEF` | invalid-action penalty coefficient (default `0.1`) |
-| env var | `FEDAGENT_EVAL_TRAJECTORY_DUMP` | `0` disables the eval `trajectory` column (default on) |
+| env var | `FEDAGENT_EVAL_TRAJECTORY_DUMP` | `1` enables the eval `trajectory` column (default off) |
 | env var | `VERL_LOGGING_LEVEL` | module log level (default `WARN`) |
 
 ## Adding an agent-loop
