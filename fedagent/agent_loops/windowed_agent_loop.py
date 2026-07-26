@@ -18,9 +18,34 @@ Division of labor (faithful to legacy, where history lived in env_manager.build_
 
 The per-turn -> batch expansion + uid/traj_uid tagging is done by WindowedAgentLoopManager/
 Worker (fedagent/agent_loops/windowed_manager.py), selected together via the rollout_mode switch.
+
+EVAL TRAJECTORY CAPTURE (``trajectory`` column in the val dump)
+--------------------------------------------------------------
+Eval COLLAPSES each episode to its last turn (windowed_manager.py: verl's ``_validate`` does
+``test_batch.union(test_output_gen_batch)`` and requires 1:1, and ``summarize_val_dump`` means
+over ROWS -- K rows per episode would weight long episodes more and silently corrupt
+success_rate). So the val dump only ever showed the TERMINAL step. The other turns are not
+recovered by expanding eval; they are carried as a payload on the row that survives.
+
+``reward_extra_info`` is the existing channel for that (``goal_id``/``task_type`` already ride
+it), and verl's ``_write_generations`` turns any length-matching key into a JSONL column
+verbatim. Two constraints shape the implementation:
+
+  * ``agent_loop.py`` takes the key set from ``reward_extra_infos[0]`` and then does
+    ``info[key]`` for EVERY row -- a key present on only some rows is a KeyError. Attaching to
+    ``outputs[-1]`` is exactly right: that is the row eval keeps, so every eval row has it, and
+    TRAIN attaches nothing at all (key absent everywhere -> consistent).
+  * The payload is a **dict, not a JSON string**. ``np.array([...])`` over strings yields a
+    ``<U<maxlen>`` array that pads every row to the longest one at 4 bytes/char; over dicts it
+    yields ``dtype=object`` and stores references. It also serializes as a nested object rather
+    than an escaped blob. ``tests/test_windowed_eval_trajectory.py`` locks both.
+
+On by default; ``FEDAGENT_EVAL_TRAJECTORY_DUMP=0`` disables it. TRAIN is never affected.
+Concat mode needs nothing: its single sample's prompt IS the whole conversation.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List
 from uuid import uuid4
 
@@ -28,6 +53,14 @@ from verl.experimental.agent_loop.agent_loop import AgentLoopOutput, register
 
 from fedagent.agent_loops.gym_text_agent_loop import GymTextAgentLoop
 from fedagent.envs.registry import make_env
+
+_TRAJ_DUMP_ENV = "FEDAGENT_EVAL_TRAJECTORY_DUMP"
+
+
+def eval_trajectory_dump_enabled() -> bool:
+    """Whether eval rows carry the full-trajectory payload. Default ON; read per episode so a
+    run can be flipped without a restart of anything that caches module state."""
+    return os.environ.get(_TRAJ_DUMP_ENV, "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 @register("gym_text_windowed")
@@ -54,6 +87,10 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
         # gen_hardness_trajectories aborts at aggregation.
         tag_vals: Dict[str, Any] = {}
         traj_uid = uuid4().hex   # one id per trajectory (broadcast advantage groups by it)
+        # Eval-only full-trajectory record (see the module docstring). Built during the loop
+        # because `cur_obs` and the generation prompt are gone by the time it ends.
+        capture = bool(validate) and eval_trajectory_dump_enabled()
+        turn_records: List[Dict[str, Any]] = []
         try:
             init_obs, _ = await env.reset(seed=seed)
             cur_obs = init_obs["obs_str"]    # env already built the full windowed template
@@ -71,7 +108,8 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
                 # task line goes first under left-truncation) while carrying the full reward.
                 # min() keeps the server-ctx guard for configs where prompt_length >= max_ctx.
                 cap = min(self.prompt_length, self._max_ctx - 1)
-                if len(prompt_ids) > cap:
+                prompt_truncated = len(prompt_ids) > cap
+                if prompt_truncated:
                     prompt_ids = prompt_ids[-cap:]
                 out = await self.server_manager.generate(
                     request_id=uuid4().hex, prompt_ids=prompt_ids, sampling_params=sampling_params
@@ -93,6 +131,24 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
                 resp_lp = (out.log_probs[: len(resp)]
                            if out.log_probs is not None and len(out.log_probs) == len(action_ids)
                            else None)
+                if capture:
+                    # `obs` = the env's windowed template for THIS turn (pre chat-template);
+                    # `prompt` = what the model actually saw (chat-templated, left-truncated at
+                    # `cap`, special tokens kept). They differ by exactly that rendering, which is
+                    # why both are recorded. `action` is the response: in windowed mode the
+                    # response IS the action (no obs tokens), so one field covers both -- but the
+                    # stored training sample is cut to response_length, so flag when that bites.
+                    turn_records.append({
+                        "turn": len(turn_records),
+                        "obs": cur_obs,
+                        "prompt": self.tokenizer.decode(prompt_ids, skip_special_tokens=False),
+                        "action": text,
+                        "reward": float(reward),
+                        "done": bool(done),
+                        "valid": bool(info.get("is_action_valid", True)),
+                        "prompt_truncated": prompt_truncated,
+                        "response_truncated": len(action_ids) > len(resp),
+                    })
                 outputs.append(AgentLoopOutput(
                     prompt_ids=prompt_ids[-self.prompt_length:],
                     response_ids=resp,
@@ -127,4 +183,17 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
                 o.extra_fields["reward_extra_info"]["task_score"] = task_score_val
             for tag, v in tag_vals.items():
                 o.extra_fields["reward_extra_info"][tag] = v
+        if capture and outputs:
+            # LAST turn only -- that is the one eval keeps (windowed_manager collapses to
+            # turn_outputs[-1]), so every eval row ends up carrying the key exactly once. Putting
+            # it on all turns would be equivalent but would hold K copies of the payload.
+            # Self-contained on purpose: whoever extracts just this column gets the tags too.
+            outputs[-1].extra_fields["reward_extra_info"]["trajectory"] = {
+                "n_turns": len(turn_records),
+                "success": float(success),
+                "episode_return": base_return,
+                "task_score": task_score_val,
+                **tag_vals,
+                "turns": turn_records,
+            }
         return outputs
