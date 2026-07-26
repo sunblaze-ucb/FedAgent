@@ -56,6 +56,18 @@ SIZE_PATTERNS = [re.compile(s) for s in SIZE_SET] + SIZE_PATTERNS
 
 def normalize_color(color_string: str) -> str:
     """Extracts the first color found if exists"""
+    # NOTE(fedagent): defense in depth. `norm_color in color_string` is a SUBSTRING test
+    # on str but a MEMBERSHIP test on tuple/list -- a non-str argument therefore matched
+    # nothing, fell through the loop, and was returned unchanged with no error. That
+    # silence is what let the get_reward() option-shape bug survive (docs/bugfixes.md
+    # 2026-07-25): the clicked side was normalized, the goal side was not. Fail loudly
+    # instead, so any future caller passing the wrong shape is caught at the first call.
+    if not isinstance(color_string, str):
+        raise TypeError(
+            f'normalize_color expects str, got {type(color_string).__name__}: '
+            f'{color_string!r}. A non-str argument would silently pass through '
+            f'unnormalized and corrupt option matching.'
+        )
     for norm_color in COLOR_SET:
         if norm_color in color_string:
             return norm_color

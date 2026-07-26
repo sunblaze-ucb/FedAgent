@@ -237,9 +237,16 @@ def get_reward(purchased_product, goal, price, options, **kwargs):
 
     r_att, num_attr_matches = get_attribute_reward(purchased_product, goal)
 
+    # NOTE(fedagent): stock WebShop passed `.items()` here -- (key, value) TUPLES --
+    # while the first argument is a list of plain values. normalize_color() then
+    # rewrote only the clicked side (`in` is a substring test on str but a membership
+    # test on tuple, so tuples fell through untouched), and the two sides could never
+    # agree under token_set_ratio. Correctly-clicked options scored as misses on 420 of
+    # 6239 option-bearing train goals and 5 of 64 val goals. See
+    # docs/bugfixes.md 2026-07-25 and tests/test_webshop_option_reward.py.
     r_option, num_option_matches = get_option_reward(
         list(options.values()),
-        goal['goal_options'].items()
+        list(goal['goal_options'].values())
         if isinstance(goal['goal_options'], dict)
         else goal['goal_options']
     )
