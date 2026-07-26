@@ -1,0 +1,302 @@
+# Revisions
+
+A running log of **deliberate revisions** to the overlay: behavior changes, default flips,
+shipped-asset regenerations, and layout moves that were *not* bug fixes. One entry per
+theme (related commits are folded together), newest first, each ending in what it means for
+runs and configs that predate it.
+
+**Scope, vs the neighbouring docs.**
+
+| This is a… | It goes in |
+|---|---|
+| defect: something was *wrong* and got corrected | [bugfixes.md](./bugfixes.md) (mechanism + impact + verification) |
+| deliberate change: default, protocol, shipped asset, layout, tooling | **this file** |
+| difference vs the verl-agent 0.3.1 fork | [migration.md](./migration.md) |
+| a run and its result | [../EXPERIMENTS.md](../EXPERIMENTS.md) |
+
+Bug fixes that *also* changed a default (e.g. `search_return_n`, `merge_fp32`) are listed in
+the ledger below for discoverability, but their mechanism stays in `bugfixes.md` — not
+duplicated here.
+
+---
+
+## Quick ledger: what a config/run inherits, and since when
+
+| Key / asset | Value now | Since | Commit | Notes |
+|---|---|---|---|---|
+| `rollout_mode` | `windowed` | 2026-06-28 | `e207579` | faithful per-turn rollout; `concat` opt-in |
+| paper-config budgets | resp 512 / ctx 2560·4608 | 2026-06-28 | `771ed5f` | regenerated for windowed |
+| PPO `actor.ppo_mini_batch_size` (paper configs) | 8 | 2026-07-09 | `3209721` | = the fork's 64 *rows* after `rollout.n=8` |
+| WebShop uniform arms | per-client goal shard | 2026-07-09 | `d3c1df1` | `min_goals_per_client` was previously inert |
+| `resume` | `True` | 2026-07-10 | `cbc93d6` | `--fresh` to start over |
+| `client_end_eval` | `False` (library) / `true` in all 176 paper configs | 2026-07-10 | `25082dd` | the paper's per-client circle marks |
+| val `n_envs` (both env specs) | 64 | 2026-07-14 | `7f09c73` | the paper's `val_data_size` |
+| `trajectories_file` (relative) | resolved against the **repo root** | 2026-07-21 | `fb140ea` | package-relative fallback kept |
+| tools module path | `python -m tools.X` | 2026-07-21 | `2b517c8` | was `tools.verl08_migration.X` |
+| plot `--metric` default | `val/task_score,val/success_rate` | 2026-07-23 | `35e21e3` | 4 figures per call |
+| `epoch_resample` | `True` | 2026-07-22 | `a3b5776` | [bugfix](./bugfixes.md) |
+| `critic_loss_mode` | `legacy_exact` | 2026-07-22 | `8c6f45f` | [bugfix](./bugfixes.md) |
+| `search_return_n` | `50` | 2026-07-23 | `6ecddd2` | [bugfix](./bugfixes.md); env-het pins 200 |
+| `merge_fp32` | `True` | 2026-07-23 | `5131b7d` | [bugfix](./bugfixes.md) |
+| `port_band_base` | `26000` | 2026-07-23 | `4a85d12` | [bugfix](./bugfixes.md); `0` = stock random ports |
+| `critic_model_path` | `""` → auto-sibling critic | 2026-07-24 | `5992fe7` | [bugfix](./bugfixes.md) |
+| WebShop option-reward comparison | goal side passes **values**, not `.items()` | 2026-07-25 | `cca3508` | [bugfix](./bugfixes.md); **raises** WebShop scores — the three shipped WebShop hardness label files are stale (ALFWorld's two are not) |
+
+---
+
+## 2026-07-25: the WebShop reward scale changes — every shipped hardness label and every pre-fix WebShop number is now on the old scale
+
+- **Commit:** `cca3508`. **Mechanism, impact and verification:**
+  [bugfixes.md, 2026-07-25](./bugfixes.md) — this entry is only the *consequences* half.
+- **Assets affected:** all three WebShop files under [`../../data/hardness/`](../../data/hardness/),
+  plus any recorded WebShop `val/success_rate` / `val/task_score`.
+
+A WebShop option-matching defect made 458 of 6725 option-bearing goals unwinnable by construction.
+Correcting it is a bug fix, but it is *also* a substrate revision, because the reward function is
+the substrate: it defines the easy/hard labels, the training signal, and the reported metric. It
+is logged here for the same reason `search_return_n` and `merge_fp32` are — a run's numbers are
+not comparable across the boundary, and nothing in a config records which side of it you are on.
+
+**Direction of the change:** scores only ever go **up**. Nothing that passed before fails now.
+
+**What predates it:**
+
+- **The three WebShop hardness label files are stale.** They pin 420 train goals to "hard" for
+  *every* reference policy — a policy-independent ~6.5% floor that looks like difficulty and is
+  not. A fourth regeneration is needed (`python -m tools.gen_hardness_trajectories`, protocol in
+  [`../../data/hardness/README.md`](../../data/hardness/README.md)); until then a hardness arm's
+  easy/hard split is measurably wrong, not merely stale. The two ALFWorld files are unaffected —
+  different engine, different reward.
+- **Pre-fix WebShop reward curves are not comparable** to post-fix ones on the affected goals, and
+  the gap is capability-dependent: the stronger the policy, the more the old scale cost it
+  (`std1` lost 84.4% of the affected goals to it, the zero-RL baseline only 3.5%). Curves that
+  cross the boundary mid-run are the worst case — treat the boundary as a run split.
+- **Pre-fix absolute numbers are understated**: up to ~5 pp on the train pool, up to ~7.8 pp on the
+  64-goal val slice, where the old measurable ceiling was 92.2% rather than 100%.
+- **Comparability with published WebShop numbers is now deliberately broken.** Upstream
+  `princeton-nlp/WebShop` and every fork still carry the defect, so post-fix numbers are on a
+  different scale from the literature's. Worth one sentence in any writeup. The overlay's setup
+  already departs from it anyway (15-turn budget, 64-goal val slice, own goal partition), and a
+  reward that penalises capability is not a scale worth preserving for comparability's sake.
+- **`FedAgent-paper-reproduce/` and `AccelAgent/` were deliberately left on the old scale** — the
+  reproduce tree must keep reproducing the paper; AccelAgent is a separate project's call.
+
+**No compatibility flag**, by choice: an env var that silently changes reward semantics between
+runs is the same class of defect as the bug it would be papering over. Pre-fix behaviour
+reproduces from the commit.
+
+## 2026-07-19 → 07-24: figures — Task Score becomes a first-class metric and the default plot set becomes four
+
+- **Commits:** `43b8c4b` (round-boundary ticks), `ee9af63` + `dbdcd54` (task_score plumbing),
+  `35e21e3` (default metric set), `92a51f9` (per-metric axis scale/label).
+- **Files:** [`../../tools/plot_training_dynamics.py`](../../tools/plot_training_dynamics.py),
+  the two agent loops, `summarize_val_dump`, `fedagent/envs/webshop/webshop_env.py`.
+
+WebShop's *training* reward is the binarized `{0,10}` success signal (faithful to the fork),
+so `val/reward_mean` was `10 ×` `val/success_rate` under a second label — the field was
+looking at two "different" figures that were the same curve. The paper's pair is **Task
+Score** (partial-credit, `100 ×` mean graded goal match) **+ Success Rate**, so the dense
+score is now carried end to end (`/step` → `info['task_score']` → `reward_extra_info` → val
+dump → `federated_summary.json` → figure) and the plotter renders `val/task_score` and
+`val/success_rate`, each in a plain and a `_with_clients` variant, from one call. Axis
+scaling is per metric (`success_rate` ×100 `(%)`, `task_score` ×100 `(0-100)` — a score, not
+a percentage; `reward_mean` unscaled), replacing the single global `--percent` flag
+(`--raw` gives the unscaled `[0,1]` view; `--percent` is accepted and ignored).
+
+**Existing runs:** val dumps written before `dbdcd54` (2026-07-20) carry no `task_score` —
+the plotter skips that metric with a warning instead of failing, so those runs still render
+Success Rate. ALFWorld has no Task Score by construction (the metric is WebShop-only).
+
+## 2026-07-21 → 07-24: hardness reference labels — three regenerations and one revert
+
+> **Superseded for WebShop as of 2026-07-25.** The three WebShop rows below were labelled through
+> the pre-fix option reward and encode its ceiling; a fourth regeneration is pending. See
+> [the 2026-07-25 entry](#2026-07-25-the-webshop-reward-scale-changes--every-shipped-hardness-label-and-every-pre-fix-webshop-number-is-now-on-the-old-scale).
+> The two ALFWorld rows are unaffected.
+
+- **Commits:** `c227920` (first regen, **invalidated**) → `a7a4701` (revert) → `d6f3c9b`
+  (std4 reference, post-race) → `0648eba` (ALFWorld std1) → `15603b2` (WebShop std1).
+- **Assets:** [`../../data/hardness/`](../../data/hardness/) — five label files ship today.
+
+The **Hardness** task-heterogeneity arm needs a per-goal success label from a *reference
+policy*; there is no usable default, so the labels are shipped data and every regeneration
+is a substrate change. The first overlay-side regeneration was produced while the pooled
+env service still had the goal-shuffle race ([bugfixes.md, 2026-07-21](./bugfixes.md)) — its
+per-row attribution could not be trusted, so it was reverted rather than patched, and
+re-run after the fix. Two more references were then labelled end to end.
+
+| file | env | reference | signal |
+|---|---|---|---|
+| `qwen2.5-1.5b_webshop_trajectories.json` | WebShop | paper's trained 1.5B (Sept 2025 pipeline) | 27.8 % easy |
+| `qwen2.5-1.5b_alfworld_trajectories.json` | ALFWorld | paper's trained 1.5B (Sept 2025 pipeline) | 59.4 % easy |
+| `qwen2.5-1.5b-grpo-hardness-std4_webshop_trajectories.json` | WebShop | overlay GRPO hardness-std4 ckpt | 17.4 % easy |
+| `qwen2.5-1.5b-grpo-hardness-std1_webshop_trajectories.json` | WebShop | overlay GRPO hardness-std1 ckpt | 63.1 % easy |
+| `qwen2.5-1.5b-alfworld-grpo-hardness-std1_trajectories.json` | ALFWorld | overlay GRPO hardness-std1 ckpt | 64.6 % easy |
+
+The regeneration protocol itself is documented once, in
+[`../../data/hardness/README.md`](../../data/hardness/README.md): roll out in the
+**reference's own mode** (windowed) at the reference's budgets — a windowed-trained
+checkpoint replayed in concat mode collapses toward zero-shot and looks like a broken
+checkpoint (`323de3e`, and the [bugfixes.md 2026-07-21 entry](./bugfixes.md)).
+
+**Existing runs:** the easy/hard split — and therefore every client's goal shard in a
+hardness arm — is a function of `trajectories_file`. Runs pointing at different label files
+are different experiments; the file used belongs in the run's record.
+
+## 2026-07-21: layout — one shipped-assets root, a flat maintained toolbox, migration evidence pruned
+
+- **Commits:** `fb140ea` (data), `2b517c8` (tools + aggregator), `f720e1a` (prune),
+  `b487b8e` (stale refs), `f8a89bb` / `5146b43` (untrack local working areas).
+
+The repo had two `data/` dirs (root for env-heterogeneity assets, pinned by the vendored
+`partition_strategy.py`'s hardcoded literals; `fedagent/data/hardness` for labels, pinned by
+`run_fed`'s package-relative resolution). Consolidated in the direction that touches **no
+vendored code**: root `data/` is now the shipped-assets home and `fedagent/data/` is purely
+the dataset adapter. `tools/` became the six maintained operator scripts at top level
+(config/label generators, eval, run summary, log collection, plotting) with install-time
+assets under `tools/setup/`; the FedAvg aggregator moved into the package
+([`../fed/aggregate_fedavg_fsdp.py`](../fed/aggregate_fedavg_fsdp.py)) because `run_fed`
+torchruns it every round — it is trainer code, not migration tooling. ~205 files of
+one-time migration evidence (`accel/`, `poc/`, archived diagnostics) were pruned from `main`
+and are preserved verbatim on the `migrate/verl-0.8.0` branch.
+
+**Existing configs/commands:** `python -m tools.verl08_migration.X` → `python -m tools.X`.
+Config values are unchanged: a relative `trajectories_file` now means literally that path
+from the repo root, with the legacy package-relative location kept as a fallback.
+
+## 2026-07-19 → 07-20: an accelerated twin of the paper matrix, and machine portability
+
+- **Commits:** `ac3c16f` (`config/paper_accelerated` + [gpu_recipes.md](./gpu_recipes.md)),
+  `40446d1` (conda resolution).
+
+`gen_paper_configs.py --accel` emits the same 176-cell matrix with the adopted acceleration
+stack baked in (`cross_round` + worker eval + `service_scope=run`; ALFWorld `replicas=8` +
+manifest cache; WebShop fused kernels on the 1.5B backbone only, where the A/B ran).
+`hf_export` stays `every_round` so round-level resume works, and twins sit on **disjoint
+port bands** so a cell and its accelerated twin can share a host. The plain tree's output was
+verified byte-identical, i.e. the twins are an A/B-equivalence claim, not a new recipe (the
+measured basis is [acceleration.md](./acceleration.md)).
+
+Separately, the service launchers and 72 shipped scripts hardcoded a conda profile path that
+only existed on the original cluster — `run_fed` auto-launches those service scripts, so
+WebShop/ALFWorld runs failed at line 1 anywhere else. Conda is now resolved robustly
+(`CONDA_PROFILE` → `CONDA_EXE` → `PATH` → common prefixes) with
+`WEBSHOP_CONDA_ENV` / `ALFWORLD_CONDA_ENV` overrides.
+
+## 2026-07-14: in-loop validation returns to the paper's 64 goals
+
+- **Commit:** `7f09c73` — `fedagent/config/envs/{webshop_15_val,alfworld_val}.yaml`.
+
+The migration had set the val specs to the whole held-out pool (WebShop 500, ALFWorld 140)
+and labelled that "the paper's test set". The paper's in-loop validation used
+`val_data_size=64`, so every-round eval was ~7.8× (WebShop) / ~2.2× (ALFWorld) larger than
+the protocol for no scientific gain.
+
+**Existing runs:** the estimand is the same (a fixed prefix of the same held-out pool), the
+noise is not — pre-07-14 curves are *smoother* than paper-protocol curves, and eval cost per
+round was correspondingly higher.
+
+## 2026-07-10: round-level resume, one-file figure source, paper-protocol circle marks
+
+- **Commits:** `cbc93d6` (resume), `7595d62` (plot source + resume-aware summary),
+  `25082dd` (`client_end_eval: true` in the paper configs).
+
+Re-running the same `--output-dir` now continues at the round after the last completed one
+(`round_k/aggregated/hf`, plus `critic_hf` for PPO, is the completion marker). It is
+faithful by construction: client selection and env data seeds are threaded by round number,
+so a resumed run reproduces the uninterrupted schedule; `federated_summary.json` records
+`resumed_from_round`, and rounds before the resume point are carried into the summary (from
+the prior summary, falling back to the on-disk val dumps) so one file still plots the whole
+run. The plotter reads that summary instead of per-client `json_logs` — on this stack
+clients never validate, so the legacy source was empty (`--client-logs` keeps it for
+`paper-reproduce-verl-agent` runs). And since the original stack validated every client at
+its last local step, the per-client circle marks are part of the paper protocol: all 176
+paper configs now ship `client_end_eval: true` while the library default stays `false`.
+
+## 2026-07-09: pre-release fidelity audits — PPO minibatch, the WebShop uniform shard, byte-exact prompts
+
+- **Commits:** `3209721` (audit 1), `d3c1df1` (audit 2), `d05b17c` (`legacy/` removed).
+- Predates `bugfixes.md`'s first entry; recorded here because it changed shipped configs and
+  results, not just code.
+
+Three revisions with real numerical reach:
+
+1. **PPO actor `ppo_mini_batch_size` 64 → 8** in all 85 PPO paper configs and the generator.
+   The fork asserted `rollout.n == 1` (G=8 grouping came from the dead `env.rollout.n`), so
+   it always stepped in 64-**row** global minibatches; verl 0.8 multiplies mini by
+   `rollout.n=8`, so a shipped 64 fused the whole step batch into one 8× larger update.
+   8 prompts × 8 = the original 64 rows. GRPO configs unchanged; the critic was already
+   faithful.
+2. **WebShop uniform per-client goal shard restored.** The original gave every federated
+   WebShop client a contiguous `≥min_goals` slice of the seed-42-shuffled train pool; the
+   overlay service had no uniform branch, so every uniform / decentralized / env-variant arm
+   trained on the full 6410-goal pool, `min_goals_per_client` was a no-op, and the
+   decentralized ablation was inert. Ported verbatim into
+   [`../hetero/webshop_uniform.py`](../hetero/webshop_uniform.py) (984-case differential
+   test, 0 mismatches).
+3. **Prompt templates byte-restored.** The four `legacy_prompts.py` templates had trailing
+   spaces stripped relative to 0.3.1 (per-turn tokenization drift); re-spliced from the
+   original sources so the "verbatim" claim is literally true.
+
+Also: the ALFWorld service stopped translating `preference`/`hardness` → `category`/
+`hardiness`, which had been crashing all 8 ALFWorld task-het arms at service startup; and
+the `legacy/` snapshot was deleted (the full original lives on the
+`paper-reproduce-verl-agent` branch).
+
+**Existing runs:** any PPO or uniform-arm WebShop run from before 2026-07-09 trained a
+different objective/data shard and is not comparable to post-audit numbers.
+
+## 2026-06-28 → 07-03: windowed rollout becomes the default; the acceleration overlay and eval modes land
+
+- **Commits:** `e207579` (windowed mode + `rollout_mode` switch), `3b8aa2d` (persistent /
+  cross-round trainer, 4 eval modes, per-client service routing), `362558d` (client-end
+  eval), `771ed5f` (176 configs regenerated), `e593dd2` / `bee05f7` / `23e1795` / `0f66f7f` /
+  `758a7f0` (tier-1/tier-2 levers, measurements, final recipe).
+
+The faithful paper rollout is **per-turn**: one training sample per turn with the
+`history_length=2` windowed template, episode-return broadcast and per-turn invalid penalty.
+`WindowedAgentLoopManager` adapts stock verl 0.8's "one training sample per prompt" contract
+to per-turn batches; `concat` (stock full-history, one sample per episode) stays available
+opt-in. Making windowed the default forced a matching config regeneration:
+`response_length` 6144/8192 → **512**, `max_model_len` 16384 → **2560/4608**, WebShop prompt
+2048 → **4096**, `save_contents=[model]`.
+
+The acceleration overlay is all overlay-side (no verl fork): a persistent trainer that pays
+`init_workers()` once per round — or once per **run** with `cross_round: true` — and four
+eval modes (`inline` default, `parallel`, `shared`, `worker`). Every lever ships **default
+off** and is gated on a measured equivalence bar (full-loop `max|Δ|` ≈ 1e-5 through FedAvg);
+the recipe and the measurements are [acceleration.md](./acceleration.md) and
+[gpu_recipes.md](./gpu_recipes.md).
+
+**Existing runs:** concat-mode runs from before 2026-06-28 are a different rollout contract
+(and a different training-sample granularity) — do not mix their curves with windowed ones.
+
+## 2026-06-29: the one deliberate verl patch — a per-job weight-transfer socket
+
+- **Commits:** `f4cb8ca` (patch + `VERL_RAY_JOB_ID` export), `aa145f5` (docs), `2b517c8`
+  (patch moved to [`../../tools/setup/patches/`](../../tools/setup/patches/)), `af545e2`
+  (preflight; see [bugfixes.md](./bugfixes.md)).
+
+FedAgent runs each client/eval as its own isolated Ray cluster, and every fresh cluster
+assigns the same first job id (`01000000`) — so concurrent jobs collided on verl's
+job-id-named FSDP→vLLM weight-transfer socket in the shared `/tmp` and the weight send hung
+(GPU-confirmed: 44 min at 0 % util). `run_fed` exports a unique `VERL_RAY_JOB_ID` per
+launched process, and a **2-line patch** makes verl's sender/receiver honor it. This is the
+single, deliberate exception to the no-fork rule: verl stays pristine upstream and the two
+lines are captured as a patch file, so the exception is reproducible rather than maintained.
+
+**Installation:** apply the patch (see [installation.md](./installation.md)); without it,
+concurrent same-node jobs share one socket path silently — which is why `run_fed` now
+preflights the installed verl and prints a boxed warning when it is missing.
+
+## 2026-06-21: the env engines are vendored; the verl-agent dependency is dropped
+
+- **Commit:** `a448628`.
+
+The WebShop and ALFWorld engines moved out of `third_party/verl-agent` into
+`fedagent/envs/{webshop,alfworld}/engine/` (`git mv`, history preserved) and the fork was
+removed from the tree and from both requirements files. Only the env **services**
+`sys.path`-inject the engines, so the MDP is the same code the original ran, while the
+trainer side imports zero engine dependencies (invariant asserted in the commit's
+validation). This is what makes "stock verl 0.8 as a library" true of the whole install and
+not just the trainer.

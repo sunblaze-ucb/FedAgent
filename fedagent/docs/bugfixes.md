@@ -3,6 +3,199 @@
 A running log of notable correctness / robustness fixes to the FedAgent verl-0.8 overlay, with enough
 mechanism to understand *why* each was wrong and how it was fixed.
 
+> Deliberate changes that were **not** defects (default flips, protocol revisions, regenerated
+> shipped assets, layout moves) live in [revision.md](./revision.md).
+
+---
+
+## 2026-07-25: WebShop scored correctly-clicked options as MISSES — `get_reward` compared plain values against `(key, value)` tuples, and `normalize_color` rewrote only one side; 458 of 6725 option-bearing goals could not reach 1.0 no matter what the agent did
+
+- **Files:** `fedagent/envs/webshop/engine/webshop/web_agent_site/engine/goal.py` (`get_reward`),
+  `.../engine/normalize.py` (`normalize_color`); offline regression
+  `tests/test_webshop_option_reward.py`. The long-form write-up (per-goal sweeps, the worked
+  example, the ruled-out alternatives) lives outside the repo at
+  `/home/canyu/fedagent/docs/webshop_option_reward_bug.md`; everything load-bearing is repeated
+  here.
+- **Severity:** silent correctness, affecting **both** the RL training reward and every hardness
+  label set derived from this engine. Not a FedAgent regression — the defective code is stock
+  `princeton-nlp/WebShop` (the vendored file carried no FedAgent modifications; single vendoring
+  commit `a448628`, and the copies under `AccelAgent/` and `FedAgent-paper-reproduce/` are
+  byte-identical at that line). Deliberately **not** propagated to those two: the reproduce tree
+  must keep reproducing the paper, and AccelAgent is a separate project's call.
+
+### How it was found
+
+Not from a crash or a failing test — the engine never complained. It surfaced twice, from two
+directions, as a *statistical* anomaly in the hardness label sets.
+
+**1. A floor that did not move with capability.** The hardness arm labels each goal easy/hard by
+whether a reference policy solves it. Three references were labelled: a zero-RL
+`Qwen2.5-1.5B-Instruct` (2.6% easy), `grpo-hardness-std4` (17.4%), `grpo-hardness-std1` (63.1%) —
+a ~24× spread in competence. A block of goals came back **hard in all three, at exactly 0/417**.
+That signature is diagnostic: real difficulty is policy-dependent, so a set of goals that a 63%
+policy fails at precisely the same rate as a 2.6% policy is describing the *environment*, not the
+task. The first reading was "structural caps — no product on the shelf satisfies the full
+specification", which is the natural guess and was **wrong**; constructing the oracle-best
+purchase (buy the target ASIN, click every required option, at a qualifying price) showed the
+shelf does carry a compliant product and the reward function is what miscounts.
+
+**2. Independently, from the val side: stable maxima.** A separate pass over 211 correlated
+evaluations (71 aggregate + 140 client checkpoints of one FL run) on the 64-goal val slice found
+goals that never once reached 1.0 — and whose best-ever score was a *fixed fraction* (6/7, 5/6)
+rather than a fluctuating one. Genuine difficulty produces variance; a constant `k/n` that is
+always short by exactly one component is the signature of a component that cannot be satisfied.
+Reading one such trajectory turn by turn closed it: val goal #4 wants `color: r.brown2060`,
+`size: 6.5`, price < $70; the policy clicked `r.brown2060`, clicked `6.5`, bought at $33.99 — a
+perfect play with no room for improvement — and scored 0.857.
+
+**Localisation** was then a two-line diff of the arguments: one side plain values, the other side
+`(key, value)` tuples, with a normalizer between them that silently tolerated both.
+
+**Caveat, recorded because it cost a round of analysis.** The val-side pass initially attributed
+**9** never-solved goals to this bug and derived a "measurable ceiling" of 85.9%. Only **5** are
+this bug (ceiling 92.2%). The other 4 score a clean 1.000 under the oracle purchase — see
+[Not this bug](#not-this-bug). "No policy ever solved it" is not evidence of an engine cap,
+especially across checkpoints of a single run, which are highly correlated and share search
+habits. Only the oracle sweep separates the two, which is precisely why that sweep is now a test.
+
+### Mechanism
+
+Two independently harmless defects that are fatal together.
+
+**1. The shape error.** `get_reward` passed the two sides of the comparison in different shapes:
+
+```python
+r_option, num_option_matches = get_option_reward(
+    list(options.values()),        # clicked -> ['r.brown2060', '6.5']
+    goal['goal_options'].items()   # wanted  -> [('color', 'r.brown2060'), ('size', '6.5')]
+    if isinstance(goal['goal_options'], dict) else goal['goal_options']
+)
+```
+
+The `else` branch already passes a plain list, so the `dict` branch was simply the odd one out.
+
+**2. The silence.** `get_option_reward` runs both sides through `normalize_color`, which tests
+`norm_color in color_string`. Python's `in` is overloaded:
+
+- `str` → **substring** test: `'brown' in 'r.brown2060'` → `True` → returns `'brown'`
+- `tuple` → **membership** test: `'brown' in ('color', 'r.brown2060')` → `False`
+
+A tuple therefore matched nothing in `COLOR_SET`, fell through the loop, and was returned
+**unchanged** — no `TypeError`, no warning. Had the code been written `color_string.find(...)`,
+the first call would have raised and this would have been caught in minutes.
+
+Net effect: **the clicked side is normalized, the goal side is not**, and the two are then
+compared with `fuzz.token_set_ratio(...) > 85`:
+
+```
+token_set_ratio('brown', "('color', 'r.brown2060')") = 21   ->  scored as a MISS
+```
+
+`normalize_color` is also applied to every option category, not just colours, and takes the
+**first** `COLOR_SET` substring hit in list order — which is how the mangling gets creative:
+
+| clicked value | → | why |
+|---|---|---|
+| `fashion black girl01` | `ash` | `'ash'` is index 3; `"f`**`ash`**`ion"` matches before `'black'` (index 8) |
+| `rectangular` | `tan` | `"rec`**`tan`**`gular"` |
+| `r.brown2060` | `brown` | substring |
+| `16x24 inch` | `16x24 inch` | no colour substring — unchanged, so it still matched at 100 |
+
+That last row is why the blast radius is 6.8% and not 100%: the two sides only diverge when
+normalization actually *changes* the clicked value.
+
+Every reward component must be complete for a WebShop success
+(`total = (num_attr_matches + num_option_matches + r_price) / (len(attributes) +
+len(goal_options) + 1)`, then `*= r_type`), so **one** missed option permanently caps the goal
+below 1.0.
+
+### Fix
+
+`.items()` → `list(...values())`, making both arguments the same shape (2 lines with the
+comment). Plus defense in depth: `normalize_color` now raises `TypeError` on a non-`str`
+argument instead of returning it unchanged — the silence is what let the shape error survive,
+so any future caller passing the wrong shape now fails at the first call rather than mis-scoring
+6.8% of the pool.
+
+No compatibility flag. A flag that silently changes reward semantics per run is the same class
+of defect as the bug itself; older runs reproduce from the commit, not from an env var.
+
+### Impact
+
+Pool sweep with the engine's own functions (`items_shuffle_1000` catalog, synthetic goals,
+SimServer's `random.seed(42)` + shuffle):
+
+| | goals |
+|---|---|
+| total | 6910 |
+| option-bearing | 6725 |
+| **capped by the bug** | **458 (6.81% of option-bearing)** |
+| …in the train pool `goals[500:]` | 420 |
+| …in the held-out val pool `goals[0:500]` | 38 |
+| …in the shipped 64-goal val slice `goals[0:64]` | **5** — indices 4, 13, 35, 46, 61 |
+
+**It penalises capability.** Only a policy that already got the attributes, price, product type
+and every *other* option right ever reaches the state the bug then denies. "Played perfectly yet
+failed" across three reference policies:
+
+| reference policy | affected train goals played perfectly yet failed | easy rate |
+|---|---|---|
+| `grpo-hardness-std1` | **352 / 417 = 84.4%** | 63.12% |
+| `grpo-hardness-std4` | 82 / 417 = 19.7% | 17.40% |
+| `Qwen2.5-1.5B-Instruct` (zero RL) | 12 / 417 = 3.5% | 2.58% |
+
+So **any** policy comparison through this reward is biased *against* the better policy — which
+is exactly the comparison federated aggregation lives on (aggregate vs client, round N vs N+1).
+
+**It was the training reward, not just an eval metric.** `web_agent_text_env.py`'s `done`
+handler calls this `get_reward`, so on those 420 train goals the policy was penalised for doing
+the right thing for entire runs.
+
+**It set the val ceiling.** On the shipped 64-goal slice the measurable maximum was
+**59/64 = 92.2%**, not 100%. After the fix it is 64/64.
+
+### Verification
+
+1. **Unit.** `get_option_reward(['r.brown2060','6.5'], [('color','r.brown2060'),('size','6.5')])`
+   returned `(0.5, 1)`; with values on both sides it returns `(1.0, 2)`.
+2. **Oracle sweep, whole pool.** Buy the target product, click every required option, at a
+   qualifying price. Post-fix: **6910/6910 goals score exactly 1.0**, 0 unconstructible
+   (every goal's required option values are genuinely offered on its product page). Pre-fix the
+   same sweep fails on 458. This is `test_webshop_option_reward.py` (~35 s, no model/GPU); it was
+   run against a temporarily reverted engine to confirm it is not vacuous (3 passed → 3 failed).
+3. **End-to-end, before the fix landed.** `grpo-hardness-std1` rerun over train chunk 0
+   (goals 0–1023), everything else identical: **62.8% → 66.8% easy**; the 74 affected goals in
+   that chunk went **0 easy → 51 easy**. Full-pool projection 63.1% → ~67.6%.
+   Artifacts: `fedagent_trajectory/hardness_labelgen_webshop_instruct/analysis_backup/bugfix_rerun/`.
+4. **Alternatives ruled out** (so the 458 are attributable to this bug alone). Across all 64 val
+   goals: required option values offered on the product page 64/64; attributes satisfied by the
+   target product 64/64; `r_type` = 1.00 for 64/64; price never binds (prices are keyed by ASIN
+   only and `price_upper` is *sampled above* the target's own price, so it cannot cap the target).
+   After the fix, **no** val goal has a ceiling below 1.0.
+
+### What this invalidates
+
+- **Hardness label files are stale.** They encode the buggy ceiling and pin those 420 train goals
+  to "hard" for *every* policy — a policy-independent ~6.5% floor masquerading as difficulty.
+  Regenerate with `tools.gen_hardness_trajectories`.
+- **Reward curves from pre-fix runs are not comparable** to post-fix runs on the affected goals.
+- **Absolute WebShop success rates reported before this fix are understated**, policy-dependently,
+  by up to ~5 pp (train) / ~7.8 pp (the 64-goal val slice).
+- **Comparability with published WebShop numbers is now explicitly broken**, since upstream and
+  every downstream fork still carry the defect. Worth stating in any writeup; the setup already
+  differs from the literature (15-turn budget, 64-goal val slice, own goal partition).
+
+### Not this bug
+
+An earlier reading attributed a wider set of never-solved val goals to "structural caps". Only
+the 5 above are structurally capped. Others that a reference policy never solved are winnable —
+their single satisfying product just sits deep in the BM25 ranking under the goal's canonical
+`query` field (rank 33, or outside the top-50) while being rank 1–6 under the instruction text,
+and 53 of the 64 val goals have **exactly one** satisfying product among the ~50–100 visible.
+That is retrieval difficulty, not a broken denominator. Earlier notes calling the 417/420 train
+goals "structural caps" ("no product on the shelf satisfies the full specification") are wrong in
+the same way — the shelf does carry compliant products; the reward function miscounted.
+
 ---
 
 ## 2026-07-24: weight-transfer IPC namespace reused across rounds/retries — one crashed round left a stale `/tmp` socket that killed every later round of the run
