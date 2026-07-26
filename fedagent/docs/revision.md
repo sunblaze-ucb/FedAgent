@@ -40,9 +40,37 @@ duplicated here.
 | `merge_fp32` | `True` | 2026-07-23 | `5131b7d` | [bugfix](./bugfixes.md) |
 | `port_band_base` | `26000` | 2026-07-23 | `4a85d12` | [bugfix](./bugfixes.md); `0` = stock random ports |
 | `critic_model_path` | `""` → auto-sibling critic | 2026-07-24 | `5992fe7` | [bugfix](./bugfixes.md) |
+| eval `val_samples` rows | + `trajectory` column (whole episode) | 2026-07-25 | `b2b4cc0` | windowed eval only; `FEDAGENT_EVAL_TRAJECTORY_DUMP=0` disables; dumps get much bigger |
 | WebShop option-reward comparison | goal side passes **values**, not `.items()` | 2026-07-25 | `cca3508` | [bugfix](./bugfixes.md); **raises** WebShop scores — the three shipped WebShop hardness label files are stale (ALFWorld's two are not) |
 
 ---
+
+## 2026-07-25: eval dumps carry the WHOLE trajectory, not just the terminal step
+
+- **Commit:** `b2b4cc0`. **Files:**
+  [`../agent_loops/windowed_agent_loop.py`](../agent_loops/windowed_agent_loop.py),
+  offline regression [`../../tests/test_windowed_eval_trajectory.py`](../../tests/test_windowed_eval_trajectory.py).
+  Mechanics and payload shape: [`../agent_loops/README.md`](../agent_loops/README.md#the-trajectory-column).
+
+Windowed eval collapses each episode to its last turn, so `round_<k>/eval/val_samples/*.jsonl`
+only ever showed the **terminal** step — the row you need to answer "did it succeed" but not
+"what did it do". The collapse is load-bearing and stays: verl's `_validate` requires 1:1, and
+`summarize_val_dump` means over rows, so expanding eval would weight long episodes more and
+silently corrupt `val/success_rate`. Instead the rest of the episode rides the surviving row as
+a `trajectory` column on `reward_extra_info` (the channel `goal_id`/`task_type` already use).
+
+Each turn records the env's raw windowed template, the chat-templated prompt the model actually
+saw, the emitted action, the step reward, and validity/truncation flags.
+
+**On by default**, `FEDAGENT_EVAL_TRAJECTORY_DUMP=0` to disable. Train rollouts are untouched
+(the payload is eval-only), and concat mode needs nothing — its single sample's prompt is
+already the whole conversation.
+
+**Existing runs and tooling:** additive only. `summarize_val_dump` reads named numeric keys and
+`gen_hardness_trajectories` reads `goal_id`/`traj_success` via `.get()`, so both ignore the new
+column; older dumps without it stay readable. The cost is size: the dumps become the dominant
+artifact of a run (order 10× the metric-only rows, env- and policy-dependent since it scales
+with turns actually played). Disable it for long runs whose dumps are archived.
 
 ## 2026-07-25: the WebShop reward scale changes — every shipped hardness label and every pre-fix WebShop number is now on the old scale
 

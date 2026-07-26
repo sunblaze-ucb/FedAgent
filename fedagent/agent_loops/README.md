@@ -119,6 +119,43 @@ in verl's validation JSONL dump:
 - **`goal_id` / `task_type`**: added only when the env surfaces them
   (string-valued; kept in the val dump but skipped by metric aggregation). Used
   by the WebShop hardness-labelling pass and the ALFWorld eval breakdown.
+- **`trajectory`**: the whole episode, **eval rows only**, windowed mode only.
+
+### The `trajectory` column
+
+Eval collapses each episode to its **last turn** — verl's `_validate` does
+`test_batch.union(test_output_gen_batch)` and requires 1:1, and `summarize_val_dump`
+means over *rows*, so K rows per episode would weight long episodes more and silently
+corrupt `success_rate`. The dump therefore only ever showed the terminal step. The rest
+of the episode now rides the surviving row:
+
+```json
+{"n_turns": 12, "success": 1.0, "episode_return": 1.0, "task_score": 1.0,
+ "goal_id": "B07…", "turns": [
+   {"turn": 0, "obs": "<env's windowed template>", "prompt": "<what the model saw>",
+    "action": "<what it emitted>", "reward": 0.0, "done": false, "valid": true,
+    "prompt_truncated": false, "response_truncated": false}, …]}
+```
+
+`obs` is the env's raw windowed template; `prompt` is that same turn after the chat
+template and left-truncation, i.e. verbatim what the model saw. In windowed mode the
+response *is* the action (no obs tokens), so `action` covers both — `response_truncated`
+flags the case where the stored training sample was cut to `response_length`.
+
+Two implementation constraints, both locked by
+[`../../tests/test_windowed_eval_trajectory.py`](../../tests/test_windowed_eval_trajectory.py):
+
+- It is attached to `outputs[-1]` **only** — the row eval keeps. `agent_loop.py` reads
+  the reward-extra key set from `reward_extra_infos[0]` and then indexes `info[key]` for
+  every row, so a key present on only some rows is a `KeyError` inside a Ray worker.
+  Train attaches nothing, so the key is absent there uniformly.
+- It is a **dict, not a JSON string**. `np.array` over strings yields `<U<maxlen>` and
+  pads every row out to the longest trajectory at 4 bytes/char; over dicts it yields
+  `dtype=object`. It also serializes as a nested object rather than an escaped blob.
+
+On by default. `FEDAGENT_EVAL_TRAJECTORY_DUMP=0` turns it off — worth doing for long runs
+where the dumps are archived, since it is the dominant term in their size. Concat mode
+needs nothing: its single sample's prompt is already the whole conversation.
 
 The val pass in [`../fed/run_fed.py`](../fed/run_fed.py)
 (`summarize_val_dump`) reads this dump and reports
@@ -135,6 +172,7 @@ verl's name for `reward_score` in the dump), FedAgent's headline
 | `rollout_config` | `max_model_len` | context ceiling for the overflow guard (fallback `prompt_length + response_length`) |
 | row `extra_info` | `env_name`, `config`, `seed`, `max_turns` | which env, how to build/reset it, and the turn cap |
 | env var | `FEDAGENT_INVALID_ACTION_PENALTY_COEF` | invalid-action penalty coefficient (default `0.1`) |
+| env var | `FEDAGENT_EVAL_TRAJECTORY_DUMP` | `0` disables the eval `trajectory` column (default on) |
 | env var | `VERL_LOGGING_LEVEL` | module log level (default `WARN`) |
 
 ## Adding an agent-loop
