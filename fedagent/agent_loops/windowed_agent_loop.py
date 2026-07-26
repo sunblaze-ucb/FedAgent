@@ -40,8 +40,10 @@ verbatim. Two constraints shape the implementation:
     yields ``dtype=object`` and stores references. It also serializes as a nested object rather
     than an escaped blob. ``tests/test_windowed_eval_trajectory.py`` locks both.
 
-On by default; ``FEDAGENT_EVAL_TRAJECTORY_DUMP=0`` disables it. TRAIN is never affected.
-Concat mode needs nothing: its single sample's prompt IS the whole conversation.
+**OPT-IN**: off unless ``FEDAGENT_EVAL_TRAJECTORY_DUMP=1``. The payload is the dominant term in
+a dump's size (it scales with turns actually played, up to 50 for ALFWorld), so a run that only
+needs the metric should not pay for it; turn it on for the runs you intend to read. TRAIN is
+never affected. Concat mode needs nothing: its single sample's prompt IS the whole conversation.
 """
 from __future__ import annotations
 
@@ -58,9 +60,10 @@ _TRAJ_DUMP_ENV = "FEDAGENT_EVAL_TRAJECTORY_DUMP"
 
 
 def eval_trajectory_dump_enabled() -> bool:
-    """Whether eval rows carry the full-trajectory payload. Default ON; read per episode so a
-    run can be flipped without a restart of anything that caches module state."""
-    return os.environ.get(_TRAJ_DUMP_ENV, "1").strip().lower() not in ("0", "false", "no", "off")
+    """Whether eval rows carry the full-trajectory payload. **Default OFF** -- opt in with
+    ``FEDAGENT_EVAL_TRAJECTORY_DUMP=1``. Read per episode (not cached at import) so a long-lived
+    persistent worker picks up a flip without a restart."""
+    return os.environ.get(_TRAJ_DUMP_ENV, "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 @register("gym_text_windowed")

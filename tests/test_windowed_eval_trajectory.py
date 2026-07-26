@@ -15,6 +15,10 @@ Three things must hold, and each has bitten a comparable feature before:
 3. **It survives ``json.dumps(..., default=str)``** -- verbatim what ``_write_generations``
    does to build the JSONL line.
 
+Capture is **opt-in** (``FEDAGENT_EVAL_TRAJECTORY_DUMP=1``), so most tests here set that flag;
+the default-off path has its own tests, since "an unconfigured run must not silently pay for a
+large dump" is the behaviour that flag exists to guarantee.
+
 Runs the REAL ``run_episode_windowed`` against a stub tokenizer/server/env: no model, no
 network, no GPU. Needs verl importable (the loop subclasses verl's AgentLoopBase); skips
 cleanly otherwise.
@@ -119,8 +123,10 @@ def stub_env():
 
 
 @pytest.fixture(autouse=True)
-def default_flag(monkeypatch):
-    monkeypatch.delenv("FEDAGENT_EVAL_TRAJECTORY_DUMP", raising=False)
+def opt_in(monkeypatch):
+    """Capture is OPT-IN, so the tests that exercise it must ask for it. The default-off
+    behaviour is covered by its own tests, which clear this."""
+    monkeypatch.setenv("FEDAGENT_EVAL_TRAJECTORY_DUMP", "1")
 
 
 def run(validate, **kw):
@@ -160,20 +166,29 @@ def test_train_attaches_nothing():
     assert all("trajectory" not in o.extra_fields["reward_extra_info"] for o in outs)
 
 
-def test_env_flag_disables(monkeypatch):
+def test_unset_means_off(monkeypatch):
+    """The default: an unconfigured run pays nothing and its dumps keep the old shape."""
+    monkeypatch.delenv("FEDAGENT_EVAL_TRAJECTORY_DUMP", raising=False)
+    assert not eval_trajectory_dump_enabled()
+    outs = run(validate=True)
+    assert payloads(outs) == [None, None, None]
+    assert all("trajectory" not in o.extra_fields["reward_extra_info"] for o in outs)
+
+
+def test_env_flag_explicitly_off(monkeypatch):
     monkeypatch.setenv("FEDAGENT_EVAL_TRAJECTORY_DUMP", "0")
     assert not eval_trajectory_dump_enabled()
     assert payloads(run(validate=True)) == [None, None, None]
 
 
-def test_flag_defaults_on_and_parses_falsey_spellings(monkeypatch):
-    assert eval_trajectory_dump_enabled()
-    for off in ("0", "false", "FALSE", "no", "off", " 0 "):
-        monkeypatch.setenv("FEDAGENT_EVAL_TRAJECTORY_DUMP", off)
-        assert not eval_trajectory_dump_enabled(), off
-    for on in ("1", "true", "yes"):
+def test_flag_parses_both_spellings(monkeypatch):
+    for on in ("1", "true", "TRUE", "yes", "on", " 1 "):
         monkeypatch.setenv("FEDAGENT_EVAL_TRAJECTORY_DUMP", on)
         assert eval_trajectory_dump_enabled(), on
+    # anything else is off -- an unrecognised value must not silently enable a costly dump
+    for off in ("0", "false", "no", "off", "", "maybe", "2"):
+        monkeypatch.setenv("FEDAGENT_EVAL_TRAJECTORY_DUMP", off)
+        assert not eval_trajectory_dump_enabled(), off
 
 
 # --- 2. content: the whole episode, not just the terminal step ------------------------------
