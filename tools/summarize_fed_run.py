@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """Summarize fedagent.fed.run_fed output dirs: per-round reward, and compare conditions.
 
-Reads each run's round_*/client_*/training.log, parses verl's per-step metrics
-(critic/rewards/mean by default), and reports per round the mean-over-clients of the
-round's mean and max step reward. With multiple LABEL=DIR args it prints a comparison
+Reads each run's per-step metrics (critic/rewards/mean by default) and reports per round
+the mean-over-clients of the round's mean and max step reward. With multiple LABEL=DIR args
+it prints a comparison
 table -- e.g. the A/B/C decomposition:
     catalog_split (env+task het) vs task_disjoint (task het) vs homogeneous (IID).
 A-B isolates the env-heterogeneity effect, B-C the task-heterogeneity effect.
@@ -26,6 +26,7 @@ Run on the node where the logs live (compute node /tmp):
         --decomp=envhet,task,homog
 """
 import glob
+import json
 import os
 import re
 import sys
@@ -37,17 +38,93 @@ from fedagent.fed.metrics_logger import parse_training_log  # noqa: E402
 KEY = "critic/rewards/mean"
 
 
+def _plan_clients(round_dir):
+    """The round's selected client ids, in plan order (the order they were trained)."""
+    plan = os.path.join(round_dir, "persistent_plan.json")
+    if os.path.isfile(plan):
+        try:
+            with open(plan) as f:
+                return [int(s["client"]) for s in json.load(f)]
+        except Exception:
+            pass
+    ids = []
+    for d in sorted(glob.glob(os.path.join(round_dir, "client_*"))):
+        m = re.search(r"client_(\d+)$", d)
+        if m:
+            ids.append(int(m.group(1)))
+    return ids
+
+
+def _split_by_client(entries, client_ids):
+    """Split a shared per-round metrics stream into one segment per client.
+
+    The persistent path (fed/run_fed.py:1758) writes ONE round_<k>/json_logs/metrics.json for
+    the whole round: the clients' steps are concatenated in plan order, each restarting its
+    step counter at 1, so a DECREASE in `step` marks the next client. Cross-round runs share a
+    single launch log, so that file is cumulative over rounds 1..k -- the round's own clients
+    are then the LAST len(client_ids) segments (run_fed.py:1750-1751)."""
+    segs, cur, last = [], [], None
+    for e in entries:
+        s = int(e.get("step", 0))
+        if last is not None and s <= last and cur:
+            segs.append(cur)
+            cur = []
+        cur.append(e)
+        last = s
+    if cur:
+        segs.append(cur)
+    if client_ids and len(segs) > len(client_ids):
+        segs = segs[-len(client_ids):]              # cross-round cumulative log -> this round
+    ids = client_ids if len(client_ids) == len(segs) else list(range(len(segs)))
+    return dict(zip(ids, segs))
+
+
+def _round_entries(round_dir):
+    """{client -> [metric entries]} for one round, from whichever layout the run wrote.
+
+    Source order mirrors how run_fed writes metrics: per-client json_logs (subprocess path,
+    run_fed.py:1437), the shared per-round json_logs (persistent path, :1758), per-lane
+    json_logs (lane path, :1642), and finally the raw client training.log (the original
+    source -- kept so pre-json_logs runs still parse)."""
+    out = {}
+    for cj in sorted(glob.glob(os.path.join(round_dir, "client_*", "json_logs", "metrics.json"))):
+        m = re.search(r"client_(\d+)", cj)
+        if not m:
+            continue
+        with open(cj) as f:
+            out[int(m.group(1))] = json.load(f)
+    if out:
+        return out
+    ids = _plan_clients(round_dir)
+    shared = os.path.join(round_dir, "json_logs", "metrics.json")
+    if os.path.isfile(shared):
+        with open(shared) as f:
+            return _split_by_client(json.load(f), ids)
+    lanes = sorted(glob.glob(os.path.join(round_dir, "json_logs_lane*", "metrics.json")))
+    if lanes:
+        for i, lj in enumerate(lanes):
+            with open(lj) as f:
+                out[ids[i] if i < len(ids) else i] = json.load(f)
+        return out
+    for log in sorted(glob.glob(os.path.join(round_dir, "client_*", "training.log"))):
+        m = re.search(r"client_(\d+)", log)
+        if m:
+            out[int(m.group(1))] = parse_training_log(log)
+    return out
+
+
 def run_rounds(run_dir, key):
     """round -> {client -> (mean_reward_over_steps, max_reward)}"""
     rounds = {}
-    for log in sorted(glob.glob(os.path.join(run_dir, "round_*", "client_*", "training.log"))):
-        m = re.search(r"round_(\d+)[/\\]client_(\d+)", log)
-        if not m:
+    for d in sorted(glob.glob(os.path.join(run_dir, "round_*"))):
+        m = re.search(r"round_(\d+)$", d)
+        if not m or not os.path.isdir(d):
             continue
-        rnd, cl = int(m.group(1)), int(m.group(2))
-        vals = [e["metrics"][key] for e in parse_training_log(log) if key in e["metrics"]]
-        if vals:
-            rounds.setdefault(rnd, {})[cl] = (sum(vals) / len(vals), max(vals))
+        rnd = int(m.group(1))
+        for cl, entries in _round_entries(d).items():
+            vals = [e["metrics"][key] for e in entries if key in e.get("metrics", {})]
+            if vals:
+                rounds.setdefault(rnd, {})[cl] = (sum(vals) / len(vals), max(vals))
     return rounds
 
 
