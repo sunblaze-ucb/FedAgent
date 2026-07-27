@@ -139,10 +139,23 @@ pip install -r alfworld_requirements.txt     # repo root; pins the ALFWorld stac
 # One-time: download the PDDL + textworld game files (and detector) into the cache.
 export ALFWORLD_DATA="$HOME/.cache/alfworld"
 alfworld-download -f
+
+# Then confirm this machine's data matches the shipped game manifests (exits non-zero on drift).
+# Runs under any python -- stdlib only, no alfworld/textworld needed.
+python tools/gen_alfworld_manifest.py --data "$ALFWORLD_DATA/json_2.1.1" --check
 ```
 
+- **Check the manifests after downloading.** The service does not walk `$ALFWORLD_DATA` to
+  decide which games exist — it reads `data/alfworld_games/<split>.json` (3553 train / 140
+  `valid_seen` / 134 `valid_unseen`), because `game.tw-pddl` and its `solvable` flag are
+  produced by ALFWorld's preprocessing and a walk would pick up whatever that step happened to
+  produce here. A listed game missing on disk **aborts the service** rather than silently
+  renumbering every client shard and val slot, so `--check` tells you up front whether this
+  box's data is the one the experiments are defined on. Expected output: `OK` for all three
+  splits. On `DIFF`, fix the data or regenerate deliberately (that changes which games every
+  ALFWorld run uses — see [revision.md](./revision.md)).
 - **Game files are required.** `alfworld-download` populates `ALFWORLD_DATA` (the
-  solvable `game.tw-pddl` files the service walks at startup). `run_service.sh`
+  solvable `game.tw-pddl` files the service reads at startup). `run_service.sh`
   exports `ALFWORLD_DATA="${ALFWORLD_DATA:-$HOME/.cache/alfworld}"`; **this var must
   be exported** because the bundled `config_tw.yaml` references game/logic/detector
   paths as `$ALFWORLD_DATA/...` (expanded at runtime). Set it to the same directory

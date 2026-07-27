@@ -45,6 +45,19 @@ def _line_of_first(fn, predicate):
     return next((n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call) and predicate(n)), None)
 
 
+def test_the_authoritative_manifest_is_consulted_before_the_walk():
+    """The manifest pins the SET (the sort only pins the order): it must be applied before the
+    walk, and the walk's own `[] if self.game_files else os.walk(...)` guard then skips it."""
+    fn = _collect_game_files_body()
+    manifest_line = _line_of_first(
+        fn, lambda c: isinstance(c.func, ast.Name) and c.func.id == "_fedagent_manifest")
+    walk_line = _line_of_first(
+        fn, lambda c: isinstance(c.func, ast.Attribute) and c.func.attr == "walk")
+    assert manifest_line is not None, \
+        "the game manifest is no longer consulted -> the task set is a property of the machine again"
+    assert walk_line is not None and manifest_line < walk_line
+
+
 def test_game_files_are_sorted_before_the_seeded_shuffle():
     fn = _collect_game_files_body()
 

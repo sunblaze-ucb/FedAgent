@@ -8,6 +8,61 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-27: nothing pinned WHICH ALFWorld games exist — the task set was a property of the machine's preprocessing state
+
+- **Files:** new `fedagent/envs/alfworld/game_manifest.py` + `tools/gen_alfworld_manifest.py` +
+  the shipped `data/alfworld_games/{train,eval_in_distribution,eval_out_of_distribution}.json`;
+  consumed in `.../alfworld/agents/environment/alfred_tw_env.py` (`collect_game_files`) and
+  bridged by `run_fed.alfworld_game_list_env`. Tests:
+  `tests/test_alfworld_game_manifest.py`, `tests/test_alfworld_game_order.py`.
+- **Severity:** reproducibility — the other half of the 2026-07-26 ordering fix below. That one
+  made the ORDER a pure function of the collected set; this one pins the SET.
+
+### The bug
+
+`collect_game_files` keeps a trial when it has a `traj_data.json`, a `game.tw-pddl`, and that
+file says `solvable: true`. **Neither the game file nor the flag ships with the raw ALFWorld
+trajectories** — both are produced by ALFWorld's preprocessing step. So the collected set is a
+function of how completely that step ran on the machine, and on the machine these manifests
+were cut from, **47 of the 187 eligible `valid_seen` trials (25%) have no game file at all**.
+
+Everything downstream is positional (the seeded shuffle, `slice_games_for_client`'s index
+slices, `num_train_games`/`start_idx`, `games[seed]` under `ALFWORLD_SEED_IS_INDEX`), so a
+machine that preprocessed further collects a larger list, every index shifts, and both the
+client shards and the validation set become different games — with no error and no warning.
+Sorting the walk (below) does not help: it guarantees the same order *given the same set*.
+
+### The fix
+
+A checked-in manifest per split — a sorted list of split-relative `game.tw-pddl` paths plus a
+sha256 of that list — which `collect_game_files` reads **instead of** walking:
+
+| | before | now |
+|---|---|---|
+| where the list comes from | `os.walk` of `$ALFWORLD_DATA` | `data/alfworld_games/<split>.json` |
+| a listed game missing on disk | (not detectable) | **RuntimeError** naming the count and examples (`ALFWORLD_MANIFEST_STRICT=0` warns and drops instead — that renumbers, so triage only) |
+| extra games on disk | silently included, shifting every index | ignored by construction |
+| task-type subsets (the eval breakdown) | re-walked with a filter | filtered from the one manifest by path, same relative order |
+| cost | walk + ~2 JSON reads per trial | one file read (also subsumes the optional `ALFWORLD_MANIFEST_CACHE` speed-up) |
+
+The engine falls back to the historical walk when no manifest is found or
+`ALFWORLD_GAME_MANIFEST=none`, so the vendored engine still works standalone.
+
+### Verification
+
+- The shipped manifests are **byte-identical to what the fixed walk produces** on the machine
+  they were cut from: `tools/gen_alfworld_manifest.py --check` reports OK for all three splits
+  (sha256 `ffa58e52` / `8b129cdf` / `14894587`). So this change is a no-op *here* and a
+  guarantee elsewhere.
+- Counts land where they should: 3553 train / 140 `valid_seen` / 134 `valid_unseen`. The 3553
+  matches the game count the ALFWorld hardness labelling was built on, i.e. the shipped labels
+  and the shipped manifest describe the same task set.
+- `fedagent/envs/alfworld/__init__.py` now re-exports its httpx client **lazily** (PEP 562), so
+  the manifest module stays importable under a bare interpreter — the generator has to run
+  wherever the DATA is, which is not necessarily a machine with the trainer env installed.
+
+---
+
 ## 2026-07-26: `eval_mode=worker` re-drew the validation set every round — the worker-eval dataset inherited the *training* client's `FEDAGENT_BASE_SEED`
 
 - **Files:** `fedagent/fed/persistent_task_runner.py` (`unseeded_eval_data`, applied at the
@@ -161,9 +216,10 @@ Shards and val slots differ from pre-fix runs *on this machine* — but they wer
 reproducible off it, so there is no ordering worth preserving. Curves from before and after are
 measured on different games; see the comparability note in the entry above.
 
-Still open: the canonical order is a function of the dataset's *paths*, so it is stable across
-machines only for identical dataset layouts. Pinning a checked-in game manifest would close the
-last gap.
+The canonical order is a function of the dataset's *paths* — and since the split root is a
+common prefix of every entry and Python sorts by code point, that means the order is identical
+on any machine **given the same set of games**. Pinning the set itself needed a second change:
+the checked-in manifest, one entry up (2026-07-27).
 
 ---
 

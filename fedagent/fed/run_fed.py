@@ -229,6 +229,16 @@ DEFAULTS = {
                                             #   The per-client TRAIN services are untouched either way.
     # --- Tier-2 plumbing knobs (report: docs/acceleration_tier2_2026-07-02.md on the migrate/verl-0.8.0 branch). ALL default OFF ==
     # byte-identical legacy behavior; each is individually equivalence-gated (max|delta|<=1e-4). ---
+    "alfworld_game_manifest": "",             # AUTHORITATIVE game list: "" => the shipped
+                                            #   data/alfworld_games/<split>.json (found by the engine),
+                                            #   "none" => no manifest (historical directory walk), or an
+                                            #   explicit path. Pins WHICH games exist, so client shards and
+                                            #   the val set are a repo asset rather than a function of the
+                                            #   machine's ALFWorld preprocessing state (game.tw-pddl and
+                                            #   `solvable` are generated, not shipped with the raw data).
+    "alfworld_manifest_strict": True,        # a manifest-listed game missing on disk ABORTS the service.
+                                            #   False = warn + drop it, which renumbers every index -> use
+                                            #   only to triage a data problem, never for a real run.
     "alfworld_manifest_cache": False,        # cache the 8810-game walk (PRE-shuffle manifest; shuffle/
                                             #   shard/caps run natively on identical input -> byte-identical)
     "alfworld_manifest_dir": "",             # cache location ("" => <repo>/runs/alfworld_manifest; persists across runs)
@@ -904,6 +914,27 @@ def client_service_url(cfg, client_id: int) -> Optional[str]:
     return None
 
 
+def alfworld_game_list_env(cfg) -> dict:
+    """Env-var bridge for the AUTHORITATIVE game manifest — the shipped, per-split list of games
+    (``data/alfworld_games/<split>.json``) that replaces the engine's directory walk, so a run's
+    task set is a repo asset instead of a property of the machine's ALFWorld preprocessing state.
+
+    Not to be confused with ``alfworld_manifest_env`` below: that one is an optional *speed*
+    cache for the walk (unvalidated, per-machine, under runs/). This one defines WHICH GAMES
+    exist, is versioned with the code, and is validated on load.
+
+    Empty (default) → the engine finds the shipped manifest itself; ``none`` → no manifest, the
+    historical walk; any other value → that file. Strictness on by default: a listed game that
+    is missing on disk aborts the service rather than silently renumbering every index."""
+    env = {}
+    path = str(cfg.get("alfworld_game_manifest", "") or "").strip()
+    if path:
+        env["ALFWORLD_GAME_MANIFEST"] = path
+    if not bool(cfg.get("alfworld_manifest_strict", True)):
+        env["ALFWORLD_MANIFEST_STRICT"] = "0"
+    return env
+
+
 def alfworld_manifest_env(cfg, split: str) -> dict:
     """Tier-2a (opt-in): env-var bridge for the ALFWorld game-manifest cache. The service's
     AlfredTWEnv walk (os.walk + 2 JSON reads x ~8810 games on GPFS) is identical for every
@@ -974,6 +1005,7 @@ def start_alfworld_services(cfg, env_base: dict, client_ids: Optional[List[int]]
                     "SIZE_STD": str(cfg.get("size_std", 1.0)),
                     "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
                     "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
+                    **alfworld_game_list_env(cfg),          # the shipped per-split game list
                     **alfworld_manifest_env(cfg, str(cfg.get("alfworld_train_eval", "train"))),
                 })
                 suffix = f"_r{j}" if reps > 1 else ""
@@ -1085,6 +1117,7 @@ def start_val_service(cfg, env_base: dict) -> List[dict]:
                 "PARTITION_STRATEGY": "uniform",  # UNPERTURBED (full game set, no client shard)
                 "CLIENT_ID": "0", "CLIENT_NUM": "1",
                 **alfworld_val_selection_env(cfg),   # seed==index (default) vs legacy shuffle-draw
+                **alfworld_game_list_env(cfg),        # the shipped per-split game list
                 **alfworld_manifest_env(cfg, str(cfg.get("alfworld_val_split", "eval_in_distribution"))),
             })
             return env

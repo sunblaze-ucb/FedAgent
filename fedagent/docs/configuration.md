@@ -378,7 +378,9 @@ runtime behavior: `running.md`).
 | `hf_export` | str | `every_round` | `final` skips the per-round merge (shard-direct reload; disables round-level resume anchors). |
 | `service_scope` | str | `round` | `run` keeps per-client env-service fleets warm across rounds (LRU `service_cache_clients`, default 4). |
 | `alfworld_replicas` / `webshop_replicas` | int | `1` | Tier-1 lock/GIL sharding: K service processes per client (ALFWorld's big lever; WebShop ≈ wash). |
-| `alfworld_manifest_cache` (+`_dir`) | bool | `False` | Cache the pre-shuffle game walk (self-validating; degrades to the full walk on mismatch). |
+| `alfworld_game_manifest` | str | `""` | The AUTHORITATIVE game list. `""` → the shipped `data/alfworld_games/<split>.json` (3553 train / 140 `valid_seen` / 134 `valid_unseen`), which the engine reads **instead of** walking `$ALFWORLD_DATA`; `none` → the historical walk; else a path. Pins WHICH games exist, so client shards and the val set are a repo asset rather than a function of the machine's ALFWorld preprocessing state (`game.tw-pddl` and its `solvable` flag are generated, not shipped). Verify a data root with `tools/gen_alfworld_manifest.py --check`. |
+| `alfworld_manifest_strict` | bool | `True` | A manifest-listed game missing on disk **aborts** the service, naming the count and examples. `False` warns and drops it — which renumbers every index, so use it to triage a data problem, never for a real run. |
+| `alfworld_manifest_cache` (+`_dir`) | bool | `False` | An optional *speed* cache for the walk (unvalidated, per-machine, under `runs/`) — distinct from `alfworld_game_manifest` above, and made redundant by it. Self-validating; degrades to the full walk on mismatch. |
 | `prewarm_next_round_services` | bool | `False` | Lever #2: launch round r+1's services during round r (ignored under `service_scope: run`). |
 | `parallel_clients` | int | `1` | #3 lanes: the round's clients train concurrently on GPU slices, multi-node lever; wash at 1.5B single-node (§10.3). |
 | `one_step_off` | bool | `False` | ADDITIONAL OPTION, **off-policy** (verl `one_step_off_policy`); subprocess path only. Not used for paper runs. |

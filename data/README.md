@@ -20,6 +20,30 @@ alfworld-download -f
 Export the **same** `ALFWORLD_DATA` when launching training. Full recipe:
 [`../fedagent/docs/installation.md`](../fedagent/docs/installation.md) §3.
 
+**ALFWorld game manifests (`alfworld_games/`).** The authoritative per-split game lists —
+`train.json` (3553), `eval_in_distribution.json` (140 = `valid_seen`),
+`eval_out_of_distribution.json` (134 = `valid_unseen`) — each a sorted list of split-relative
+`game.tw-pddl` paths plus a sha256 of that list.
+
+They exist because the download above is *not* the whole story: `game.tw-pddl` and its
+`solvable` flag are produced by ALFWorld's preprocessing, so a directory walk collects
+whatever that step happened to produce on a given machine (here, 47 of the 187 eligible
+`valid_seen` trials have no game file at all). Everything downstream is positional — client
+shards, `games[seed]`, the validation set — so a machine that preprocessed further would
+silently train and evaluate on different games. The manifest makes the task set a repo asset:
+the engine reads it instead of walking, a listed game missing on disk aborts the service, and
+extra games on disk are ignored by construction.
+
+Verify a fresh `$ALFWORLD_DATA` against them (writes nothing, non-zero exit on drift):
+
+```bash
+python tools/gen_alfworld_manifest.py --data $ALFWORLD_DATA/json_2.1.1 --check
+```
+
+Regenerating them **changes which games every run trains and evaluates on** — a deliberate
+act, logged in [`../fedagent/docs/revision.md`](../fedagent/docs/revision.md). Mechanism:
+[`../fedagent/envs/alfworld/game_manifest.py`](../fedagent/envs/alfworld/game_manifest.py).
+
 **Bundled env-heterogeneity data (`env_heterogeneity/`).** Small, derived data files used
 by the *environment-level* heterogeneity experiments are committed here (they are inputs,
 not run configs; the run configs live under `fedagent/config/paper/env_heterogeneity/`):

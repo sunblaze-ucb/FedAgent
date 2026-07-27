@@ -172,6 +172,26 @@ class AlfredTWEnv(object):
                 task_types.append(TASK_TYPES[tt_id])
 
         count = 0
+        # --- fedagent: AUTHORITATIVE game manifest (2026-07-27) --------------------------------
+        # A checked-in list of split-relative game paths (data/alfworld_games/<split>.json) that
+        # REPLACES the walk below. `game.tw-pddl` and its `solvable` flag are produced by
+        # ALFWorld's preprocessing step rather than shipped with the raw trajectories, so the
+        # walk's output is a function of how completely that step ran on THIS machine -- and
+        # every index downstream (client shards, games[seed] under ALFWORLD_SEED_IS_INDEX, the
+        # val set) shifts with it. The manifest pins the SET, as the sort below pins the ORDER.
+        # Missing listed games raise (ALFWORLD_MANIFEST_STRICT=0 downgrades to a warning); extra
+        # games on disk are ignored by construction. See fedagent/envs/alfworld/game_manifest.py.
+        # Absent/disabled (ALFWORLD_GAME_MANIFEST=none) -> the historical walk, unchanged.
+        try:
+            from fedagent.envs.alfworld.game_manifest import game_files as _fedagent_manifest
+        except ImportError as _e:   # vendored engine used standalone, outside the fedagent tree
+            _fedagent_manifest = None
+            print(f"[alfworld-manifest] not importable ({_e}); using the directory walk", flush=True)
+        if _fedagent_manifest is not None:
+            _listed = _fedagent_manifest(data_path, self.train_eval, tuple(task_types))
+            if _listed:
+                self.game_files = _listed   # non-empty -> the walk below is skipped
+
         # --- fedagent manifest cache (opt-in via ALFWORLD_MANIFEST_CACHE; run_fed key
         # alfworld_manifest_cache). The walk below (os.walk + 2 JSON reads x ~8810 games on
         # GPFS) produces the same list for every service process of a run, so cache its

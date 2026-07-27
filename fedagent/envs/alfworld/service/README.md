@@ -80,10 +80,14 @@ Two properties of that map are worth stating precisely, because both bit us:
   runner sets it on the **val** service by default (`alfworld_val_seed_is_index`) and the
   hardness labeller sets it for bijective coverage; per-client **train** services keep the
   shuffle-draw, which is what re-samples a shard every round.
-- **The map depends on the game list's ORDER**, which `collect_game_files` now canonicalizes
-  (sorted before the seeded shuffle) — before 2026-07-26 it was `os.walk` order, so the same
-  seed selected a different game on a different machine. See
-  [bugfixes.md](../../../docs/bugfixes.md).
+- **The map depends on the game list**, both its ORDER and its CONTENTS. The order is
+  canonicalized (`collect_game_files` sorts before the seeded shuffle; before 2026-07-26 it was
+  `os.walk` order). The contents come from a shipped manifest —
+  `data/alfworld_games/<split>.json`, read instead of walking `$ALFWORLD_DATA` — because
+  `game.tw-pddl` and its `solvable` flag are produced by ALFWorld's preprocessing, so a walk
+  collects whatever that step produced on this box. A listed game missing on disk aborts the
+  service; extra games on disk are ignored. `ALFWORLD_GAME_MANIFEST=none` restores the walk.
+  See [game_manifest.py](../game_manifest.py) and [bugfixes.md](../../../docs/bugfixes.md).
 
 `/step` parses the model's action text **server-side**
 with the original `alfworld_projection` (loaded in isolation), runs one PDDL
