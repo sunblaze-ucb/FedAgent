@@ -111,17 +111,25 @@ if not getattr(DataProto, "_windowed_patched", False):
         omi = getattr(other, "meta_info", None)
         # neutralize fit()'s `batch.repeat(n).union(gen_out)` when `other` is the tagged,
         # self-sufficient per-turn batch of a DIFFERENT row count: adopt it + pad to the divisor.
-        if omi and omi.get(_TAG) and len(self) != len(other):
+        #
+        # The tag is consumed WHENEVER it is present -- including the equal-length case (which
+        # happens iff every episode of the batch produced exactly one turn). There the stock
+        # union runs and MERGES meta_info, so a surviving tag would ride onto the merged TRAINING
+        # batch, and _windowed_slice above would then silently no-op every later legitimate
+        # `slice(0, k<len)` on it (REMAX's baseline slice, any future trainer slicing). Popping
+        # first keeps the tag's lifetime exactly one union, which is all it is for.
+        if omi and omi.get(_TAG):
             divisor = int(omi.pop(_TAG))
-            adjusted = _adjust_to_divisor(other, divisor)
-            # the stock union MERGES meta_info; we adopt other's ROWS but must keep self's meta
-            # keys (e.g. 'temperature', set at ray_trainer.py:1436 and required by compute_log_prob,
-            # plus global_steps etc.). other's keys (timing) win on the (equal-valued) overlap.
-            adjusted.meta_info = {**(self.meta_info or {}), **(adjusted.meta_info or {})}
-            print(f"[windowed] train batch: adopted {len(other)} per-turn rows "
-                  f"(stock would have truncated to {len(self)}) -> padded to {len(adjusted)} "
-                  f"(divisor {divisor})", flush=True)
-            return adjusted
+            if len(self) != len(other):
+                adjusted = _adjust_to_divisor(other, divisor)
+                # the stock union MERGES meta_info; we adopt other's ROWS but must keep self's meta
+                # keys (e.g. 'temperature', set at ray_trainer.py:1436 and required by compute_log_prob,
+                # plus global_steps etc.). other's keys (timing) win on the (equal-valued) overlap.
+                adjusted.meta_info = {**(self.meta_info or {}), **(adjusted.meta_info or {})}
+                print(f"[windowed] train batch: adopted {len(other)} per-turn rows "
+                      f"(stock would have truncated to {len(self)}) -> padded to {len(adjusted)} "
+                      f"(divisor {divisor})", flush=True)
+                return adjusted
         return _orig_union(self, other)
 
     DataProto.slice = _windowed_slice
