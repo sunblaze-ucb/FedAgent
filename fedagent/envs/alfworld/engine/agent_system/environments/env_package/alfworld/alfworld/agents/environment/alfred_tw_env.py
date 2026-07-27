@@ -247,6 +247,28 @@ class AlfredTWEnv(object):
             except Exception as _e:
                 print(f"[manifest-cache] write failed ({_e}); continuing without cache", flush=True)
 
+        # --- fedagent: CANONICAL ORDER (2026-07-26) -------------------------------------------
+        # os.walk returns directory entries in FILESYSTEM order, which differs between machines
+        # and between copies of the dataset. Everything downstream of this point is POSITIONAL:
+        # the seeded shuffle right below, the client index slices (slice_games_for_client ->
+        # partition_dataset), num_train_games/start_idx caps, and games[index] selection under
+        # ALFWORLD_SEED_IS_INDEX. So an unsorted walk made the whole game->client and game->val-slot
+        # assignment machine-dependent -- the same config with the same seed produced a DIFFERENT
+        # partition and a DIFFERENT validation set on another node (measured 2026-07-26: replaying
+        # a run's seed->game map on a second machine overlapped its actual val set only at chance).
+        # Sorting by path makes the pre-shuffle list a pure function of the dataset CONTENT, so
+        # seed 42 lands on the same permutation everywhere.
+        #
+        # Deliberately AFTER the manifest-cache load as well: a cache written before this fix
+        # stores the old filesystem order, and re-canonicalizing on load keeps the cache a pure
+        # speed-up (its whole contract) instead of a way to resurrect the old ordering.
+        #
+        # NOTE (behaviour change): shards and val slots differ from pre-fix runs on this machine.
+        # They were never reproducible off it, so there is no ordering worth preserving -- but
+        # curves from before and after this commit are measured on different games. See
+        # docs/bugfixes.md 2026-07-26.
+        self.game_files.sort()
+
         # print(f"Overall we have {len(self.game_files)} games in split={self.train_eval}")
         original_num_games = len(self.game_files)
 
@@ -325,9 +347,13 @@ class AlfredTWEnv(object):
                 
                 if num_eval_games > 0 and num_eval_games < len(self.game_files):
 
-                    
-                    self.game_files = random.sample(self.game_files, num_eval_games)
-                    
+                    # fedagent 2026-07-26: SEEDED. The bare `random.sample` drew from the global
+                    # RNG, whose state at this point depends on whatever ran before in the
+                    # process -- so a capped eval set was not reproducible even on one machine,
+                    # and two val-service replicas of the same run could serve different games.
+                    # Random(42) matches the eval shuffle above (same constant, same intent).
+                    self.game_files = random.Random(42).sample(self.game_files, num_eval_games)
+
                 else:
                     # If configured as 0 or larger than the total data size, use all data
                     num_eval_games = len(self.game_files)
