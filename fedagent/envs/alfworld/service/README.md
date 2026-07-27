@@ -67,7 +67,25 @@ so a caller (and `start_alfworld_services()`, which logs `partition` and
 Per-episode game selection is deterministic: TextWorld's `reset()` takes no game
 argument (it advances a shuffled iterator), so `/reset` calls `env.seed(seed)`
 first, mapping each `seed` value to a fixed game, the analog of WebShop's
-per-seed goal selection. `/step` parses the model's action text **server-side**
+per-seed goal selection.
+
+Two properties of that map are worth stating precisely, because both bit us:
+
+- **It is a draw WITH REPLACEMENT, not an enumeration.** `env.seed(s)` rebuilds the game
+  iterator as `shuffle_s(gamefiles)` and `reset()` takes its head, so `game(s) = shuffle_s(...)[0]`
+  — deterministic in `s`, but N contiguous seeds cover only ~`|G|·(1−(1−1/|G|)^N)` distinct
+  games and repeat the rest (64 seeds over the 140-game `valid_seen` split → ~52 unique, ~12
+  repeats). Set `ALFWORLD_SEED_IS_INDEX=1` for the enumeration instead: `seed` becomes a direct
+  index into the split, so contiguous seeds `0..N-1` are `games[0:N]`, each exactly once. The
+  runner sets it on the **val** service by default (`alfworld_val_seed_is_index`) and the
+  hardness labeller sets it for bijective coverage; per-client **train** services keep the
+  shuffle-draw, which is what re-samples a shard every round.
+- **The map depends on the game list's ORDER**, which `collect_game_files` now canonicalizes
+  (sorted before the seeded shuffle) — before 2026-07-26 it was `os.walk` order, so the same
+  seed selected a different game on a different machine. See
+  [bugfixes.md](../../../docs/bugfixes.md).
+
+`/step` parses the model's action text **server-side**
 with the original `alfworld_projection` (loaded in isolation), runs one PDDL
 action, and computes the reward.
 

@@ -88,6 +88,13 @@ dataset adapter). The round term makes each client re-draw goals from its **fixe
 every round (covering the shard over `total_rounds`); without it, every client would train
 on the same goals each round. Stride 100 keeps the per-client offsets collision-free.
 
+**It is a TRAINING knob only.** The validation dataset must NOT see it — a val set that moves
+with the round/client is not a benchmark. The subprocess eval path (`_build_eval`) simply never
+sets the var; the persistent worker, which sets it on its own *process* environment, wraps its
+val-dataset build in `unseeded_eval_data()` so the val rows stay seeded `0..n_envs-1`. That
+wrapper is the fix for the 2026-07-26 defect where `eval_mode=worker` scored every round on a
+different ALFWorld draw — see [bugfixes.md](../docs/bugfixes.md).
+
 ### Unperturbed global-model evaluation
 
 If `val_env_spec` is set, `start_val_service` brings up **one shared, unperturbed**

@@ -143,9 +143,16 @@ overlay replaced parquet preprocessing with on-the-fly env enumeration.
 | [`webshop.yaml`](../config/envs/webshop.yaml) | 16 | 6 | WebShop smoke (small budget). |
 | [`webshop_15.yaml`](../config/envs/webshop_15.yaml) | 8 | 15 | WebShop **GRPO** train (`n_envs=8` == original GRPO train_data_size; with `train_batch_size=8` that is 1 optimizer step/epoch). |
 | [`webshop_15_ppo.yaml`](../config/envs/webshop_15_ppo.yaml) | 64 | 15 | WebShop **PPO** train (`n_envs=64` == original PPO train_data_size, paired with `train_batch_size=64`). |
-| [`webshop_15_val.yaml`](../config/envs/webshop_15_val.yaml) | 500 | 15 | WebShop validation: held-out `goals[0:500]` on the full catalog (the whole held-out set; eval sets no `FEDAGENT_BASE_SEED`, so every round scores the same 500 goals). |
+| [`webshop_15_val.yaml`](../config/envs/webshop_15_val.yaml) | 64 | 15 | WebShop validation: the held-out `goals[0:64]` on the full catalog (`WEBSHOP_VAL_SIZE=500` reserves 500 goals; the spec scores the first `n_envs` of them). Fixed every round: eval rows are seeded `0..n_envs-1` and the service maps `seed % VAL_SIZE`. |
 | [`alfworld.yaml`](../config/envs/alfworld.yaml) | 8 | 50 | ALFWorld train (game shards; `max_turns=50` == original `max_steps`). |
-| [`alfworld_val.yaml`](../config/envs/alfworld_val.yaml) | 140 | 50 | ALFWorld validation: `valid_seen` (140, in-distribution). For the per-task-type breakdown on this 140-game split, run `tools/eval_alfworld_by_tasktype.py` (it pins `eval_in_distribution`; the 134-game `valid_unseen` half of the paper's 274 needs a separate pass with `alfworld_val_split: eval_out_of_distribution`). |
+| [`alfworld_val.yaml`](../config/envs/alfworld_val.yaml) | 64 | 50 | ALFWorld validation: the first 64 of the 140-game `valid_seen` split, each exactly once (`alfworld_val_seed_is_index`, default on). For the per-task-type breakdown over all 140, run `tools/eval_alfworld_by_tasktype.py` (it pins `eval_in_distribution`; the 134-game `valid_unseen` half of the paper's 274 needs a separate pass with `alfworld_val_split: eval_out_of_distribution`). |
+
+> **Which tasks a val curve is measured on.** Both specs are scored on a *fixed* set every
+> round, in every eval mode: rows are seeded `0..n_envs-1` because the eval dataset is built
+> with `FEDAGENT_BASE_SEED` cleared. Before 2026-07-26 the `eval_mode=worker` path leaked the
+> training client's seed into that dataset, which re-drew ALFWorld's set every round (WebShop
+> was immune: `500 | 100_000`). See [bugfixes.md](./bugfixes.md) (2026-07-26) — ALFWorld numbers
+> from before that date are not directly comparable to numbers after it.
 
 ---
 
@@ -332,6 +339,7 @@ is the identity, so the loop is `T*E` epochs of centralized training); **Local**
 | `webshop_val_port` | int | `8090` | Shared unperturbed WebShop val service port. |
 | `alfworld_val_port` | int | `8290` | Shared unperturbed ALFWorld val service port. |
 | `alfworld_val_split` | str | `eval_in_distribution` | ALFWorld val games (the in-distribution `valid_seen` eval set). |
+| `alfworld_val_seed_is_index` | bool | `True` | VAL service only: seed **is** the game index → the val spec's rows are `games[0:n_envs]`, each exactly once. `false` restores the legacy `RandomState(seed).shuffle(games)[0]` map — a draw **with replacement** over the whole split (~52 unique of 140, ~12 repeats at `n_envs=64`), i.e. a *different* val set, so curves across the flip are not comparable. Train services are unaffected either way. |
 
 Eval scores the **global** model (base on round 0, else the round's aggregated HF) on one
 shared unperturbed val service via a verl `val_only` pass (`adv_estimator=grpo`, no critic,

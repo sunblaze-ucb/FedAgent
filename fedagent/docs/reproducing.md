@@ -128,6 +128,17 @@ round's merged FedAvg model, re-aggregates, and (every round, `test_freq` is ine
 on this stack) scores
 the global model on the shared unperturbed val set.
 
+> **Validation-set boundary at 2026-07-26.** The val set is 64 held-out tasks, fixed across
+> rounds and arms (rows seeded `0..63`). Three same-day changes altered *which* 64 on ALFWorld:
+> the `eval_mode=worker` path no longer inherits the training seed (it had been re-drawing the
+> set every round), the game list is now sorted before the seeded shuffle (it had been in
+> filesystem order, so the set differed per machine), and `alfworld_val_seed_is_index` now
+> defaults on (the set is `games[0:64]`, each exactly once, instead of a ~52-of-140 draw with
+> repeats). **ALFWorld numbers produced before that date are on a different task set** — trends
+> and same-vintage arm comparisons stand, absolute values shift by ≈5 pp; re-score the
+> checkpoints you intend to publish. WebShop is unaffected (its `seed % 500` map made it immune).
+> Mechanism: [bugfixes.md](./bugfixes.md), decision: [revision.md](./revision.md).
+
 ---
 
 ## The experiment matrix

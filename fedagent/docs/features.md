@@ -238,6 +238,13 @@ The aggregated **global** model is scored **every round** on a shared,
 on the same fixed set. Eval is a verl val-only pass (generate + score, no training, no
 critic) and never aborts the loop; a failed eval logs a warning and continues.
 
+*Fixed* means the val rows are seeded `0..n_envs-1` in every eval mode — the eval dataset is
+built with `FEDAGENT_BASE_SEED` cleared, so it never inherits the round's training seed
+(`persistent_task_runner.unseeded_eval_data`, 2026-07-26; before that the `worker` mode leaked
+it and re-drew ALFWorld's set every round). On ALFWorld the seed is additionally treated as a
+game *index* (`alfworld_val_seed_is_index`, default on), so the set is `games[0:n_envs]` with no
+repeats. Which games a run measured on is logged at val-service start.
+
 **Configure**
 
 | Capability | Key | Where | Source |

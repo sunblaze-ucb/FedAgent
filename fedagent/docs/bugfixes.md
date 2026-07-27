@@ -8,6 +8,212 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-26: `eval_mode=worker` re-drew the validation set every round — the worker-eval dataset inherited the *training* client's `FEDAGENT_BASE_SEED`
+
+- **Files:** `fedagent/fed/persistent_task_runner.py` (`unseeded_eval_data`, applied at the
+  worker-eval dataset build); mechanism spans `fedagent/data/agentic_dataset.py:58,105` (row
+  seeds) and `fedagent/envs/alfworld/service/server.py` (seed → game). Regression:
+  `tests/test_worker_eval_val_seed.py`.
+- **Severity:** silent measurement corruption of the paper's red line on ALFWorld. Training,
+  aggregation and checkpoints are unaffected — only *which tasks the curve was measured on*.
+  WebShop escaped by arithmetic (below), so no WebShop number changes.
+- **Exposure:** `eval_mode: worker` **and** a per-round worker process (`persistent: true` +
+  `cross_round: false`). All 176 `config/paper_accelerated/` configs set `cross_round: true`, so
+  the repo tree never triggered it; the run-local configs that switched to `cross_round: false`
+  to dodge the (since-fixed) cross-round VRAM leak did. Latent since `3b8aa2d` (2026-06-28), the
+  commit that introduced `eval_mode=worker`; live only from ~2026-07-24.
+
+### The bug
+
+`AgenticDataset` seeds every episode row from a **process-global** env var:
+
+```python
+"seed": base_seed * 100_000 + si * 1_000 + e * n + i    # agentic_dataset.py:105
+base_seed = int(os.environ.get("FEDAGENT_BASE_SEED", 0))
+```
+
+`run_fed` sets `FEDAGENT_BASE_SEED = base_seed + round*100 + client` per client-round — a
+*training* knob: it is what gives each client a fresh draw of its shard every round. The
+persistent runner sets the same var (`persistent_task_runner.py:64`, and again per client in
+`_reset_for_client`) **before** building datasets, and the worker-eval **validation** dataloader
+was built inside that window:
+
+```python
+os.environ["FEDAGENT_BASE_SEED"] = str(plan[0]["seed"])   # the training client's seed
+...
+wval = create_rl_dataset(self._worker_eval_spec, ...)     # <- val rows seeded from it
+```
+
+The orchestrator's subprocess eval path (`run_fed._build_eval`) never sets the var, so the two
+eval modes scored *different task sets*, and `config/envs/*_val.yaml`'s documented contract —
+"the same fixed set every round" — held only on the subprocess path.
+
+With one worker process per round, `plan[0]["seed"]` changes every round, so the val rows'
+seeds changed every round.
+
+### Why only ALFWorld showed it
+
+| | seed → task | consequence |
+|---|---|---|
+| WebShop | `sess = seed % VAL_SIZE`, `VAL_SIZE=500` | `100_000 = 200 × 500`, so `base*100_000 ≡ 0 (mod 500)` → `sess = i` → **always `goals[0:n_envs]`**, same order, every round. Immune by arithmetic, not by design. |
+| ALFWorld | `RandomState(seed).shuffle(gamefiles)[0]` | no modular structure to absorb the offset → a fresh pseudo-random draw **with replacement** over the whole split per process. |
+
+The WebShop immunity is fragile: any `WEBSHOP_VAL_SIZE` that does not divide `100_000`
+(e.g. 300) would have shown the identical failure there.
+
+### Evidence (from `run_artifacts/alfworld_ppo_hardness_std1`, 48 rounds)
+
+- 48 rounds → **48 different game sets**; union = 140 = the whole `valid_seen` split.
+- Per round: 64 episodes covering **52.2 unique games on average** (range 46–59) with ~12
+  repeats — the signature of sampling *with replacement*: 140·(1−(1−1/140)^64) = 51.5 expected.
+- Within a round, the aggregated point and the client circles were measured on **different**
+  sets (~19 of 53 shared — exactly the 140·p² = 19.0 expected of two independent draws).
+- The decisive test: `round_k/eval` is written by the round-**k+1** worker (which evals round k's
+  starting model at its `i == 0`), while `round_k/client_*/eval` is written by the round-k
+  worker. So they should match *across* rounds, not within one — and
+  `round_k/eval == round_{k+1}/client_*/eval` holds **48/48**, byte-for-byte in order.
+- Cross-run confirmation: `alfworld_hardness_std1` (GRPO, `cross_round: true`, one process for
+  the whole run) shows **one** ordered list across all 70 rounds and all 140 client evals — and
+  that list equals the PPO run's `round_0` set **and only round 0**, i.e. exactly where the two
+  runs' base seeds coincide (both `42 + 1·100 + 14 = 156`).
+- Noise decomposition on the PPO run: of the round-to-round variance in val success,
+  **28% is task-composition** and 46% is binomial (n=64) — i.e. ~3/4 of the visible wiggle was
+  measurement, not model. The GRPO (fixed-set) run's observed sd / binomial sd = 1.03; the PPO
+  run's = 1.13.
+
+### The fix
+
+Build the val dataset with the var cleared, and restore it for training:
+
+```python
+@contextlib.contextmanager
+def unseeded_eval_data():
+    saved = os.environ.pop("FEDAGENT_BASE_SEED", None)
+    try:
+        yield
+    finally:
+        if saved is not None:
+            os.environ["FEDAGENT_BASE_SEED"] = saved
+```
+
+Val rows are then seeded `0..n_envs-1` — identical to the subprocess eval path, identical every
+round, and identical across arms. Training seeding is untouched (`_reset_for_client` re-sets the
+var per client regardless).
+
+### What it means for existing curves
+
+Pre-fix ALFWorld runs were each scored on *some* fixed-per-process set drawn from
+`base = 42 + start_round·100 + first_client`; post-fix runs score on seeds `0..63`. Both are
+fixed, but they are **different games**, so absolute numbers shift by a constant (≈5 pp at the
+measured 3.4 pp composition sd). Within-run trends and cross-arm comparisons *among* pre-fix
+runs remain valid — client selection is deterministic (`base_seed=42`), so same-shaped runs drew
+the same val set (verified: 47/48 common rounds selected identical clients across the PPO and
+GRPO runs).
+
+---
+
+## 2026-07-26: ALFWorld's game list came out in *filesystem* order — client shards and the validation set were machine-dependent
+
+- **Files:** `fedagent/envs/alfworld/engine/.../agents/environment/alfred_tw_env.py`
+  (`collect_game_files`). Structural guard: `tests/test_alfworld_game_order.py`.
+- **Severity:** reproducibility. The same config, the same `base_seed`, the same dataset →
+  a different partition and a different validation set on a different node. Not a FedAgent
+  regression (stock ALFWorld behaviour), but FedAgent makes it load-bearing.
+
+### The bug
+
+`collect_game_files` walks the split with `os.walk`, filters to solvable games of the configured
+task types, then applies a **seeded** shuffle (`random.Random(42).shuffle`). The shuffle is
+deterministic — but its *input* is not: `os.walk` yields directory entries in filesystem order,
+which differs between machines and between copies of the dataset. Everything downstream is
+positional:
+
+- the seeded shuffle itself,
+- `slice_games_for_client` → `partition_dataset` (client index slices),
+- `num_train_games` / `start_idx`/`end_idx` caps,
+- `games[seed]` selection under `ALFWORLD_SEED_IS_INDEX`.
+
+So the game→client and game→val-slot assignment was a function of the filesystem, not of the
+data. Measured on the real `valid_seen` split (140 games): re-running the pipeline from three
+different walk orders produced val sets sharing only **29 of 64** games.
+
+A second, smaller instance in the same function: the capped-eval subsample used bare
+`random.sample`, i.e. the **global** RNG, whose state at that point depends on whatever ran
+earlier in the process — so a capped eval set was not reproducible even on one machine, and two
+val-service replicas could serve different games.
+
+### The fix
+
+```python
+self.game_files.sort()                 # canonical, content-only order — before the seeded shuffle
+...
+self.game_files = random.Random(42).sample(self.game_files, num_eval_games)   # was random.sample
+```
+
+The sort runs after the manifest-cache load as well, so a cache written before this fix is
+re-canonicalized on load instead of resurrecting the old order (the cache stays a pure
+speed-up, which is its contract). Verified: with the sort, the three walk orders above produce
+**64/64** identical val sets.
+
+### What it means for existing runs
+
+Shards and val slots differ from pre-fix runs *on this machine* — but they were never
+reproducible off it, so there is no ordering worth preserving. Curves from before and after are
+measured on different games; see the comparability note in the entry above.
+
+Still open: the canonical order is a function of the dataset's *paths*, so it is stable across
+machines only for identical dataset layouts. Pinning a checked-in game manifest would close the
+last gap.
+
+---
+
+## 2026-07-26: the windowed-expansion tag outlived its `union`, arming a silent `slice()` no-op
+
+- **File:** `fedagent/agent_loops/windowed_manager.py` (`_windowed_union`). Regression:
+  `tests/test_windowed_union_tag.py`.
+- **Severity:** latent. Requires a batch in which *every* episode produced exactly one turn, so
+  it never fired at ALFWorld's 50-turn / WebShop's 15-turn budgets. Fixed as a trap, not as an
+  observed failure.
+
+### The bug
+
+Windowed mode tags the per-turn TRAIN expansion with
+`meta_info["__windowed_expanded__"] = size_divisor`. The patched `DataProto.union` reads it to
+*adopt* the longer per-turn batch (instead of letting verl's equal-size union truncate it), and
+the patched `DataProto.slice` reads it to neutralize `fit()`'s
+`combined_gen_output.slice(0, num_sampled_prompts)`.
+
+The tag was popped **inside** the `len(self) != len(other)` branch. When the lengths match, the
+stock union runs — and it *merges* `meta_info`, carrying the tag onto the merged **training**
+batch. `_windowed_slice` then silently no-ops every later from-start shortening slice on it
+(REMAX's baseline slice; any future trainer slicing).
+
+### The fix
+
+Pop whenever the tag is present, then decide the branch — bounding its lifetime to the one union
+it exists for. The regression test pins the pre-fix behaviour explicitly
+(`wm._orig_union(...).meta_info[TAG] == 4`), so a future re-nesting of the pop fails loudly.
+
+---
+
+## 2026-07-26: validation dumps were chosen lexicographically — `10.jsonl` sorted before `4.jsonl`
+
+- **Files:** new `fedagent/fed/eval_dumps.py` (`dumps_by_step`, `summarize_val_dump`), imported
+  by `fed/run_fed.py` and `tools/rebuild_summary.py`. Regression: `tests/test_eval_dumps.py`.
+- **Severity:** latent. verl writes one dump per validated `global_step`
+  (`<validation_data_dir>/<step>.jsonl`), and FedAgent's layout gives each (round, client) its
+  own directory, so no directory has yet held two dumps. Any change to the eval cadence would
+  have made `sorted(...)[-1]` read the **older** dump as "the latest".
+
+### The fix
+
+Sort numerically by stem (non-numeric names last, by name), and — since the same 20 lines had
+been copy-pasted into the offline rebuild tool — move the reader into one dependency-free
+module both import. The tool still runs under a bare interpreter (`run_fed` needs omegaconf),
+which was the original reason for the copy.
+
+---
+
 ## 2026-07-25: WebShop scored correctly-clicked options as MISSES — `get_reward` compared plain values against `(key, value)` tuples, and `normalize_color` rewrote only one side; 458 of 6725 option-bearing goals could not reach 1.0 no matter what the agent did
 
 - **Files:** `fedagent/envs/webshop/engine/webshop/web_agent_site/engine/goal.py` (`get_reward`),

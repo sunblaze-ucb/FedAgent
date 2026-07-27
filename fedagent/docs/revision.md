@@ -42,6 +42,50 @@ duplicated here.
 | `critic_model_path` | `""` → auto-sibling critic | 2026-07-24 | `5992fe7` | [bugfix](./bugfixes.md) |
 | eval `trajectory` column | available, **opt-in** (`FEDAGENT_EVAL_TRAJECTORY_DUMP=1`) | 2026-07-25 | `b2b4cc0` | windowed eval only; landed default-ON, flipped to opt-in same day — dumps get much bigger when enabled |
 | WebShop option-reward comparison | goal side passes **values**, not `.items()` | 2026-07-25 | `cca3508` | [bugfix](./bugfixes.md); **raises** WebShop scores — the three shipped WebShop hardness label files are stale (ALFWorld's two are not) |
+| `alfworld_val_seed_is_index` | `True` | 2026-07-26 | — | val = `games[0:n_envs]`, each exactly once; `false` restores the legacy shuffle-draw |
+| ALFWorld game order | sorted before the seeded shuffle | 2026-07-26 | — | [bugfix](./bugfixes.md); shards + val set become machine-independent (and different from pre-fix) |
+
+---
+
+## 2026-07-26: the ALFWorld validation set becomes the games its spec always claimed — `alfworld_val_seed_is_index` defaults ON
+
+- **Key:** `alfworld_val_seed_is_index` (runner DEFAULTS), applied by
+  `run_fed.alfworld_val_selection_env` to the **VAL service only**.
+- **Why it is here and not in [bugfixes.md](./bugfixes.md):** the two *defects* of the same day
+  (the per-round val re-draw, and the filesystem-ordered game list) are logged there. This entry
+  is the deliberate part: even with both fixed, the legacy seed→game map is a draw **with
+  replacement** over the whole split, so `config/envs/alfworld_val.yaml`'s "the first 64
+  valid_seen games" was never what got measured — at `n_envs=64` it covers ~52 of the 140 games
+  and repeats ~12 of them. Choosing to *change which games the curve is measured on* is a
+  revision, not a fix.
+
+### What changes
+
+| | legacy (`false`) | now (default `true`) |
+|---|---|---|
+| seed → game | `RandomState(seed).shuffle(games)[0]` | `games[seed % len(games)]` |
+| coverage at `n_envs=64` | ~52 unique of 140, ~12 repeats | 64 distinct, each exactly once |
+| effective sample size | ~52 (repeats double-weighted) | 64 |
+| matches the spec's own description | no | yes |
+
+Train rollout is untouched: the per-client services keep the seeded-shuffle draw, which is what
+gives each client a fresh sample of its shard every round. The mechanism itself is not new —
+`ALFWORLD_SEED_IS_INDEX` already existed for hardness labelling
+(`tools/gen_alfworld_hardness_trajectories.py`), where contiguous seeds must cover every game
+exactly once; this wires the same guarantee into validation.
+
+The run log now records the choice next to the val-service start
+(`ALFWorld VAL game selection: …`), so which games a curve was measured on is recoverable from
+the run itself.
+
+### What it means for older runs and configs
+
+ALFWorld curves from before 2026-07-26 were measured on a different 64 (both because of this
+flip and because of the two bugfixes), so **absolute numbers are not comparable across the
+boundary** — ≈5 pp of constant offset at the measured 3.4 pp composition sd. Within-run trends
+are unaffected. To re-measure an old checkpoint on its original set, set
+`alfworld_val_seed_is_index: false` *and* check out the pre-fix game ordering; in practice it is
+cheaper to re-score the checkpoints you care about on the new set. No WebShop number moves.
 
 ---
 

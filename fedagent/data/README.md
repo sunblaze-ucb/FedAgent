@@ -146,6 +146,14 @@ The `round*100` term re-draws each client's tasks every round (so a client cover
 its data over `T` rounds rather than re-training on identical instances); the
 `client_id` term keeps clients disjoint within a round.
 
+> **Validation datasets must be built with this var CLEARED.** Because it is read from the
+> process environment at `__init__`, any val dataset constructed while a client's training seed
+> is set silently inherits it — which is exactly how `eval_mode=worker` came to score every
+> round on a different ALFWorld task set (fixed 2026-07-26; the persistent runner now wraps its
+> val-dataset build in `unseeded_eval_data()`). A val dataset is seeded `0..n_envs-1` and nothing
+> else. If you add a new eval path, that is the invariant to preserve. See
+> [bugfixes.md](../docs/bugfixes.md).
+
 ---
 
 ## 5. The partition seam: where heterogeneity actually enters

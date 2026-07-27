@@ -182,6 +182,10 @@ strip `FEDPROX_MU`, so validation never enables the term. A ready pair is
   its **fixed** shard every round (covering the shard over `T` rounds) while staying distinct
   from other clients.
 
+`base_seed` does **not** reach validation: val rows are always seeded `0..n_envs-1`, in every
+eval mode, so the curve is a benchmark rather than a moving target (and three-seed replication
+varies training draws and client selection, not the yardstick).
+
 Three-seed replication is just the same config three times with `--base-seed 42 / 21 / 84`
 (use distinct `--output-dir` and, for concurrent WebShop runs, `--port-base`).
 
