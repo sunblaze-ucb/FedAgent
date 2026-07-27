@@ -58,6 +58,18 @@ def test_the_authoritative_manifest_is_consulted_before_the_walk():
     assert walk_line is not None and manifest_line < walk_line
 
 
+def test_the_speed_cache_cannot_override_the_manifest():
+    """ALFWORLD_MANIFEST_CACHE is an opt-in per-machine cache of the WALK, unvalidated and keyed
+    only by (data_path, task_types). A HIT written before the manifest landed would reinstate
+    this box's old game list -- the exact failure the manifest prevents -- so the cache branch
+    must be guarded on the list still being empty."""
+    src = open(ENGINE).read()
+    i = src.index("_mcache = os.environ.get")
+    branch = src[i:src.index("_walk_dirs =", i)]
+    assert "not self.game_files" in branch, \
+        "the manifest-cache HIT branch can overwrite the authoritative manifest"
+
+
 def test_game_files_are_sorted_before_the_seeded_shuffle():
     fn = _collect_game_files_body()
 

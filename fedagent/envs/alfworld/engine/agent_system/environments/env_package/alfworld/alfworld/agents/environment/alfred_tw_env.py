@@ -199,9 +199,14 @@ class AlfredTWEnv(object):
         # federated sharding / caps below still run natively on identical input ->
         # byte-identical downstream. Written atomically after a full walk by whichever
         # process finishes first (concurrent writers produce identical content).
+        # It is strictly a SPEED cache and must never override the authoritative manifest above:
+        # the cache is per-machine, unvalidated and keyed only by (data_path, task_types), so a
+        # HIT written before the manifest landed would silently reinstate this box's old walk --
+        # exactly the failure the manifest exists to prevent. `not self.game_files` makes the
+        # manifest win; with it, the cache only ever serves the no-manifest fallback path.
         _mcache = os.environ.get("ALFWORLD_MANIFEST_CACHE", "")
         _mkey = f"{os.path.abspath(data_path)}|{sorted(task_types)}"
-        if _mcache and os.path.isfile(_mcache):
+        if _mcache and not self.game_files and os.path.isfile(_mcache):
             try:
                 with open(_mcache) as _mf:
                     _m = json.load(_mf)
