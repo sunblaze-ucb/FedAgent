@@ -52,6 +52,10 @@ from typing import List, Optional
 
 from omegaconf import OmegaConf, open_dict
 
+# The dump reader is shared with the offline tools (tools/rebuild_summary.py), which must run
+# under a bare interpreter -- hence its own dependency-free module rather than a copy there.
+from fedagent.fed.eval_dumps import summarize_val_dump  # noqa: F401  (re-exported: callers import it from here)
+
 # fedagent/fed/run_fed.py -> PKG_DIR=fedagent/ , REPO_ROOT=repo root
 PKG_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = PKG_DIR.parent
@@ -214,6 +218,15 @@ DEFAULTS = {
     "webshop_val_port": 8090,               # shared unperturbed WebShop val service port
     "alfworld_val_port": 8290,              # shared unperturbed ALFWorld val service port
     "alfworld_val_split": "eval_in_distribution",  # ALFWorld val games (the 140-game valid_seen split; 274 = seen+unseen)
+    "alfworld_val_seed_is_index": True,      # VAL service only: seed IS the game index, so the n_envs val
+                                            #   rows are games[0:n_envs] -- each exactly once, which is the
+                                            #   set alfworld_val.yaml describes. false = the LEGACY map
+                                            #   (RandomState(seed).shuffle(games)[0]), a draw WITH REPLACEMENT
+                                            #   over the WHOLE split: 64 rows cover only ~52 of the 140
+                                            #   valid_seen games and repeat ~12. Flipped to True 2026-07-26;
+                                            #   set false ONLY to reproduce a pre-flip run's curve on ITS val
+                                            #   set (the two measure different games -> not curve-comparable).
+                                            #   The per-client TRAIN services are untouched either way.
     # --- Tier-2 plumbing knobs (report: docs/acceleration_tier2_2026-07-02.md on the migrate/verl-0.8.0 branch). ALL default OFF ==
     # byte-identical legacy behavior; each is individually equivalence-gated (max|delta|<=1e-4). ---
     "alfworld_manifest_cache": False,        # cache the 8810-game walk (PRE-shuffle manifest; shuffle/
@@ -906,6 +919,23 @@ def alfworld_manifest_env(cfg, split: str) -> dict:
     return {"ALFWORLD_MANIFEST_CACHE": str(d / f"manifest_{split}.json")}
 
 
+def alfworld_val_selection_env(cfg) -> dict:
+    """VAL service only: the env-var bridge for how a row seed picks its game.
+
+    DEFAULT (``alfworld_val_seed_is_index: true``) -> ``ALFWORLD_SEED_IS_INDEX=1``: the seed IS
+    the index into the split's game list, so the val spec's n_envs rows are games[0:n_envs],
+    each exactly once -- the set config/envs/alfworld_val.yaml documents.
+
+    ``false`` restores the LEGACY selection (server.py: ``RandomState(seed).shuffle(games)[0]``),
+    which is a draw WITH REPLACEMENT over the WHOLE split: 64 rows cover only ~52 of the 140
+    valid_seen games and repeat ~12 of them. Kept only to re-measure a pre-2026-07-26 run on the
+    val set it was actually scored on.
+
+    Deliberately NOT applied to the per-client TRAIN services: their seeded-shuffle draw is what
+    gives each client a fresh sample of its shard every round (the documented design)."""
+    return {"ALFWORLD_SEED_IS_INDEX": "1"} if cfg.get("alfworld_val_seed_is_index", True) else {}
+
+
 def start_alfworld_services(cfg, env_base: dict, client_ids: Optional[List[int]] = None,
                             wait: bool = True) -> List[dict]:
     """Launch ONE ALFWorld remote service per client in ``client_ids`` (Design A: one service
@@ -1054,10 +1084,18 @@ def start_val_service(cfg, env_base: dict) -> List[dict]:
                 "ALFWORLD_TASK_TYPES": str(cfg.get("alfworld_task_types", "")),  # "" => all; else the eval-breakdown subset
                 "PARTITION_STRATEGY": "uniform",  # UNPERTURBED (full game set, no client shard)
                 "CLIENT_ID": "0", "CLIENT_NUM": "1",
+                **alfworld_val_selection_env(cfg),   # seed==index (default) vs legacy shuffle-draw
                 **alfworld_manifest_env(cfg, str(cfg.get("alfworld_val_split", "eval_in_distribution"))),
             })
             return env
         tag = "ALFWorld"
+        # provenance: WHICH games this run's curve is measured on is a property of the run, so
+        # record the selection mode in the log next to the service start.
+        log("ALFWorld VAL game selection: "
+            + ("seed==index -> games[0:n_envs], each exactly once"
+               if cfg.get("alfworld_val_seed_is_index", True) else
+               "LEGACY seeded shuffle -> draw WITH REPLACEMENT over the whole split "
+               "(~52 unique of 140 at n_envs=64)"))
     else:
         return []  # tinyguess runs in-process; no remote val service
 
@@ -1079,33 +1117,6 @@ def start_val_service(cfg, env_base: dict) -> List[dict]:
     except BaseException:
         stop_services(services)   # caller hasn't received the handles yet -> clean up here
         raise
-
-
-def summarize_val_dump(dump_dir: Path) -> Optional[dict]:
-    """Read verl's validation_data_dir JSONL dump -> {n, success_rate, reward_mean, task_score_mean}.
-    The agent loop tags each val sample with traj_success (1.0 if the episode succeeded), score
-    (episode reward, the 0/10 binarized signal), and (WebShop only) task_score (the partial-credit
-    [0,1] goal-match score). Means over samples give val success / reward / task-score; task_score_mean
-    is None for envs/runs that don't emit task_score (e.g. ALFWorld, or pre-existing dumps)."""
-    files = sorted(Path(dump_dir).glob("*.jsonl"))
-    if not files:
-        return None
-    rows = []
-    with open(files[-1]) as f:
-        for line in f:
-            try:
-                rows.append(json.loads(line))
-            except Exception:
-                continue
-    if not rows:
-        return None
-
-    def mean(key):
-        vals = [float(r[key]) for r in rows if r.get(key) is not None]
-        return round(sum(vals) / len(vals), 4) if vals else None
-
-    return {"n": len(rows), "success_rate": mean("traj_success"), "reward_mean": mean("score"),
-            "task_score_mean": mean("task_score")}
 
 
 WINDOWED_MANAGER_FQN = "fedagent.agent_loops.windowed_manager.WindowedAgentLoopManager"

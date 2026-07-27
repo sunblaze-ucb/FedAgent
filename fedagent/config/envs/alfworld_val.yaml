@@ -8,10 +8,18 @@
 # breakdown / final numbers, run tools/eval_alfworld_by_tasktype.py (valid_seen ONLY
 # -- it pins eval_in_distribution; score the other 134 with a separate eval_out_of_distribution pass).
 # 50-turn budget matches training.
+# WHICH 64 (2026-07-26): run_fed's `alfworld_val_seed_is_index` (DEFAULT true) makes the val
+# service treat a row seed as a direct game INDEX, so these n_envs rows are the literal first 64
+# valid_seen games, each exactly once. Set it false to restore the legacy map
+# (RandomState(seed).shuffle(gamefiles)[0]) -- a draw WITH REPLACEMENT over the WHOLE split, which
+# at n_envs=64 covers only ~52 of the 140 games and repeats ~12; runs before 2026-07-26 were scored
+# that way, so their curves are not comparable to a default run's. (Orthogonally, the set is FIXED
+# across rounds either way -- the per-round redraw was a separate bug, see
+# persistent_task_runner.unseeded_eval_data.)
 envs:
   - name: ALFWorld
-    n_envs: 64      # PAPER in-loop validation size (original FedAgent val_data_size=64): first 64
-                    #   valid_seen games, same fixed set every round. (Migration briefly used 140 = all valid_seen.)
+    n_envs: 64      # PAPER in-loop validation size (original FedAgent val_data_size=64): the first 64
+                    #   valid_seen games, same fixed set every round. (Migration briefly used 140 = all.)
     max_turns: 50   # matches training (original ALFWorld max_steps=50); see alfworld.yaml GPU-VERIFY note
     agent_name: gym_text
     config:

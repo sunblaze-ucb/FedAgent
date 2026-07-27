@@ -12,6 +12,7 @@ Wired via ``run_ppo(config, task_runner_class=ray.remote(...)(PersistentFedTaskR
 All clients of the plan share the SAME architecture (FedAvg requires identical shapes), so the
 tokenizer/hf_config built once stay valid; only weights (local_path) + data (seed) change.
 """
+import contextlib
 import json
 import os
 import random
@@ -31,6 +32,39 @@ from verl.trainer.main_ppo import (
     validate_config,
 )
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
+
+
+@contextlib.contextmanager
+def unseeded_eval_data():
+    """Build a VALIDATION dataset with FEDAGENT_BASE_SEED cleared (bugfix 2026-07-26).
+
+    ``AgenticDataset`` seeds every row from the process-global ``FEDAGENT_BASE_SEED``
+    (agentic_dataset.py:58), and this runner sets that var to the CLIENT's training seed
+    (``base_seed + round*100 + client``) before building datasets. The worker-eval val
+    dataloader was built inside that window, so its episode seeds inherited the (round,
+    client) training seed -- and with a per-round worker process (persistent + cross_round
+    off) EVERY ROUND SCORED A DIFFERENT VAL DRAW:
+
+      * ALFWorld: the service maps seed -> ``RandomState(seed).shuffle(gamefiles)[0]``, so 64
+        row seeds are 64 draws WITH REPLACEMENT from the 140-game valid_seen split -- a fresh
+        ~53-unique multiset per process. Observed in alfworld_ppo_hardness_std1: 48 rounds,
+        48 different game sets, and round k's aggregated point measured on a different set
+        than round k's client circles (the circles come from process k, the point from
+        process k+1, which evals round k's model at its i==0).
+      * WebShop was accidentally immune: its val branch is ``seed % VAL_SIZE`` and
+        500 | 100_000, so ``base*100_000 + i`` always lands on goals[0:n_envs] regardless of
+        base -- which is why only the ALFWorld curve carries the noise.
+
+    The orchestrator's subprocess eval path (run_fed._build_eval) never sets the var, and
+    ``config/envs/*_val.yaml`` documents "the same fixed set every round". Clearing it here
+    makes eval_mode=worker agree with both. Training is untouched: the var is restored on
+    exit, and ``_reset_for_client`` re-sets it per client anyway."""
+    saved = os.environ.pop("FEDAGENT_BASE_SEED", None)
+    try:
+        yield
+    finally:
+        if saved is not None:
+            os.environ["FEDAGENT_BASE_SEED"] = saved
 
 
 class PersistentFedTaskRunner(TaskRunner):
@@ -115,8 +149,12 @@ class PersistentFedTaskRunner(TaskRunner):
         self._worker_val_dl = None
         if self._worker_eval_spec:
             from torchdata.stateful_dataloader import StatefulDataLoader
-            wval = create_rl_dataset(self._worker_eval_spec, config.data, tokenizer, processor,
-                                     is_train=False, max_samples=config.data.get("val_max_samples", -1))
+            # unseeded: the val set is FIXED across rounds/clients, not a per-client draw
+            # (see unseeded_eval_data -- this dataset is built once and reused every round).
+            with unseeded_eval_data():
+                wval = create_rl_dataset(self._worker_eval_spec, config.data, tokenizer, processor,
+                                         is_train=False,
+                                         max_samples=config.data.get("val_max_samples", -1))
             # honor data.val_batch_size like stock verl (_create_dataloader): only fall back to the
             # whole val set when it's unset. Hardcoding len(wval) would fire ALL val episodes at the
             # env service in one batch -> the connection/VRAM/time storm on full WebShop/ALFWorld.
