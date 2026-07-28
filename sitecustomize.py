@@ -15,9 +15,11 @@ workers (run_fed sets it there); env-service conda envs never set it, so they no
 import. We distinguish the two cases by whether `verl` is importable:
   - verl ABSENT  -> not a trainer process (e.g. a service env that inherited a globally
     exported FEDPROX_MU). FedProx is N/A here -> silent no-op.
-  - verl PRESENT -> a trainer process where the patch MUST apply. Any failure PROPAGATES
-    (fail closed): silently downgrading a requested FedProx run to FedAvg would corrupt the
-    experiment. fedprox prints "[fedprox] enabled ..." on success for log verification.
+  - verl PRESENT -> a trainer process where the patch MUST apply. Any failure hard-exits
+    the process via _die (fail closed; a bare raise would be swallowed by CPython's
+    site.execsitecustomize): silently downgrading a requested FedProx run to FedAvg would
+    corrupt the experiment. fedprox prints "[fedprox] enabled ..." on success for log
+    verification.
 The patch is applied LAZILY (install_deferred_patch): FSDPEngine is imported only when verl
 itself first imports its FSDP-engine module -- i.e. AFTER the Ray worker has its per-rank
 CUDA_VISIBLE_DEVICES set. Importing it EAGERLY here (at interpreter startup, before device
@@ -26,6 +28,20 @@ rank 0 ..."); deferral avoids that while still patching before the first optimiz
 """
 import importlib.util
 import os
+import sys
+import traceback
+
+
+def _die(msg: str) -> None:
+    """REAL fail-closed. A bare ``raise`` here is useless: CPython's
+    ``site.execsitecustomize`` wraps this module in ``except Exception`` -- it prints one
+    stderr line and the interpreter CONTINUES with exit code 0, so a failed gate would
+    silently run the very configuration it exists to refuse (e.g. FedProx downgraded to
+    FedAvg). ``os._exit(1)`` is the only reliable stop at interpreter startup."""
+    print(f"FATAL {msg}", file=sys.stderr, flush=True)
+    traceback.print_exc()
+    os._exit(1)
+
 
 try:
     _mu = float(os.environ.get("FEDPROX_MU", "0") or "0")
@@ -37,12 +53,16 @@ if _mu > 0:
         pass  # not a trainer process (verl absent) -> FedProx N/A, no-op
     else:
         # trainer process: DEFER the patch to verl's first FSDP-engine import (after the worker
-        # sets CUDA_VISIBLE_DEVICES). fail CLOSED: install_deferred_patch raising / returning
-        # False propagates rather than silently downgrading FedProx to FedAvg.
-        from fedagent.fedprox import install_deferred_patch
+        # sets CUDA_VISIBLE_DEVICES). fail CLOSED (via _die): a swallowed failure would
+        # silently downgrade FedProx to FedAvg.
+        try:
+            from fedagent.fedprox import install_deferred_patch
 
-        if not install_deferred_patch(_mu):
-            raise RuntimeError(
+            _ok = install_deferred_patch(_mu)
+        except Exception:
+            _ok = False
+        if not _ok:
+            _die(
                 f"sitecustomize: FEDPROX_MU={_mu} and verl is present, but the FedProx deferred "
                 "patch could not be armed -- refusing to run silently as FedAvg."
             )
@@ -52,10 +72,14 @@ if _mu > 0:
 # per-rank CUDA_VISIBLE_DEVICES). Gated on FEDAGENT_PERSISTENT=1 (set only by persistent_main),
 # so normal subprocess/service processes never arm it. verl ABSENT -> N/A (no-op).
 if os.environ.get("FEDAGENT_PERSISTENT") == "1" and importlib.util.find_spec("verl") is not None:
-    from fedagent.fed.persistent_patch import install_deferred_persistent_patch
+    try:
+        from fedagent.fed.persistent_patch import install_deferred_persistent_patch
 
-    if not install_deferred_persistent_patch():
-        raise RuntimeError(
+        _ok = install_deferred_persistent_patch()
+    except Exception:
+        _ok = False
+    if not _ok:
+        _die(
             "sitecustomize: FEDAGENT_PERSISTENT=1 and verl is present, but the persistent "
             "worker patch could not be armed -- refusing to run without reload_client_model."
         )
@@ -68,10 +92,14 @@ if os.environ.get("FEDAGENT_PERSISTENT") == "1" and importlib.util.find_spec("ve
 # Same deferral + fail-closed rationale as FedProx above.
 _critic_mode = os.environ.get("FEDAGENT_CRITIC_LOSS_MODE", "")
 if _critic_mode and _critic_mode != "upstream_standard" and importlib.util.find_spec("verl") is not None:
-    from fedagent.ppo_critic_loss import install_deferred_critic_loss_patch
+    try:
+        from fedagent.ppo_critic_loss import install_deferred_critic_loss_patch
 
-    if not install_deferred_critic_loss_patch(_critic_mode):
-        raise RuntimeError(
+        _ok = install_deferred_critic_loss_patch(_critic_mode)
+    except Exception:
+        _ok = False
+    if not _ok:
+        _die(
             f"sitecustomize: FEDAGENT_CRITIC_LOSS_MODE={_critic_mode} and verl is present, but "
             "the critic-loss patch could not be armed -- refusing to train with the "
             "unnormalized stock critic loss."
@@ -83,10 +111,14 @@ if _critic_mode and _critic_mode != "upstream_standard" and importlib.util.find_
 # aggregated-merge subprocess env (merge_to_hf(fp32=True); client-eval merges stay bf16).
 # Same deferral + fail-closed rationale as FedProx above.
 if os.environ.get("FEDAGENT_MERGE_FP32") == "1" and importlib.util.find_spec("verl") is not None:
-    from fedagent.merge_fp32 import install_deferred_merge_fp32_patch
+    try:
+        from fedagent.merge_fp32 import install_deferred_merge_fp32_patch
 
-    if not install_deferred_merge_fp32_patch():
-        raise RuntimeError(
+        _ok = install_deferred_merge_fp32_patch()
+    except Exception:
+        _ok = False
+    if not _ok:
+        _die(
             "sitecustomize: FEDAGENT_MERGE_FP32=1 and verl is present, but the fp32-merge "
             "patch could not be armed -- refusing to silently truncate the aggregated "
             "weights to bf16."
@@ -99,10 +131,14 @@ if os.environ.get("FEDAGENT_MERGE_FP32") == "1" and importlib.util.find_spec("ve
 # trainer/eval a private band via FEDAGENT_PORT_BAND (+ VLLM_PORT at the band midpoint);
 # this hook confines verl's draws to that band. Same deferral + fail-closed rationale.
 if os.environ.get("FEDAGENT_PORT_BAND") and importlib.util.find_spec("verl") is not None:
-    from fedagent.port_band import install_deferred_port_band_patch
+    try:
+        from fedagent.port_band import install_deferred_port_band_patch
 
-    if not install_deferred_port_band_patch():
-        raise RuntimeError(
+        _ok = install_deferred_port_band_patch()
+    except Exception:
+        _ok = False
+    if not _ok:
+        _die(
             f"sitecustomize: FEDAGENT_PORT_BAND={os.environ.get('FEDAGENT_PORT_BAND')} and "
             "verl is present, but the port-band patch could not be armed -- refusing to fall "
             "back to the ephemeral-range port lottery."

@@ -89,8 +89,12 @@ def aggregate(args):
 
 def verify(args):
     """Matched-PG load-back: re-load the written shards and confirm (a) they round-trip
-    as ShardedTensors (structure preserved -> verl loads them with its own wrap), and
-    (b) the local values equal the weighted average of the clients (FedAvg correctness)."""
+    with each param in the SAME wrapper class the client shards carry (verl's strict load
+    asserts the class, so a save/load that degraded a ShardedTensor to a plain tensor
+    would kill the next round), and (b) the local values equal the weighted average of
+    the clients (FedAvg correctness). FAILURE EXITS NONZERO -- torchrun propagates it, so
+    a caller gating on the exit code actually gates (the 2026-07 audit found the old
+    print-only FAIL let a broken aggregate pass a scripted check silently)."""
     rank, ws = dist.get_rank(), dist.get_world_size()
     out = Path(args.output_actor_dir)
     clients = [Path(p) for p in args.client_actor_dirs.split(",") if p]
@@ -103,6 +107,9 @@ def verify(args):
     sds = [torch.load(c / rank_file, weights_only=False) for c in clients]
 
     n_sharded = sum(1 for k in got if isinstance(got[k], ShardedTensor))
+    # structural check (was a print-only count): aggregate() re-saves the client-0 objects
+    # with averaged local values, so every key must come back as the class client 0 carries.
+    degraded = sorted(k for k in got if type(got[k]) is not type(sds[0][k]))
     maxdiff = 0.0
     worst = None
     for k in got:
@@ -112,12 +119,22 @@ def verify(args):
         d = (_get_local(got[k]).float() - exp).abs().max().item()
         if d > maxdiff:
             maxdiff, worst = d, k
-    md = torch.tensor([maxdiff], device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}")
+    # one all-reduce -> every rank holds the same verdict (a rank-local exit would strand
+    # the other ranks at the final barrier with a different exit code)
+    md = torch.tensor([maxdiff, float(len(degraded))],
+                      device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}")
     dist.all_reduce(md, op=dist.ReduceOp.MAX)
+    ok = md[0].item() < 1e-4 and md[1].item() == 0
     if rank == 0:
-        print(f"[verify] round-trip OK: {len(got)} params, {n_sharded} ShardedTensor", flush=True)
-        print(f"[verify] FedAvg correctness: max|got - weighted_avg| = {md.item():.3e} (worst {worst})", flush=True)
-        print("[verify] PASS" if md.item() < 1e-4 else "[verify] FAIL (diff too large)", flush=True)
+        print(f"[verify] round-trip: {len(got)} params, {n_sharded} ShardedTensor, "
+              f"{len(degraded)} class-degraded", flush=True)
+        print(f"[verify] FedAvg correctness: max|got - weighted_avg| = {md[0].item():.3e} "
+              f"(worst@rank0 {worst})", flush=True)
+        if degraded:
+            print(f"[verify] degraded keys (first 5): {degraded[:5]}", flush=True)
+        print("[verify] PASS" if ok else "[verify] FAIL", flush=True)
+    if not ok:
+        raise SystemExit(1)
 
 
 def main():

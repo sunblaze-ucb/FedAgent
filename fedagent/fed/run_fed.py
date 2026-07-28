@@ -132,6 +132,12 @@ DEFAULTS = {
                                             #   default every NON-het baseline trained with; the paper scopes
                                             #   200 to ENV-het arms ONLY (main.tex:1347) and those configs pin
                                             #   it explicitly (200 keeps targets findable under catalog filtering)
+    "val_search_return_n": 50,              # SRN of the UNPERTURBED val service. Separate knob because the
+                                            #   executed env-het runs forwarded the run's own search_return_n
+                                            #   (=200) to validation, so their val ran top-200 vs the baselines'
+                                            #   top-50 (disclosed in the paper, main.tex:1347). Pinning val at
+                                            #   the reference 50 makes FUTURE runs' val comparable across arms;
+                                            #   set 200 to reproduce the executed env-het protocol exactly.
     # --- env_kind=alfworld: per-client remote ALFWorld services + game-shard heterogeneity ---
     "alfworld_run_service": str(PKG_DIR / "envs" / "alfworld" / "service" / "run_service.sh"),
     "alfworld_base_port": 8200,             # client c's service -> alfworld_base_port + c*replicas + j
@@ -148,8 +154,9 @@ DEFAULTS = {
     "alfworld_train_eval": "train",         # game split: train | eval_in_distribution | eval_out_of_distribution
     "alfworld_task_types": "",               # "" => all 6 types; else comma-sep IDs (1=Pick..6=Pick2) for the eval breakdown
     "partition_strategy": "",               # "" | catalog_split/task_disjoint/env_disjoint (env) | preference/coverage/hardness (task) | bm25_field_subset/bm25_reweight/lookalike/rank_wrapper (env variants 2-5)
-    "env_div": 0.7,                         # catalog-split heterogeneity strength
+    "env_div": 0.7,                         # env-het strength: catalog_split (WebShop) AND env_disjoint (ALFWorld)
     "keep_ratio": 0.7,                      # catalog-split distractor density
+    "alfworld_fallback": "skip",            # env_disjoint single-scene specs: skip | shared | trial-only
     "omega": 0.5,                           # preference (task-het) Dirichlet spread
     "size_std": 1.0,                        # coverage (task-het) Beta dispersion (xi)
     "success_std": 1.0,                     # hardness (task-het) Beta dispersion (xi')
@@ -166,6 +173,11 @@ DEFAULTS = {
                                              #   selected, so the paper's (unused) FedProx ablation == any paper
                                              #   config + `fedprox_mu: 0.01` (see config/examples/webshop/fedprox_test.yaml)
     "cleanup_checkpoints": True,             # delete consumed FSDP shards after each merge (disk hygiene)
+    "keep_client_hf_rounds": 2,              # rolling window (rounds) of per-CLIENT hf/critic_hf merges to keep;
+                                             #   round r prunes round_(r-K)/client_*/{hf,critic_hf}. Aggregated
+                                             #   hf/critic_hf are NEVER pruned (resume + final eval need them).
+                                             #   <=0 => keep every client merge (the old always-keep behavior;
+                                             #   ~3GB x clients x rounds -- 70-round 5-client runs hit ~1TB).
     "merge_fp32": True,                      # keep the AGGREGATED FSDP->HF merge in fp32 (the fork kept fp32
                                              #   across the round boundary; stock verl's merger truncates to
                                              #   bf16 -- docs/bugfixes.md "bf16 merge truncation"). Costs ~2x
@@ -998,13 +1010,16 @@ def start_alfworld_services(cfg, env_base: dict, client_ids: Optional[List[int]]
                     "CLIENT_ID": str(c),
                     "CLIENT_NUM": str(cfg.total_clients),
                     "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
-                    # task-het knobs (the service forwards only the ones its strategy needs ->
+                    # het knobs (the service forwards only the ones its strategy needs ->
                     # AlfredTWEnv -> partition_dataset): preference(omega)/coverage(size_std)/
-                    # hardness(success_std,trajectories_file). uniform/env_disjoint ignore them.
+                    # hardness(success_std,trajectories_file)/env_disjoint(env_div,fallback).
+                    # uniform ignores them.
                     "OMEGA": str(cfg.get("omega", 0.5)),
                     "SIZE_STD": str(cfg.get("size_std", 1.0)),
                     "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
                     "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
+                    "ENV_DIV": str(cfg.env_div),
+                    "ALFWORLD_FALLBACK": str(cfg.get("alfworld_fallback", "skip")),
                     **alfworld_game_list_env(cfg),          # the shipped per-split game list
                     **alfworld_manifest_env(cfg, str(cfg.get("alfworld_train_eval", "train"))),
                 })
@@ -1096,7 +1111,11 @@ def start_val_service(cfg, env_base: dict) -> List[dict]:
             env.update({
                 "WEBSHOP_PORT": str(port),
                 "WEBSHOP_POOL_SIZE": str((-(-pool // reps) + 2) if reps > 1 else pool),
-                "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("search_return_n", 50)),
+                # val_search_return_n, NOT the run's search_return_n: forwarding the run's own
+                # value made env-het arms validate at top-200 vs the baselines' top-50 (the
+                # executed protocol, disclosed in the paper). Set val_search_return_n: 200 to
+                # reproduce that; the pinned default keeps future arms comparable.
+                "WEBSHOP_SEARCH_RETURN_N": str(cfg.get("val_search_return_n", 50) or 50),
                 "WEBSHOP_SPLIT": "val",          # held-out goals[0:VAL_SIZE]
                 "PARTITION_STRATEGY": "",        # UNPERTURBED (no catalog/goal/variant skew)
                 "CLIENT_ID": "0", "CLIENT_NUM": "1",
@@ -1936,7 +1955,14 @@ def cleanup_round_checkpoints(cfg, round_num: int, keep_aggregated: bool = False
 
     hf_export=final (Tier-2d): round r's AGGREGATED shards are consumed at round r+1's reload,
     not at merge time -- pass keep_aggregated=True to spare them this round and
-    purge_prev_aggregated=True to delete round r-1's (now consumed) aggregated shards instead."""
+    purge_prev_aggregated=True to delete round r-1's (now consumed) aggregated shards instead.
+
+    CLIENT HF exports are pruned on a rolling window (2026-07 audit: they were kept
+    forever -- ~3GB x M clients x rounds, ~420GB over a 70-round PPO run -- while nothing
+    after aggregation + the client-end eval ever reads them). ``keep_client_hf_rounds``
+    (default 2, the paper's max_rounds_to_keep_client_checkpoints semantics) keeps the
+    most recent K rounds' client hf/critic_hf for debugging; <=0 keeps all. The
+    AGGREGATED hf/critic_hf of every round is always kept (resume + curve provenance)."""
     import shutil
 
     if not cfg.get("cleanup_checkpoints", True):
@@ -1947,6 +1973,11 @@ def cleanup_round_checkpoints(cfg, round_num: int, keep_aggregated: bool = False
         targets.append(rdir / "aggregated" / "checkpoints")
     if purge_prev_aggregated and round_num >= 2:
         targets.append(Path(cfg.output_dir) / f"round_{round_num - 1}" / "aggregated" / "checkpoints")
+    keep_hf = int(cfg.get("keep_client_hf_rounds", 2) or 0)
+    if keep_hf > 0 and round_num - keep_hf >= 1:
+        old_rdir = Path(cfg.output_dir) / f"round_{round_num - keep_hf}"
+        targets.extend(old_rdir.glob("client_*/hf"))
+        targets.extend(old_rdir.glob("client_*/critic_hf"))
     freed = 0
     for t in targets:
         if t.is_dir():
@@ -1956,7 +1987,8 @@ def cleanup_round_checkpoints(cfg, round_num: int, keep_aggregated: bool = False
             except Exception as e:
                 log(f"cleanup round {round_num}: could not remove {t} ({e})")
     if freed:
-        log(f"cleanup round {round_num}: removed {freed} consumed checkpoint dir(s) (kept HF + logs)")
+        log(f"cleanup round {round_num}: removed {freed} consumed checkpoint dir(s) "
+            f"(kept aggregated HF + logs; client hf window = {keep_hf or 'all'})")
 
 
 # ----------------------------------------------------------------- driver
@@ -2014,9 +2046,9 @@ def run(cfg) -> dict:
         log(f"eval ON: unperturbed val of the aggregated model EVERY round "
             f"(val_before_train={cfg.val_before_train}, temp={cfg.val_temperature}, "
             f"client_end_eval={cfg.client_end_eval}) -> {cfg.val_env_spec}")
-        vs = start_val_service(cfg, env_base)
-        if vs:
-            val_services.extend(vs)   # replica-aware: start_val_service returns a LIST of handles
+        # NOTE: the service itself starts LATER (just before the round loop's try/finally),
+        # so the config-validation raises below cannot leak running val uvicorns -- an
+        # invalid config used to leave them behind (2026-07 audit).
 
     is_ppo = str(cfg.get("adv_estimator", "grpo")).lower() == "gae"
     if is_ppo:
@@ -2181,6 +2213,13 @@ def run(cfg) -> dict:
             m = eval_global(cfg, model_path, rnum, env_base, val_url, mem_util=mu)
             if m:
                 val_history.append({"round": rnum, "model": label, **m})
+
+    # Start the shared val service only now -- every config-validation raise above ran
+    # serviceless, and from here on the try/finally below guarantees teardown.
+    if do_eval:
+        vs = start_val_service(cfg, env_base)
+        if vs:
+            val_services.extend(vs)   # replica-aware: start_val_service returns a LIST of handles
 
     try:
         # The per-launch weight-transfer IPC isolation is a 2-line verl patch away from being

@@ -11,7 +11,7 @@
 
 env_kind: alfworld
 env_spec: config/envs/alfworld.yaml
-val_env_spec: config/envs/alfworld_val.yaml          # unperturbed 274-game in-distribution eval
+val_env_spec: config/envs/alfworld_val.yaml          # unperturbed valid_seen eval (first 64 of 140 games)
 output_dir: /tmp/xbb9020_fedpaper_alfworld
 model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 

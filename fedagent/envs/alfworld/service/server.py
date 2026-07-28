@@ -94,13 +94,16 @@ MIN_GOALS_PER_CLIENT = int(os.environ.get("MIN_GOALS_PER_CLIENT", "100"))
 # 5=Cool, 6=Pick2/pick_two_obj). Empty/unset => all types (normal train/eval). Applied via
 # the env's NATIVE task_types config filter (collect_game_files keeps only these types).
 ALFWORLD_TASK_TYPES = os.environ.get("ALFWORLD_TASK_TYPES", "").strip()
-# Task-het knobs forwarded to AlfredTWEnv -> partition_dataset (preference/coverage/hardness).
-# Only the kwargs relevant to PARTITION_STRATEGY are passed (else the verbatim partition fns
-# reject unexpected kwargs). uniform/env_disjoint take none.
+# Het knobs forwarded to AlfredTWEnv -> partition_dataset. Only the kwargs relevant to
+# PARTITION_STRATEGY are passed (else the verbatim partition fns reject unexpected kwargs).
+# uniform takes none; env_disjoint takes ENV_DIV/ALFWORLD_FALLBACK (2026-07 audit: these were
+# never forwarded, so any configured env_div silently trained at the code default 0.7/'skip').
 OMEGA = os.environ.get("OMEGA", "")
 SIZE_STD = os.environ.get("SIZE_STD", "")
 SUCCESS_STD = os.environ.get("SUCCESS_STD", "")
 TRAJECTORIES_FILE = os.environ.get("TRAJECTORIES_FILE", "")
+ENV_DIV = os.environ.get("ENV_DIV", "")
+ALFWORLD_FALLBACK = os.environ.get("ALFWORLD_FALLBACK", "")
 _CLIENT_ID = int(CLIENT_ID) if CLIENT_ID not in (None, "") else None
 _CLIENT_NUM = int(CLIENT_NUM) if CLIENT_NUM not in (None, "") else None
 
@@ -133,7 +136,13 @@ def _partition_kwargs() -> dict:
             "success_std": _float_env("SUCCESS_STD", SUCCESS_STD, 1.0),
             "trajectories_file": TRAJECTORIES_FILE,
         }
-    return {}  # uniform / env_disjoint take no extra kwargs
+    if s == "env_disjoint":
+        kw = {"env_div": _float_env("ENV_DIV", ENV_DIV, 0.7)}
+        fb = ALFWORLD_FALLBACK.strip().lower()
+        if fb:
+            kw["fallback"] = fb   # 'skip' | 'shared' | 'trial-only'; the partition fn validates
+        return kw
+    return {}  # uniform takes no extra kwargs
 
 
 # The vendored engine (fedagent/envs/alfworld/engine, sys.path-imported above) dispatches on the

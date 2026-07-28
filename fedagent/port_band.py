@@ -10,23 +10,31 @@ later -- a TOCTOU window that occasionally loses the port on a busy shared-netns
     TCPStore, the DP master, the api server. When ``VLLM_PORT`` is set it instead
     probes UPWARD from that value until a bind succeeds -- collision-tolerant by
     design (vllm logs "Port X is already in use, trying port X+1").
-  - **verl** ``WorkerHelper._get_free_port`` (single_controller/base/worker.py:59,
-    bare ``bind(("", 0))``): feeds the FSDP process-group ``MASTER_PORT``
-    (single_controller/ray/base.py:637). NO env knob upstream.
+  - **verl** ``get_master_addr_port`` (single_controller/ray/base.py:90): the Ray
+    remote task that draws the FSDP process-group ``MASTER_PORT``. It natively
+    supports banded probing via its ``master_port_range`` parameter, but nothing in
+    the verl 0.8 trainer stack ever passes one (no config knob), so every draw is a
+    bare ``bind(("", 0))``. (``WorkerHelper._get_free_port`` -- the function earlier
+    revisions of this module pinned -- is DEAD code in verl 0.8: its only consumer,
+    ``get_available_master_addr_port``, has no caller. The 2026-07 audit caught that
+    the previous patch therefore banded nothing; the real draw is hooked below.)
 
 FedAgent amplifies the lottery: per-round trainer rebuilds (subprocess mode and the
 per-round persistent worker) redraw ports every round x lane x eval -- ~hundreds of
 draws per 70-round run, so "occasional" becomes "expected a few times per run".
 
-Fix (docs/bugfixes.md 2026-07-23 "vLLM/verl random-port collisions"): run_fed gives
-every launched trainer/eval process a private band OUTSIDE the ephemeral range via
+Fix (docs/bugfixes.md 2026-07-23 "vLLM/verl random-port collisions"; verl half
+re-pointed 2026-07-28 after the audit): run_fed gives every launched trainer/eval
+process a private band OUTSIDE the ephemeral range via
 ``FEDAGENT_PORT_BAND="<start>:<span>"``; the repo-root sitecustomize arms a deferred
-import hook that rebinds ``WorkerHelper._get_free_port`` to probe INSIDE
-``[start, start+span)`` (first free port wins), and run_fed sets
-``VLLM_PORT = start + span//2`` so vLLM's own upward probing works the upper half of
-the same quiet band. Both pickers keep their occupied-port retry semantics; the band
-just moves the draws out of the contended range, where the only possible squatter is
-a stale listener of our own previous process -- which probing skips.
+import hook that patches ``RayWorkerGroup._get_master_addr_port`` to default its
+``master_port_range`` to the band's LOWER half -- verl's own remote task then probes
+inside ``[start, start+span//2)`` natively -- and pid-salts ``VLLM_PORT`` into the
+upper half so vLLM's upward probing works the other half of the same quiet band.
+(``WorkerHelper._get_free_port`` is also rebound to band probing as belt-and-braces
+for any future caller.) Both pickers keep their occupied-port retry semantics; the
+band just moves the draws out of the contended range, where the only possible
+squatter is a stale listener of our own previous process -- which probing skips.
 
 The literal TOCTOU (probe-close -> real-bind) cannot be zeroed at the overlay level
 (that needs vLLM/torch to hand over BOUND sockets), so run_fed pairs the band with a
@@ -127,26 +135,42 @@ def assign_vllm_port() -> bool:
     the same port -> deterministic EADDRINUSE at engine init (observed in the field at
     round-1 init on a 4-GPU run). sitecustomize runs in every process (driver, Ray
     workers, spawned engine cores), so assigning here spreads the replicas' starting
-    points; vLLM's own probing handles the rest."""
+    points; vLLM's own probing handles the rest.
+
+    Headroom scales with the band (2026-07-28 audit fix): the fixed ``headroom=8``
+    made the salt space ``max(1, half-8)`` collapse to 1 for ``span <= 18``, giving
+    every process the SAME starting port -- the one-shared-start race this function
+    exists to prevent. ``min(8, half//4)`` preserves the old layout exactly at the
+    default stride (span=100: half=50, headroom=8) while keeping a real spread for
+    small bands."""
     band = _parse_band()
     if band is None:
         return False
     start, span = band
     half = max(1, span // 2)
-    headroom = 8                                  # room to probe upward past the salt
+    headroom = min(8, half // 4)                  # room to probe upward past the salt
     salt = (os.getpid() * 7919) % max(1, half - headroom)
     os.environ["VLLM_PORT"] = str(start + half + salt)
     return True
 
 
 def enable_port_band() -> bool:
-    """Rebind verl's WorkerHelper._get_free_port to band probing. Idempotent; no-op
-    without FEDAGENT_PORT_BAND."""
+    """Confine verl's master-port draws to the band's lower half. Idempotent; no-op
+    without FEDAGENT_PORT_BAND.
+
+    The REAL draw in verl 0.8 is the ``get_master_addr_port`` Ray task, reached only
+    through ``RayWorkerGroup._get_master_addr_port`` (a driver-side method that
+    forwards ``master_port_range``; nothing in the stock stack ever passes one). We
+    patch THAT method to default the range to our band -- verl's own remote probing
+    loop (ray/base.py) then scans ``[start, start+span//2)`` natively on the target
+    node. ``WorkerHelper._get_free_port`` (dead in 0.8) is also rebound as
+    belt-and-braces for any future caller."""
     global _PATCHED
     band = _parse_band()
     if band is None or _PATCHED:
         return False
     from verl.single_controller.base.worker import WorkerHelper
+    from verl.single_controller.ray.base import RayWorkerGroup
 
     start, span = band
     # STRICT half partition (hardening on the same-start regression fix): verl draws ONLY
@@ -155,9 +179,19 @@ def enable_port_band() -> bool:
     # master binds its TCPStore LATE, after handing the number to workers) while a vLLM
     # replica probes, binds it first, and the late binder dies with EADDRINUSE.
     lower = max(1, span // 2)
+
+    _orig_gmap = RayWorkerGroup._get_master_addr_port
+
+    def _banded_gmap(self, pg, bundle_index=0, master_port_range=None, _o=_orig_gmap):
+        if master_port_range is None:
+            master_port_range = [start, start + lower]
+        return _o(self, pg, bundle_index=bundle_index, master_port_range=master_port_range)
+
+    RayWorkerGroup._get_master_addr_port = _banded_gmap
     WorkerHelper._get_free_port = staticmethod(lambda: probe_in_band(start, lower))
     _PATCHED = True
-    print(f"[port-band] enabled: verl master-port draws confined to [{start}, {start + span}) "
+    print(f"[port-band] enabled: verl master-port draws confined to [{start}, {start + lower}) "
+          f"via RayWorkerGroup.master_port_range "
           f"(vLLM half starts at VLLM_PORT={os.environ.get('VLLM_PORT', '<unset>')})", flush=True)
     return True
 
@@ -175,7 +209,7 @@ def install_deferred_port_band_patch() -> bool:
     if _parse_band() is None or _PATCHED:
         return False
     assign_vllm_port()   # per-process pid-salted VLLM_PORT (see its docstring; 4a85d12 regression fix)
-    TARGET = "verl.single_controller.base.worker"
+    TARGET = "verl.single_controller.ray.base"   # where RayWorkerGroup (the real draw's caller) lives
     if TARGET in sys.modules:
         return enable_port_band()
 

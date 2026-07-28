@@ -1223,7 +1223,10 @@ def hardness_partition_alfworld(
             n_label_miss += 1
             low_success_data.append(item)
 
-    if n_label_miss and show_progress and client_id == 0:
+    # NOT gated on show_progress/client_id (2026-07 audit): this is a data-integrity warning,
+    # not progress chat. Gated, it was silent in every real run -- show_progress defaults False,
+    # and each client's service logs to its own file, so even client 0's print helped nobody else.
+    if n_label_miss:
         frac = n_label_miss / max(1, len(total_train_data))
         msg = (f"[hardness_partition_alfworld] WARNING: {n_label_miss}/{len(total_train_data)} "
                f"games ({100*frac:.1f}%) had NO task_id match in the trajectories file and were "
