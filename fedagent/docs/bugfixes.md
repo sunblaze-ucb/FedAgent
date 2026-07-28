@@ -8,6 +8,48 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-28: `/close` failures leaked pooled envs — a swallowed TransportError never returned the server-side session (back-port from AccelAgent)
+
+- **Files:** `fedagent/envs/webshop/webshop_env.py`, `fedagent/envs/alfworld/alfworld_env.py`
+  (`close()` in both).
+- **Severity:** low-medium — needs a close-storm transport failure to trigger, but the
+  consequence is the documented pool-starvation class, and it is invisible when it happens.
+- **Provenance:** found by the AccelAgent tree-diff cross-audit (the sibling framework had
+  hardened its identical client; this tree had not). Reviewed alongside two more
+  reverse-direction candidates — see the note below.
+
+### Mechanism
+
+Both remote-env clients closed with a BARE `self._client.post("/close", ...)` inside a
+blanket `except Exception: pass`. At batch end every episode closes at once (a close-storm
+on one uvicorn boundary); a `TransportError` there was silently swallowed, with two
+consequences: the pooled server-side env was **never returned** (`/close` is what puts the
+session's env back in the pool), and `aclose()` — inside the same `try` — was skipped, so
+the client socket leaked too. With block-on-`/create` semantics, every leaked session
+permanently shrinks the pool; enough of them and rollout hangs (the exact starvation class
+the 2026-07-11 double-borrow fix closed on the create side).
+
+### Fix
+
+`/close` goes through the same `_post(..., retry=True)` helper as `/create`/`/reset`/`/step`,
+wrapped in `try/finally` so `aclose()` is unconditional. The retry is safe by inspection of
+both servers: `/close` pops the session with a `None` default and returns `ok` even for a
+lost-response resend (idempotent).
+
+### Reverse-port review (the other two AccelAgent-ahead spots)
+
+- **`convert_product_file_format.py` output dirs** — APPLIED: `search_engine/resources*`
+  is untracked (built locally), so on a fresh clone the vendored indexing script died with
+  `FileNotFoundError`; it now `os.makedirs` each output dir first.
+- **Lazy matplotlib/seaborn in the ALFWorld engine's `partition_strategy.py`** — REVIEWED,
+  NOT APPLIED: only the ALFWorld *service* env imports that module, and
+  `alfworld_requirements.txt` pins `matplotlib==3.10.5` + `seaborn==0.13.2`, so the hard
+  import cannot fail on a correctly-installed service env; restructuring imports across a
+  3,400-line vendored file for zero live benefit loses to the byte-preservation norm.
+  (AccelAgent needed it because its slimmer service envs may omit plotting deps.)
+
+---
+
 ## 2026-07-28: the port band never banded the real draw — the patched verl function is DEAD code in 0.8 (and the pid salt collapsed on small bands)
 
 - **Files:** `fedagent/port_band.py` (patch target re-pointed; salt headroom), `sitecustomize.py`

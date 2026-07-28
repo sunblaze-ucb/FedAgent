@@ -224,8 +224,19 @@ class WebShopEnv(BaseTextEnv):
     async def close(self) -> None:
         try:
             if self._client is not None:
-                await self._client.post("/close", json={"session_id": self.session_id})
-                await self._client.aclose()
+                # Route /close through the retry helper (like /create,/reset,/step): the
+                # end-of-batch close-storm overwhelms the HTTP boundary too, and a BARE POST
+                # raising a TransportError was swallowed by the outer except -- the pooled
+                # server-side env was never returned, and with block-on-/create the pool
+                # starves permanently (the documented leak class). retry is SAFE: the
+                # server's /close pops the session with a None default and returns ok even
+                # for a lost-response resend. try/finally keeps aclose() unconditional so
+                # the client socket is freed even if the post finally fails. (2026-07-28,
+                # back-ported from AccelAgent, where the tree-diff cross-audit surfaced it.)
+                try:
+                    await self._post("/close", {"session_id": self.session_id}, retry=True)
+                finally:
+                    await self._client.aclose()
         except Exception:
             pass
         self._client = None

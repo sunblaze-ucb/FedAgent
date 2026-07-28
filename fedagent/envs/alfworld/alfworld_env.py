@@ -218,8 +218,14 @@ class AlfworldEnv(BaseTextEnv):
     async def close(self) -> None:
         try:
             if self._client is not None:
-                await self._client.post("/close", json={"session_id": self.session_id})
-                await self._client.aclose()
+                # Same close-storm hardening as webshop_env.close (2026-07-28): a bare POST's
+                # TransportError was swallowed and leaked the pooled server-side env; /close is
+                # idempotent (pop with None default), so the retry helper is safe, and
+                # try/finally keeps aclose() unconditional.
+                try:
+                    await self._post("/close", {"session_id": self.session_id}, retry=True)
+                finally:
+                    await self._client.aclose()
         except Exception:
             pass
         self._client = None

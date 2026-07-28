@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 from tqdm import tqdm
@@ -30,18 +31,29 @@ for p in tqdm(all_products, total=len(all_products)):
     docs.append(doc)
 
 
-with open('./resources_100/documents.jsonl', 'w+') as f:
+# Fresh clone: search_engine/resources* is untracked (built locally, not shipped), so create
+# each output directory before opening the file -- otherwise open(..., 'w+') raises
+# FileNotFoundError. (2026-07-28, back-ported from AccelAgent.)
+outpath = './resources_100/documents.jsonl'
+os.makedirs(os.path.dirname(outpath), exist_ok=True)
+with open(outpath, 'w+') as f:
     for doc in docs[:100]:
         f.write(json.dumps(doc) + '\n')
 
-with open('./resources/documents.jsonl', 'w+') as f:
+outpath = './resources/documents.jsonl'
+os.makedirs(os.path.dirname(outpath), exist_ok=True)
+with open(outpath, 'w+') as f:
     for doc in docs:
         f.write(json.dumps(doc) + '\n')
 
-with open('./resources_1k/documents.jsonl', 'w+') as f:
+outpath = './resources_1k/documents.jsonl'
+os.makedirs(os.path.dirname(outpath), exist_ok=True)
+with open(outpath, 'w+') as f:
     for doc in docs[:1000]:
         f.write(json.dumps(doc) + '\n')
 
-with open('./resources_100k/documents.jsonl', 'w+') as f:
+outpath = './resources_100k/documents.jsonl'
+os.makedirs(os.path.dirname(outpath), exist_ok=True)
+with open(outpath, 'w+') as f:
     for doc in docs[:100000]:
         f.write(json.dumps(doc) + '\n')
