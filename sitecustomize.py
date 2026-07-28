@@ -37,9 +37,11 @@ def _die(msg: str) -> None:
     ``site.execsitecustomize`` wraps this module in ``except Exception`` -- it prints one
     stderr line and the interpreter CONTINUES with exit code 0, so a failed gate would
     silently run the very configuration it exists to refuse (e.g. FedProx downgraded to
-    FedAvg). ``os._exit(1)`` is the only reliable stop at interpreter startup."""
+    FedAvg). ``os._exit(1)`` is the only reliable stop at interpreter startup. The
+    root-cause traceback is printed inside each gate's ``except`` (while the exception is
+    still live); ``traceback.print_exc()`` HERE would print "NoneType: None" -- by the
+    time _die runs the exception context is gone (2026-07-28 fix)."""
     print(f"FATAL {msg}", file=sys.stderr, flush=True)
-    traceback.print_exc()
     os._exit(1)
 
 
@@ -60,6 +62,7 @@ if _mu > 0:
 
             _ok = install_deferred_patch(_mu)
         except Exception:
+            traceback.print_exc()   # root cause, printed while the exception is live (see _die)
             _ok = False
         if not _ok:
             _die(
@@ -77,6 +80,7 @@ if os.environ.get("FEDAGENT_PERSISTENT") == "1" and importlib.util.find_spec("ve
 
         _ok = install_deferred_persistent_patch()
     except Exception:
+        traceback.print_exc()   # root cause, printed while the exception is live (see _die)
         _ok = False
     if not _ok:
         _die(
@@ -97,6 +101,7 @@ if _critic_mode and _critic_mode != "upstream_standard" and importlib.util.find_
 
         _ok = install_deferred_critic_loss_patch(_critic_mode)
     except Exception:
+        traceback.print_exc()   # root cause, printed while the exception is live (see _die)
         _ok = False
     if not _ok:
         _die(
@@ -116,6 +121,7 @@ if os.environ.get("FEDAGENT_MERGE_FP32") == "1" and importlib.util.find_spec("ve
 
         _ok = install_deferred_merge_fp32_patch()
     except Exception:
+        traceback.print_exc()   # root cause, printed while the exception is live (see _die)
         _ok = False
     if not _ok:
         _die(
@@ -136,6 +142,7 @@ if os.environ.get("FEDAGENT_PORT_BAND") and importlib.util.find_spec("verl") is 
 
         _ok = install_deferred_port_band_patch()
     except Exception:
+        traceback.print_exc()   # root cause, printed while the exception is live (see _die)
         _ok = False
     if not _ok:
         _die(

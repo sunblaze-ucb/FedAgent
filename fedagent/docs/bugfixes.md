@@ -8,6 +8,39 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-28: concat glue anchor silently no-ops on reasoning models — the history rewrite deletes the text the anchor searches for (back-port from the AccelAgent audit)
+
+- **Files:** `fedagent/agent_loops/_concat_glue.py` (identical copy in both repos);
+  +5 regression tests in `tests/test_concat_glue.py`.
+- **Severity:** medium-latent — every shipped paper config pins Qwen2.5, whose template
+  renders history verbatim, so NO executed run is affected; the defect fires on a
+  reasoning-model override (Qwen3-family) in concat mode.
+
+### Mechanism
+
+Qwen3-family chat templates REWRITE a completed assistant turn when re-rendering it as
+history: the Jinja deletes the whole `<think>…</think>` block. The glue anchor searched
+`rt_next` for the RAW sampled action text, which therefore never occurs there — so on
+every VALID action (the prompts mandate `<think>`) the anchor returned None and the loop
+fell back to the legacy blind slice, the exact mis-slice the 2026-07-12 fix exists to
+eliminate. Worse than the original bug: with a CoT longer than the observation,
+`new_ids` is SHORTER than `cur_ids` and the fallback glue is EMPTY — the observation and
+turn boundary vanish from the emitted training sample, all `response_mask==1`, silently.
+The rollout context itself stays correct (`cur_ids = new_ids`), so the harm is a corrupt
+emitted sample (train/inference context mismatch), not a wrong loss target.
+
+### Fix
+
+When the full text misses, re-anchor on the template-KEPT form: the `</think>`-strip
+candidate first (the known Qwen3 rewrite; the kept part is a suffix of the raw action),
+then each newline-delimited tail of the action (template rewrites drop a prefix at a
+block boundary), with an 8-char floor below which the legacy fallback applies exactly as
+before. Same-day sibling fix: the sitecustomize gates now print the root-cause traceback
+inside their `except` blocks — `_die`'s own `print_exc()` always printed "NoneType:
+None" because the exception context is gone by the time the gate calls it.
+
+---
+
 ## 2026-07-28: `/close` failures leaked pooled envs — a swallowed TransportError never returned the server-side session (back-port from AccelAgent)
 
 - **Files:** `fedagent/envs/webshop/webshop_env.py`, `fedagent/envs/alfworld/alfworld_env.py`

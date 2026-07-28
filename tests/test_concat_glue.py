@@ -109,6 +109,77 @@ def test_action_not_found_falls_back():
     print("fallback: returns None when the action can't be located (caller keeps legacy slice)  OK")
 
 
+# --- 2026-07-28: the history REASONING-STRIP (the live Qwen3 divergence) ---------------------
+# Qwen3-family templates DELETE the <think>…</think> block when a completed assistant turn is
+# re-rendered as history (`content.split('</think>')[-1].lstrip('\n')`), so the RAW sampled
+# action never occurs in rt_next and the full-text anchor used to miss on every VALID action
+# (the system prompts mandate <think>). The anchor must recover the KEPT tail instead.
+
+LONG_THINK = "<think>" + "reasoning " * 20 + "</think>\n"    # CoT longer than the glue
+SHORT_THINK = "<think>brief</think>\n"                       # CoT shorter than the glue
+
+
+def test_reasoning_strip_long_cot_recovers_glue():
+    """Pre-fix: new_ids SHORTER than cur_ids -> legacy glue = [] -> the OBSERVATION was
+    silently dropped from the training sequence. The suffix anchor recovers it exactly."""
+    cot_action = LONG_THINK + ACTION
+    rt_prev = PREFIX                                     # Qwen3-1.7B gen prompt (no scaffold)
+    rt_next = PREFIX + ACTION + GLUE_NOSCAF              # history keeps only the post-</think> tail
+    correct = TOK.encode(GLUE_NOSCAF)
+    glue = inter_turn_glue_ids(rt_prev, rt_next, cot_action, TOK, gen_last_id=None)
+    assert glue == correct, "anchor must recover the full glue from the stripped history"
+    assert glue[0] == IM_END
+    old = legacy_blind_slice(rt_prev, rt_next, cot_action)
+    assert old == [], "pre-fix state pinned: legacy slice dropped the observation entirely"
+    print("reasoning-strip (long CoT): glue recovered; legacy would have dropped the obs  OK")
+
+
+def test_reasoning_strip_short_cot_recovers_glue():
+    """Pre-fix: new_ids LONGER than cur_ids -> legacy glue starts MID-observation (the
+    <|im_end|> boundary and the obs head eaten)."""
+    cot_action = SHORT_THINK + ACTION
+    rt_prev = PREFIX
+    rt_next = PREFIX + ACTION + GLUE_NOSCAF
+    correct = TOK.encode(GLUE_NOSCAF)
+    glue = inter_turn_glue_ids(rt_prev, rt_next, cot_action, TOK, gen_last_id=None)
+    assert glue == correct
+    old = legacy_blind_slice(rt_prev, rt_next, cot_action)
+    assert old != correct and (not old or old[0] != IM_END), \
+        "pre-fix state pinned: legacy slice ate the turn boundary"
+    print("reasoning-strip (short CoT): glue recovered; legacy ate the boundary  OK")
+
+
+def test_reasoning_strip_with_think_scaffold():
+    """Qwen3.5 shape: the generation prompt ends with a bare `<think>\\n` scaffold, so the
+    common prefix extends one char INTO the kept action (`<`); the window must still anchor."""
+    cot_action = LONG_THINK + ACTION
+    rt_prev = PREFIX + "<think>\n"
+    rt_next = PREFIX + ACTION + GLUE_SCAF
+    glue = inter_turn_glue_ids(rt_prev, rt_next, cot_action, TOK, gen_last_id=None)
+    assert glue == TOK.encode(GLUE_SCAF)
+    print("reasoning-strip (Qwen3.5 <think> scaffold): glue recovered  OK")
+
+
+def test_generic_suffix_anchor_without_think_tags():
+    """A template that rewrites history by stripping a PREFIX that is not `</think>`-shaped:
+    the generic longest-suffix search must still anchor the kept tail."""
+    action = "PREAMBLE-THE-TEMPLATE-DROPS\n" + ACTION
+    rt_prev = PREFIX
+    rt_next = PREFIX + ACTION + GLUE_NOSCAF
+    glue = inter_turn_glue_ids(rt_prev, rt_next, action, TOK, gen_last_id=None)
+    assert glue == TOK.encode(GLUE_NOSCAF)
+    print("generic suffix anchor (no </think> marker): glue recovered  OK")
+
+
+def test_suffix_floor_rejects_junk_anchor():
+    """A kept tail shorter than the floor must NOT be trusted (it would match almost
+    anywhere): return None so the caller keeps the legacy fallback."""
+    action = LONG_THINK + "<a>1</a>"                     # kept tail = 8 chars? no: 8 -> at floor
+    rt_next = PREFIX + "no-such-tail-here" + GLUE_NOSCAF
+    assert inter_turn_glue_ids(PREFIX, rt_next, LONG_THINK + "ab", TOK) is None
+    print("suffix floor: sub-floor kept tail rejected -> None (legacy fallback)  OK")
+
+
 if __name__ == "__main__":
     test_qwen25_no_scaffold_no_regression()
     test_qwen3_scaffold_fix()
