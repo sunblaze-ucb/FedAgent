@@ -136,7 +136,7 @@ def main():
     cfg.env_kind = "alfworld"
     if not cfg.get("val_env_spec"):
         cfg.val_env_spec = "config/envs/alfworld_val.yaml"
-    cfg.alfworld_val_split = "eval_in_distribution"   # the 274-game in-distribution eval set
+    cfg.alfworld_val_split = "eval_in_distribution"   # valid_seen, 140 games (valid_unseen's 134 need a separate pass)
     if args.n_gpus is not None:
         cfg.n_gpus_per_node = args.n_gpus
     # the breakdown writes under its own dir so eval rounds don't collide with a training run
