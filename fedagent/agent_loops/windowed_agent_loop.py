@@ -52,6 +52,7 @@ from typing import Any, Dict, List
 from uuid import uuid4
 
 from verl.experimental.agent_loop.agent_loop import AgentLoopOutput, register
+from verl.utils.profiler import simple_timer
 
 from fedagent.agent_loops.gym_text_agent_loop import GymTextAgentLoop
 from fedagent.envs.registry import make_env
@@ -114,9 +115,14 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
                 prompt_truncated = len(prompt_ids) > cap
                 if prompt_truncated:
                     prompt_ids = prompt_ids[-cap:]
-                out = await self.server_manager.generate(
-                    request_id=uuid4().hex, prompt_ids=prompt_ids, sampling_params=sampling_params
-                )
+                # per-TURN timing (was metrics={}): each turn row carries its own generate
+                # latency, so verl's timing aggregation sums to the episode's real generate
+                # time -- same semantics as the concat loop's single summed row.
+                turn_metrics: Dict[str, Any] = {}
+                with simple_timer("generate_sequences", turn_metrics):
+                    out = await self.server_manager.generate(
+                        request_id=uuid4().hex, prompt_ids=prompt_ids, sampling_params=sampling_params
+                    )
                 action_ids = out.token_ids
                 text = self.tokenizer.decode(action_ids, skip_special_tokens=True)
                 obs, reward, done, info = await env.step(text)
@@ -159,7 +165,7 @@ class WindowedGymTextAgentLoop(GymTextAgentLoop):
                     response_logprobs=resp_lp,
                     num_turns=1,
                     reward_score=0.0,                  # set below: episode return broadcast
-                    metrics={},
+                    metrics=turn_metrics,
                     extra_fields={"turn_scores": [], "tool_rewards": [], "traj_uid": traj_uid,
                                   "reward_extra_info": {"traj_success": float(success)}},
                 ))

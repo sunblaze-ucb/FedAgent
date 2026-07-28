@@ -11,5 +11,7 @@ envs:
                  #   val goals[0:64], same fixed set every round. (Migration briefly used 500 = whole pool.)
     max_turns: 15
     agent_name: gym_text
+    validate: true   # marks rows as VAL episodes -> concat loop skips the invalid-action penalty
+                     #   (stock verl passes row columns, not trajectory["validate"], into run())
     config:
       timeout: 180.0

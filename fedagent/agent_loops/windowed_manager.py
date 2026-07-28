@@ -82,12 +82,18 @@ def _adjust_to_divisor(data: DataProto, divisor: int) -> DataProto:
     """Pad the dynamic per-turn batch up to a multiple of `divisor` by duplicating rows
     (== verl-agent adjust_batch mode='copy'). Deterministic dup-indices (reproducible). Dup'd
     rows keep their uid, so GRPO grouping is unaffected — they only slightly reweight their
-    group's mean/std (the same accepted approximation the paper used)."""
+    group's mean/std (the same accepted approximation the paper used).
+
+    Dup indices are EVENLY SPACED over the batch (2026-07-28): the old head slice
+    (``arange(to_add) % bs``) always cloned the FIRST rows, and the per-turn batch is
+    episode-major, so every training step systematically over-weighted episode 0's turns.
+    Spacing keeps determinism (no RNG) without the head bias. (Executed paper runs used the
+    head slice; the reweight is a few rows of one batch, so curves are comparable.)"""
     bs = len(data)
     if divisor <= 1 or bs == 0 or bs % divisor == 0:
         return data
     to_add = divisor - (bs % divisor)
-    dup_idx = (np.arange(to_add) % bs).astype(np.int64)   # wraps if to_add > bs
+    dup_idx = np.linspace(0, bs - 1, num=to_add, dtype=np.int64)   # repeats if to_add > bs
     dup = data.select_idxs(dup_idx)
     return DataProto.concat([data, dup])
 

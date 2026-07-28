@@ -81,10 +81,16 @@ def test_untagged_union_is_byte_for_byte_stock():
     assert out.meta_info == {"k": 1, "j": 2}
 
 
-def test_divisor_padding_duplicates_from_the_front():
-    """_adjust_to_divisor pads by duplicating rows deterministically (verl-agent adjust_batch)."""
+def test_divisor_padding_duplicates_evenly_spaced():
+    """_adjust_to_divisor pads by duplicating rows deterministically (verl-agent adjust_batch),
+    with the dup indices SPREAD over the batch (2026-07-28: the old head slice always cloned
+    the first rows, over-weighting episode 0's turns in the episode-major per-turn batch)."""
     padded = wm._adjust_to_divisor(_proto(5, "x"), 4)
     assert len(padded) == 8
-    assert torch.equal(padded.batch["x"][5:], padded.batch["x"][:3])
+    # bs=5, to_add=3 -> linspace(0, 4, 3) = rows [0, 2, 4], not the head [0, 1, 2]
+    assert torch.equal(padded.batch["x"][5:], padded.batch["x"][[0, 2, 4]])
+    # deterministic: a second call pads identically
+    again = wm._adjust_to_divisor(_proto(5, "x"), 4)
+    assert torch.equal(padded.batch["x"], again.batch["x"])
     same = _proto(8, "x")
     assert wm._adjust_to_divisor(same, 4) is same      # already aligned -> untouched

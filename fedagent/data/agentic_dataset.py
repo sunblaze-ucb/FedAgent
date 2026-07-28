@@ -97,6 +97,13 @@ class AgenticDataset(Dataset):
             env_cfg = s.get("config", {}) or {}
             name = s.get("name", "TinyGuess")
             agent_name = s.get("agent_name", DEFAULT_AGENT_LOOP)
+            # `validate: true` in a spec marks its rows as VALIDATION episodes. Stock verl
+            # passes row columns -- not trajectory["validate"] -- into AgentLoop.run(), so this
+            # column is how the CONCAT loop learns it is scoring a val row (skips the invalid-
+            # action penalty; the windowed manager gets `validate` natively). Set in the shared
+            # val specs (config/envs/*_val.yaml) only: client in-job validation reuses the TRAIN
+            # spec and deliberately keeps train reward semantics.
+            is_validation = bool(s.get("validate", False))
             for e in range(data_epochs):        # e=0 with data_epochs=1 == the historical layout
                 for i in range(n):
                     self.items.append(
@@ -106,6 +113,7 @@ class AgenticDataset(Dataset):
                             "config": env_cfg,
                             "max_turns": max_turns,
                             "agent_name": agent_name,
+                            "is_validation": is_validation,
                             "data_source": name.lower(),
                             # verl's agent-loop postprocess stores kwargs["raw_prompt"]; our
                             # loop builds its own prompt from the env, so this is a placeholder.

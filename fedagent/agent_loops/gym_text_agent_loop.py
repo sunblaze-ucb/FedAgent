@@ -89,6 +89,11 @@ class GymTextAgentLoop(AgentLoopBase):
         env = make_env(env_name, kwargs.get("config", {}) or {})
         seed = int(kwargs.get("seed", 0))
         max_turns = int(kwargs.get("max_turns", 6))
+        # Val-row marker (AgenticDataset copies the spec's `validate: true` into every row;
+        # stock verl forwards row columns as run() kwargs but never trajectory["validate"]).
+        # Val episodes skip the invalid-action penalty below, restoring the legacy stack's
+        # unpenalized validation reward (and parity with the windowed loop's validate gate).
+        is_validation = bool(kwargs.get("is_validation", False))
 
         # Borrow + run the env entirely inside try/finally: reset() does /create+/reset for remote
         # envs, so if /reset (or tokenize) raises AFTER /create borrowed a pooled session, finally
@@ -194,12 +199,13 @@ class GymTextAgentLoop(AgentLoopBase):
             response_logprobs=(response_logprobs[: self.response_length]
                                if lp_ok and response_logprobs else None),
             num_turns=turns,
-            # episode reward minus the invalid-action penalty (coef * #invalid actions).
-            # Known concat-mode caveat: stock verl does not pass `validate` into run() kwargs,
-            # so this penalty also lands on VAL rows' reward_score (legacy val was unpenalized).
-            # The paper metric (traj_success below) is penalty-independent, and the paper-default
-            # windowed mode gates the penalty on validate correctly (windowed_agent_loop.py).
-            reward_score=float(sum(env_rewards)) - self._invalid_penalty * n_invalid,
+            # episode reward minus the invalid-action penalty (coef * #invalid actions) --
+            # TRAIN rows only. Val rows (is_validation via the val spec's `validate: true`)
+            # stay unpenalized like the legacy stack and the windowed loop's validate gate.
+            # A val spec WITHOUT the marker falls back to the old penalized behavior (the
+            # paper metric, traj_success, is penalty-independent either way).
+            reward_score=float(sum(env_rewards))
+            - (0.0 if is_validation else self._invalid_penalty * n_invalid),
             metrics=metrics,
             extra_fields={
                 "turn_scores": [],
