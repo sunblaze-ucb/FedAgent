@@ -291,7 +291,7 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | `webshop_run_service` | path | `envs/webshop/service/run_service.sh` | Launcher for a WebShop service. |
 | `webshop_base_port` | int | `8080` | Client `c`'s replica `j` -> `webshop_base_port + c*replicas + j` (K=1 → `+ c`). |
 | `webshop_pool_size` | int | `8` | Env pool per WebShop service (must be `>= gen_batch`). |
-| `search_return_n` | int | `200` | `WEBSHOP_SEARCH_RETURN_N`: BM25 top-K. Env-het arms use `200` (engine default `50` drops targets under filtering); non-het baselines keep `50`. |
+| `search_return_n` | int | `50` | `WEBSHOP_SEARCH_RETURN_N`: BM25 top-K. Default `50` (the engine/original value); the 16 env-het paper configs pin `200` so post-retrieval catalog filtering does not drop targets. |
 | `alfworld_run_service` | path | `envs/alfworld/service/run_service.sh` | Launcher for an ALFWorld service. |
 | `alfworld_base_port` | int | `8200` | Client `c`'s replica `j` -> `alfworld_base_port + c*replicas + j` (K=1 → `+ c`). |
 | `alfworld_pool_size` | int | `4` | TextWorld env pool per **client**, split across its `alfworld_replicas` services (`ceil(pool/K)+2` each); total must be `>= gen_batch`. |
