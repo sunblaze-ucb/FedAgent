@@ -96,27 +96,31 @@ ENV_VARIANT_KWARGS: dict = {}  # transition-level variants (BM25/lookalike/rank)
 # the env's ACTUAL `server.goals` (seed-42 shuffled) and maps back via goals.index(), so the
 # served goal at index i carries the property the partition selected. We therefore DEFER these
 # to _lifespan (after the first env exists) and compute CLIENT_GOAL_IDXS from env.server.goals.
-# (catalog_split/task_disjoint use a contiguous index RANGE whose values are order-independent,
-# and bm25/lookalike/rank use uniform goals -- both safe to compute at import time below.)
+# (catalog_split/task_disjoint's goal SLICE is order-independent index arithmetic, but the
+# catalog_split TARGET floor is content-dependent: it must protect the asins of the goals this
+# client is actually SERVED, i.e. the post-shuffle order. Slice and catalog are therefore both
+# deferred to runtime as well; bm25/lookalike/rank keep the uniform shard.)
 _DEFERRED_TASK_PARTITION = None  # set to the strategy name when its idxs are computed at runtime
+_DEFERRED_CATALOG = False        # catalog_split: catalog assembled + retrofitted in _lifespan
 # catalog_split = disjoint goal slice + disjoint catalog (ENV heterogeneity, hidden P_i).
 # task_disjoint = the SAME disjoint goal slice but FULL catalog (TASK heterogeneity only,
 #   observable in the goals). The two differ ONLY by the catalog filter -> a clean
 #   ablation of the env effect with the task partition held fixed.
 if PARTITION_STRATEGY in ("catalog_split", "task_disjoint"):
-    from fedagent.hetero.webshop_catalog_split import catalog_split_for_client
-
-    _catalog, CLIENT_GOAL_IDXS = catalog_split_for_client(
-        CLIENT_ID, CLIENT_NUM,
-        env_div=float(os.environ.get("ENV_DIV", "0.7")),
-        keep_ratio=float(os.environ.get("KEEP_RATIO", "0.7")),
-        min_goals_per_client=int(os.environ.get("MIN_GOALS_PER_CLIENT", "100")),
-        holdout_file=os.environ.get("HOLDOUT_FILE") or None,
-    )
-    CATALOG_ASINS = _catalog if PARTITION_STRATEGY == "catalog_split" else None  # task_disjoint -> full catalog
+    # Goal slice: line-identical arithmetic to the uniform shard (webshop_uniform),
+    # sized from the env's REAL goal count -> deferred like uniform. Catalog
+    # (catalog_split only): the target floor must protect the products of the goals
+    # this client is actually SERVED, and SimServer shuffles its goal list inside the
+    # seed-42 construction window -- so the catalog is assembled in _lifespan from
+    # env.server.goals and retrofitted onto the warmed pool. Before 2026-07 both were
+    # computed HERE from the PRE-shuffle generation order, which protected the
+    # products of the wrong ~100 goals (see docs/bugfixes.md).
+    _DEFERRED_TASK_PARTITION = "uniform"
+    _DEFERRED_CATALOG = PARTITION_STRATEGY == "catalog_split"
+    CATALOG_ASINS = None  # catalog_split: set in _lifespan; task_disjoint: FULL catalog
     print(f"[webshop-service] {PARTITION_STRATEGY} client {CLIENT_ID}/{CLIENT_NUM}: "
-          f"|catalog|={len(CATALOG_ASINS) if CATALOG_ASINS is not None else 'FULL'} "
-          f"|goal_idxs|={len(CLIENT_GOAL_IDXS)}", flush=True)
+          f"uniform goal shard + {'catalog' if _DEFERRED_CATALOG else 'FULL catalog'} "
+          f"DEFERRED to runtime (from env.server.goals)", flush=True)
 elif PARTITION_STRATEGY == "uniform":
     # The paper's HOMOGENEOUS task partition (uniform / decentralized families): each
     # federated client trains on a CONTIGUOUS >=MIN_GOALS_PER_CLIENT-goal shard of the
@@ -251,8 +255,8 @@ def _compute_task_partition(server_goals):
 
     Mirrors verl-agent envs.py: partition env.server.goals (the seed-42 shuffled list) so the
     served goal at index i carries the category/size/hardness the partition selected. Reached
-    for uniform (incl. the env variants' task axis) and preference/coverage/hardness
-    (catalog_split's slice is computed at import).
+    for uniform (incl. the env variants' task axis AND catalog_split/task_disjoint, whose
+    slice is the same uniform arithmetic) and preference/coverage/hardness.
     """
     global CLIENT_GOAL_IDXS
     strat = _DEFERRED_TASK_PARTITION
@@ -279,8 +283,51 @@ def _compute_task_partition(server_goals):
             trajectories_file=os.environ.get("TRAJECTORIES_FILE", ""),
             min_goals_per_client=min_goals, env_goals=server_goals, start_idx=VAL_SIZE)
     print(f"[webshop-service] {strat} client {CLIENT_ID}/{CLIENT_NUM}: runtime |goal_idxs|="
-          f"{len(CLIENT_GOAL_IDXS) if CLIENT_GOAL_IDXS else 0} (from env.server.goals, FULL catalog)",
+          f"{len(CLIENT_GOAL_IDXS) if CLIENT_GOAL_IDXS else 0} (from env.server.goals"
+          f"{'' if _DEFERRED_CATALOG else ', FULL catalog'})",
           flush=True)
+
+
+def _apply_deferred_catalog(envs, server_goals):
+    """catalog_split: assemble the catalog from the SERVED goals and retrofit the pool.
+
+    Runs after _compute_task_partition (needs CLIENT_GOAL_IDXS). The target floor is
+    derived from the goals this client will actually be served -- the guarantee the
+    old import-time path silently broke by reading the PRE-shuffle generation order.
+    The retrofit is equivalent to the constructor's catalog_filter_asins: SimServer
+    consumes all_products/product_item_dict only at request time (search post-filter,
+    click rendering), so swapping them on the warmed envs applies the same filter.
+    """
+    global CATALOG_ASINS
+    from fedagent.hetero.webshop_catalog_split import catalog_from_target_asins
+
+    targets = {server_goals[i]["asin"] for i in CLIENT_GOAL_IDXS}
+    catalog = catalog_from_target_asins(
+        targets,
+        client_id=CLIENT_ID,
+        env_div=float(os.environ.get("ENV_DIV", "0.7")),
+        keep_ratio=float(os.environ.get("KEEP_RATIO", "0.7")),
+        holdout_file=os.environ.get("HOLDOUT_FILE") or None,
+    )
+    catalog_set = set(catalog)
+    for e in envs:
+        srv = e.unwrapped.server
+        srv.all_products = [p for p in srv.full_products if p["asin"] in catalog_set]
+        srv.product_item_dict = {p["asin"]: p for p in srv.all_products}
+    CATALOG_ASINS = catalog
+    # End-to-end tripwire for the paper's Variant-1 guarantee: every served goal in
+    # this client's slice keeps its reward-bearing product reachable. (The old
+    # pre-shuffle derivation fails this check; the runtime derivation passes it by
+    # construction -- it exists to catch regressions in the wiring above.)
+    item_dict = envs[0].unwrapped.server.product_item_dict
+    lost = [i for i in CLIENT_GOAL_IDXS if server_goals[i]["asin"] not in item_dict]
+    if lost:
+        raise RuntimeError(
+            f"catalog_split client {CLIENT_ID}: {len(lost)} served goals lost their "
+            f"target product after the catalog filter (sample goal idx: {lost[:5]})")
+    print(f"[webshop-service] catalog_split client {CLIENT_ID}/{CLIENT_NUM}: retrofitted "
+          f"|catalog|={len(catalog)} onto {len(envs)} envs "
+          f"(targets={len(targets)} from SERVED goals)", flush=True)
 
 
 @asynccontextmanager
@@ -312,6 +359,8 @@ async def _lifespan(app: FastAPI):
                                f"seed->goal mapping would be nondeterministic")
     if _DEFERRED_TASK_PARTITION is not None:
         await asyncio.to_thread(_compute_task_partition, server_goals)
+    if _DEFERRED_CATALOG:
+        await asyncio.to_thread(_apply_deferred_catalog, envs, server_goals)
     if LOG_GOAL_ID:
         _GOAL_TASKIDS = [_goal_taskid(g) for g in server_goals]
         print(f"[webshop-service] LOG_GOAL_ID: built {len(_GOAL_TASKIDS)} task_ids from env.server.goals",

@@ -1,17 +1,27 @@
 """WebShop env-level Catalog-Split heterogeneity (paper Variant 1, Stage 1 content).
 
 `_distractor_disjoint_partition_webshop_v5` + `_generate_goal_asins_for_partition`
-are copied VERBATIM from verl-agent's `partition_strategy.py` (revisions unchanged)
-so each client's catalog + goal slice is bit-identical to the 0.3.1 baseline. The
-only additions are the thin public API at the bottom (`load_webshop_data`,
-`catalog_split_for_client`) used by the verl-0.8 WebShop remote service.
+carry the verl-agent `partition_strategy.py` math unchanged (the catalog-assembly
+steps 4-7 are factored into `_assemble_catalog`, byte-identical selection). The
+public API used by the verl-0.8 WebShop remote service is `catalog_from_target_asins`
+(+ `load_webshop_data`); the goal slice comes from `webshop_uniform.uniform_for_client`
+(the slice arithmetic here and there is line-identical).
 
-Given (client_id, client_num, env_div, keep_ratio, min_goals_per_client, holdout,
-base_seed=42) it returns (catalog_asins, client_goal_idxs): the client's disjoint
-product catalog (search/click restricted to it) and its goal-index slice. Realizes
-the hidden-transition-kernel divergence P_i that drives the env-heterogeneity arm of
-the Input-Dynamics Asymmetry. Deterministic by client_id (shared u @ base_seed,
-per-client v @ base_seed+1000*client_id).
+SERVED-GOAL ORDER (why the service calls `catalog_from_target_asins` at RUNTIME):
+the target-ASIN floor must protect the products of the goals this client will
+actually be served. SimServer SHUFFLES its goal list at construction (seed-42
+window), so `goal_asins[i]` below (generation order) is NOT the asin of served
+goal i. Deriving targets from this list — which `catalog_split_for_client` still
+does, and which the service did before 2026-07 — protected the products of the
+WRONG ~100 goals; a client's actual targets could be filtered out of its catalog,
+silently breaking the paper's "every reward-bearing target stays reachable"
+guarantee (main.tex, Variant 1). The service therefore computes the true targets
+from `env.server.goals` after the pool is warmed and only then assembles the
+catalog. `catalog_split_for_client` is kept as the legacy pre-shuffle reference.
+
+The catalog itself is deterministic by (target set, client_id): shared u @
+base_seed, per-client v @ base_seed+1000*client_id, both keyed by ASIN string, so
+WHERE the targets came from cannot change the selection math.
 """
 from typing import Any, Dict, List, Optional, Tuple
 import json
@@ -66,6 +76,72 @@ def _generate_goal_asins_for_partition(
             n_combos *= len(options[k])
         goal_asins.extend([asin] * n_combos)
     return goal_asins
+
+
+def _assemble_catalog(
+    client_target_asins: set,
+    all_asins_sorted: List[str],
+    client_id: int,
+    env_div: float,
+    keep_ratio: float,
+    holdout: set,
+    base_seed: int = 42,
+) -> Tuple[List[str], int, List[str]]:
+    """Steps 4-7 of the v5 partition: distractor scoring + catalog assembly.
+
+    Selection math is byte-identical to the original inline body. Deterministic by
+    (client_target_asins, client_id) alone: u/v are keyed by ASIN string over the
+    full sorted universe, so the same target set yields the same catalog no matter
+    how the targets were derived (pre-shuffle mimic or served goals).
+
+    Returns (catalog_asins, D, include_distractors).
+    """
+    # Step 4: distractor_pool — pool depends on per-client target, so it's per-client
+    if holdout & client_target_asins:
+        raise ValueError(
+            f"[distractor_disjoint v5] client {client_id}: holdout list contains "
+            f"{len(holdout & client_target_asins)} of this client's target ASINs"
+        )
+    unknown = client_target_asins - set(all_asins_sorted)
+    if unknown:
+        raise ValueError(
+            f"[distractor_disjoint v5] client {client_id}: {len(unknown)} target "
+            f"ASINs not in the product universe (sample: {sorted(unknown)[:3]}); "
+            f"goal source and catalog data are out of sync"
+        )
+    distractor_pool = sorted((set(all_asins_sorted) - client_target_asins) - holdout)
+    D = len(distractor_pool)
+
+    # Step 5: ASIN-level u/v dictionaries (the key change in the current
+    # Catalog-Split revision, i.e. what '_v5' refers to — NOT paper Variant 5).
+    # WARNING: each client's distractor_pool has different content/length (their
+    #   targets differ).
+    # → We cannot simply do proto_rng.random(D) and index by distractor_pool
+    #   position: the same ASIN occupies different indices in different clients'
+    #   pools, which would break the "every client sees a consistent u for the same
+    #   ASIN" invariant.
+    # → Instead, key by ASIN string: compute one u and one (per-client) v for each
+    #   of the full 1000 ASINs, then read them out in this client's distractor_pool
+    #   order.
+    proto_rng = np.random.RandomState(base_seed)
+    asin_to_u = {a: float(proto_rng.random()) for a in all_asins_sorted}
+
+    client_rng = np.random.RandomState(base_seed + 1000 * int(client_id))
+    asin_to_v = {a: float(client_rng.random()) for a in all_asins_sorted}
+
+    u = np.array([asin_to_u[a] for a in distractor_pool])
+    v = np.array([asin_to_v[a] for a in distractor_pool])
+
+    # Step 6: weighted blend + top-k (identical selection math to the legacy
+    # distractor_disjoint / 'v4' revision; 'v4' = revision number, not paper Variant 4).
+    e = (1.0 - env_div) * u + env_div * v
+    n_keep = int(round(keep_ratio * D))
+    chosen_idx = np.argsort(e)[:n_keep]
+    include_distractors = [distractor_pool[i] for i in chosen_idx]
+
+    # Step 7: assemble catalog (targets always included by construction)
+    catalog_asins = sorted(client_target_asins | set(include_distractors))
+    return catalog_asins, D, include_distractors
 
 
 def _distractor_disjoint_partition_webshop_v5(
@@ -181,53 +257,17 @@ def _distractor_disjoint_partition_webshop_v5(
     # Step 3: derive client_target_asins from this slice
     client_target_asins = {goal_asins[i] for i in client_goal_idxs}
 
-    # Step 4: distractor_pool — pool depends on per-client target, so it's per-client
-    if holdout & client_target_asins:
-        raise ValueError(
-            f"[distractor_disjoint v5] client {client_id}: holdout list contains "
-            f"{len(holdout & client_target_asins)} of this client's target ASINs"
-        )
+    # Steps 4-7: distractor scoring + catalog assembly (factored; math unchanged)
     all_asins_sorted = sorted({p['asin'] for p in products})
-    distractor_pool = sorted((set(all_asins_sorted) - client_target_asins) - holdout)
-    D = len(distractor_pool)
-
-    # Step 5: ASIN-level u/v dictionaries (the key change in the current
-    # Catalog-Split revision, i.e. what '_v5' refers to — NOT paper Variant 5).
-    # WARNING: each client's distractor_pool has different content/length (their
-    #   targets differ).
-    # → We cannot simply do proto_rng.random(D) and index by distractor_pool
-    #   position: the same ASIN occupies different indices in different clients'
-    #   pools, which would break the "every client sees a consistent u for the same
-    #   ASIN" invariant.
-    # → Instead, key by ASIN string: compute one u and one (per-client) v for each
-    #   of the full 1000 ASINs, then read them out in this client's distractor_pool
-    #   order.
-    proto_rng = np.random.RandomState(base_seed)
-    asin_to_u = {a: float(proto_rng.random()) for a in all_asins_sorted}
-
-    client_rng = np.random.RandomState(base_seed + 1000 * int(client_id))
-    asin_to_v = {a: float(client_rng.random()) for a in all_asins_sorted}
-
-    u = np.array([asin_to_u[a] for a in distractor_pool])
-    v = np.array([asin_to_v[a] for a in distractor_pool])
-
-    # Step 6: weighted blend + top-k (identical selection math to the legacy
-    # distractor_disjoint / 'v4' revision; 'v4' = revision number, not paper Variant 4).
-    e = (1.0 - env_div) * u + env_div * v
-    n_keep = int(round(keep_ratio * D))
-    chosen_idx = np.argsort(e)[:n_keep]
-    include_distractors = [distractor_pool[i] for i in chosen_idx]
-
-    # Step 7: assemble catalog
-    catalog_asins = sorted(client_target_asins | set(include_distractors))
-
-    # safety check
-    missing = client_target_asins - set(catalog_asins)
-    if missing:
-        raise RuntimeError(
-            f"[distractor_disjoint v5] client {client_id}: "
-            f"{len(missing)} target ASINs missing from catalog!"
-        )
+    catalog_asins, D, include_distractors = _assemble_catalog(
+        client_target_asins=client_target_asins,
+        all_asins_sorted=all_asins_sorted,
+        client_id=client_id,
+        env_div=env_div,
+        keep_ratio=keep_ratio,
+        holdout=holdout,
+        base_seed=base_seed,
+    )
 
     print(f"[ENV v5] WebShop client {client_id}/{client_num}: "
           f"|catalog|={len(catalog_asins)} (target={len(client_target_asins)}, "
@@ -257,6 +297,47 @@ def load_webshop_data(data_dir: Optional[str] = None):
     return products, ins
 
 
+def catalog_from_target_asins(
+    client_target_asins,
+    *,
+    client_id: int,
+    env_div: float = 0.7,
+    keep_ratio: float = 0.7,
+    holdout_file: Optional[str] = None,
+    base_seed: int = 42,
+    data_dir: Optional[str] = None,
+) -> List[str]:
+    """Assemble one client's catalog from its TRUE target ASINs (paper Variant 1).
+
+    This is the runtime entry the WebShop service calls in `_lifespan`, AFTER the env
+    pool is warmed: `client_target_asins` must be derived from the served goals
+    (`{env.server.goals[i]['asin'] for i in CLIENT_GOAL_IDXS}`), not from the
+    pre-shuffle generation order — see the module docstring. Selection math is the
+    verbatim v5 steps 4-7 (`_assemble_catalog`); raises if any target is missing
+    from the product universe (goal source / catalog data drift).
+    """
+    products, _ = load_webshop_data(data_dir)
+    holdout = None
+    if holdout_file:
+        with open(holdout_file) as f:
+            holdout = json.load(f).get("asins", [])
+    all_asins_sorted = sorted({p['asin'] for p in products})
+    catalog_asins, D, include_distractors = _assemble_catalog(
+        client_target_asins=set(client_target_asins),
+        all_asins_sorted=all_asins_sorted,
+        client_id=client_id,
+        env_div=env_div,
+        keep_ratio=keep_ratio,
+        holdout=set(holdout or []),
+        base_seed=base_seed,
+    )
+    print(f"[ENV v5] WebShop client {client_id}: runtime catalog "
+          f"|catalog|={len(catalog_asins)} (target={len(set(client_target_asins))}, "
+          f"distractor={len(include_distractors)}/{D}), "
+          f"env_div={env_div}, keep_ratio={keep_ratio}")
+    return catalog_asins
+
+
 def catalog_split_for_client(
     client_id: int,
     client_num: int,
@@ -268,10 +349,14 @@ def catalog_split_for_client(
     base_seed: int = 42,
     data_dir: Optional[str] = None,
 ) -> Tuple[List[str], List[int]]:
-    """Compute (catalog_asins, client_goal_idxs) for one client (paper Variant 1).
+    """LEGACY pre-shuffle path: (catalog_asins, client_goal_idxs) for one client.
 
-    Wraps the verbatim v5 partition with data loading + holdout-file parsing. This is
-    what the WebShop service calls at startup to realize one client's disjoint catalog.
+    Derives the target floor from the GENERATION-order goal list, which does not
+    match the shuffled order SimServer serves — kept only as the reference for the
+    pre-2026-07 behavior (and for the slice arithmetic, which is order-independent
+    and line-identical to `webshop_uniform.uniform_for_client`). The service now
+    computes the slice via `uniform_for_client` and the catalog via
+    `catalog_from_target_asins` at runtime; do not use this for new code.
     """
     products, ins = load_webshop_data(data_dir)
     holdout = None

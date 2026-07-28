@@ -305,6 +305,15 @@ This per-client target floor (vs the legacy full-target floor) widens the
 pairwise-Jaccard range and strengthens the `env_div` signal while keeping the
 task split consistent with the main experiment.
 
+**Since 2026-07-28 the target floor is derived at RUNTIME from the served
+goals** ([bugfixes.md](./bugfixes.md)): SimServer shuffles its goal list at
+construction, so the generation-order mimic the import-time path used protected
+the products of the wrong ~100 goals. The service now computes the slice via
+`uniform_for_client`, reads `{env.server.goals[i]['asin']}` after the pool is
+warmed, assembles the catalog with `catalog_from_target_asins` (same ASIN-keyed
+u/v math), retrofits `all_products`/`product_item_dict` onto the pool, and
+refuses to start unless every served goal keeps its product reachable.
+
 ### Field-Subset Index (Variant 2, encoding) and BM25 Reweighting (Variant 3, matching)
 
 [`../hetero/webshop_env_variants.py`](../hetero/webshop_env_variants.py),
@@ -321,6 +330,19 @@ identical across clients; only the search transition `T(s'|s,a)` differs.
   `name {name,Title}`, `desc {description}`, `bullets {BulletPoints}` (entries
   5-8 (`features`, `name_bullets`, `desc_features`, `no_name`) extend it for
   `N=8`).
+
+  **Effective fields caveat**: on the products SimServer indexes (post
+  `load_products`) only `name`, `Title` (:= name) and `BulletPoints`
+  (:= small_description) resolve non-empty — lowercase `description`/`features`
+  are never attached, and an all-empty doc falls back to `name`. Effective
+  indexes: `full→{name,Title,BulletPoints}`, `name→{name,Title}`, `desc→{name}`,
+  `bullets→{BulletPoints}`; at `N=8` the eight entries collapse to FOUR distinct
+  indexes (`full≡name_bullets`, `desc≡features≡desc_features`,
+  `bullets≡no_name`). Service-faithful divergence on 300 replayed agent queries
+  (`tools/env_heterogeneity/probe_bm25_effective_fields.py`): `N=4` pool mean
+  J@10 **0.39** / top-1 disagreement **69.8%** — a *stronger* shift than
+  Reweighting's 0.62 / 63.9%. The paper's Variant-2 appendix describes exactly
+  this (方案B, 2026-07-28).
 - **BM25 Reweighting** (`BM25_VARIANTS_DEFAULT`): all variants index the **full**
   field set but use **extreme `(k1, b)` corners** that reshape TF saturation and
   length normalization. The `N=4` sweep is `(1.2, 0.75)` (default), `(1.2, 0.00)`,
@@ -346,13 +368,22 @@ different clients attack different attributes, their optimal policies diverge
 [`../hetero/webshop_env_variants.py`](../hetero/webshop_env_variants.py),
 `_rank_wrapper_partition_webshop`. Each client's results are post-processed by a
 different **wrapper** over the same BM25 base (`env_kwargs['search_engine_variant']`),
-breaking any "trust the top position" heuristic while preserving the reward
-gradient (the target stays reachable in the candidate set). The `N=4` pool
+breaking any "trust the top position" heuristic. The `N=4` pool
 (`SEARCH_ENGINE_VARIANTS_DEFAULT`): `v_bm25_default` (control),
-`v_shuffled_topk` (shuffle the top 50), `v_inverted_topk` (reverse the top-K),
-`v_partial_random` (50% of queries return random). A per-client `seed =
-base_seed + client_id` makes the shuffle/random behavior differ across clients
-sharing a variant.
+`v_shuffled_topk`, `v_inverted_topk`, `v_partial_random` (50% of queries return
+random, score 0). A per-client `seed = base_seed + client_id` makes the
+shuffle/random behavior differ across clients sharing a variant.
+
+**Executed-run semantics** (documented 2026-07-28, behavior deliberately kept):
+the engine calls `search(k=search_return_n)` and every env-het config pins
+`search_return_n: 200`, so the wrappers act on the FULL 200-candidate list —
+`shuffle_k=50` never binds (the shuffle spans all 200; target on page 1 only
+~5% of queries) and `v_inverted_topk` pushes the target ~19 pages deep, beyond
+the 15-step budget: the invert arm's ~33 clients are effectively unwinnable
+(near-zero reward). The claim "the reward gradient is preserved" holds for
+default/shuffle/partial but NOT for invert at `search_return_n=200`. Disclosed
+in the paper's Variant-5 appendix; do not narrow the wrapper window without
+rerunning the arm.
 
 ---
 

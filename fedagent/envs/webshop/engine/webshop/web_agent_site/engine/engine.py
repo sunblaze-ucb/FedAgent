@@ -309,7 +309,17 @@ class _SearchEngineWrapperBase:
 
 class ShuffledTopKSearcher(_SearchEngineWrapperBase):
     """BM25 ranks top-shuffle_k as usual, then SHUFFLES before returning top k.
-    Forces agent to scan all returned items (can't trust position 1)."""
+    Forces agent to scan all returned items (can't trust position 1).
+
+    EXECUTED-RUN SEMANTICS: the engine calls search(k=SEARCH_RETURN_N), which the
+    env-heterogeneity configs set to 200 -- so max(shuffle_k, k)=200 and the
+    shuffle_k=50 window NEVER binds: the permutation spans the full 200-candidate
+    list (target on page 1 only ~5% of queries vs ~13-20% for a true top-50
+    shuffle). Same for InvertedTopKSearcher below: it reverses all 200, pushing
+    the target ~19 pages deep -- beyond the 15-step budget, i.e. effectively
+    unreachable for the invert arm. This is how the paper's Rank-Wrapper runs
+    actually behaved (disclosed in the paper's Variant-5 appendix); do NOT
+    "fix" the window without rerunning the arm, or comparability is lost."""
     def __init__(self, base, shuffle_k=50, seed=42):
         super().__init__(base)
         self.shuffle_k = int(shuffle_k)
@@ -470,10 +480,27 @@ def load_products(filepath, attrpath, num_products=None, human_goals=True,
         before = len(products)
         products = [p for p in products if p['asin'] in catalog_set]
         print(f'[load_products] catalog filter: {before} -> {len(products)} products')
-    # Append adversarial lookalike products (lookalike injection) AFTER catalog filter and
-    # num_products truncation logic, but BEFORE per-product processing — so
-    # lookalikes go through identical Title/Description/options/pricing parsing.
+    # Append adversarial lookalike products (lookalike injection) AFTER the catalog
+    # filter but BEFORE per-product processing — so lookalikes go through identical
+    # Title/Description/options/pricing parsing. NOTE the append is also BEFORE the
+    # products[:num_products] truncation below (which would silently drop every
+    # lookalike), and range-priced lookalikes consume generate_product_prices' global
+    # random.uniform draws inside the seeded construction window — only the
+    # synthetic-goal path survives that (get_synthetic_goals re-seeds before drawing;
+    # get_human_goals does NOT, so per-arm pool sizes would desync goal content and
+    # the goal shuffle across federated clients). Reject both dangerous combos:
     if extra_products:
+        if num_products is not None:
+            raise ValueError(
+                'load_products: extra_products together with num_products would '
+                'silently truncate the injected lookalikes (the append precedes the '
+                'products[:num_products] cut); pass num_products=None')
+        if human_goals:
+            raise ValueError(
+                'load_products: extra_products together with human_goals desyncs the '
+                'seeded goal stream across clients (range-priced lookalikes shift the '
+                'global random.uniform state and get_human_goals never re-seeds); '
+                'lookalike injection supports synthetic goals only')
         before = len(products)
         products = list(products) + clean_product_keys(list(extra_products))
         print(f'[load_products] extra_products injected: {before} -> {len(products)} '

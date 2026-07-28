@@ -46,6 +46,11 @@ duplicated here.
 | ALFWorld game order | sorted before the seeded shuffle | 2026-07-26 | — | [bugfix](./bugfixes.md); shards + val set become machine-independent (and different from pre-fix) |
 | ALFWorld game list | shipped manifests, `data/alfworld_games/*.json` | 2026-07-27 | — | [bugfix](./bugfixes.md); the task set is now a repo asset, not a walk of `$ALFWORLD_DATA` |
 | hardness `F_i` fill | one independent draw per client (fill loop replayed) | 2026-07-27 | `6954940` | [bugfix](./bugfixes.md); **every hardness shard changes** — no `resume` across the boundary; quota marginals / labels unchanged |
+| catalog_split target floor | derived at runtime from **served** goals (`_lifespan` retrofit) | 2026-07-28 | — | [bugfix](./bugfixes.md); **every catalog_split catalog changes** — no `resume` across the boundary; slice unchanged (same uniform arithmetic) |
+| `load_products` lookalike guards | `extra_products` × (`num_products` \| `human_goals`) ⇒ raise | 2026-07-28 | — | [bugfix](./bugfixes.md); latent traps, no shipped config affected |
+| lookalike synthesis script | `tools/env_heterogeneity/synthesize_lookalike.py` | 2026-07-28 | — | recovered from the original experiment repo; regeneration reproduces the 4 checked-in pools content-identically (SEED=99999) |
+| BM25 divergence probe | `tools/env_heterogeneity/probe_bm25_effective_fields.py` + `data/env_heterogeneity/probe_queries_agent_300.txt` | 2026-07-28 | — | service-faithful re-measurement on the EFFECTIVE indexes (paper Variant 2/3 stats source): V2 pool avg J@10 0.39 / top1≠ 69.8%, V3 0.62 / 63.9%, 300 replayed queries recovered from the original sweep logs |
+| Rank-Wrapper `shuffle_k` semantics | documented: never binds at `search_return_n` ≥ 50 (wrappers act on the full 200-candidate list; invert ⇒ target ~19 pages deep) | 2026-07-28 | — | engine comment + paper Variant-5 appendix disclosure; behavior deliberately UNCHANGED to preserve comparability with the executed runs |
 
 ---
 

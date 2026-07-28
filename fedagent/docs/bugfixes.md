@@ -8,6 +8,62 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-28: catalog_split protected the products of the WRONG goals — target floor derived from the PRE-shuffle goal order
+
+- **Files:** `fedagent/envs/webshop/service/server.py` (strategy branch + `_apply_deferred_catalog`
+  in `_lifespan`), `fedagent/hetero/webshop_catalog_split.py` (`_assemble_catalog` factored out,
+  new runtime API `catalog_from_target_asins`; `catalog_split_for_client` demoted to legacy
+  reference); regression `tests/test_catalog_split_runtime.py` (5 tests, incl. a
+  bug-vs-fix side-by-side on a shuffled goal order).
+- **Severity:** high for the catalog_split arm (paper Variant 1); `task_disjoint` unaffected
+  (full catalog). Inherited from verl-agent — the paper's Catalog-Split runs had it too
+  (the 2026-07 audit measured ~29% of a client's served goals losing their target product
+  from its catalog).
+
+### Mechanism
+
+`_generate_goal_asins_for_partition` mimics the goal list in **generation order**, but
+SimServer **shuffles** `self.goals` inside its seed-42 construction window before serving.
+The service sliced goal indices against the served (shuffled) order — correct, pure index
+arithmetic — but then derived `client_target_asins = {goal_asins[i] for i in idxs}` from the
+**pre-shuffle** list: the catalog's "target floor" protected the products of the wrong ~100
+goals, so a client's actual targets could be dropped by the keep_ratio filter, making those
+goals unwinnable at full reward. The safety check at the end
+(`client_target_asins - set(catalog_asins)`) was tautological — the catalog is built as
+`targets | distractors`, so it could never fire.
+
+### Fix
+
+Slice AND catalog are now both computed at runtime: the slice via `uniform_for_client`
+(line-identical arithmetic), and the catalog in `_lifespan` from
+`{env.server.goals[i]['asin'] for i in CLIENT_GOAL_IDXS}` via `catalog_from_target_asins`
+(the verbatim steps 4–7, which are ASIN-keyed and hence derivation-agnostic). The filter is
+retrofitted onto the warmed pool by swapping `all_products`/`product_item_dict` — equivalent
+to the constructor filter, which SimServer consumes only at request time. A real end-to-end
+tripwire replaces the tautology: every served goal in the slice must keep its product
+reachable, or the service refuses to start.
+
+---
+
+## 2026-07-28: load_products guards — two latent lookalike traps (fail-fast, zero behavior change today)
+
+- **Files:** `fedagent/envs/webshop/engine/webshop/web_agent_site/engine/engine.py`
+  (`load_products` extra_products block; comment corrected — the append is BEFORE the
+  `products[:num_products]` truncation, not after).
+- **Severity:** latent only; neither combination is exercised by any shipped config.
+
+1. `extra_products` + `num_products` ⇒ raise. The lookalike append precedes the
+   `[:num_products]` cut, so a num_products cap would silently drop every lookalike.
+2. `extra_products` + `human_goals` ⇒ raise. Range-priced lookalikes consume
+   `generate_product_prices`' global `random.uniform` draws inside the seeded construction
+   window (L_color: 79 draws, L_size: 91, price/price+color: 0). The synthetic-goal path
+   survives because `get_synthetic_goals` re-seeds before drawing; `get_human_goals` does
+   NOT — per-arm draw counts would desync goal price caps and the goal shuffle across
+   federated clients (cross-client goal-index protocol breakage + baseline-val
+   contamination).
+
+---
+
 ## 2026-07-27: Hardness `F_i` fill was a pure function of the fill SIZE — clients with equal easy quotas trained on byte-identical hard goals
 
 - **Files:** `fedagent/hetero/webshop_hardness.py` (step 2 of the partition body) and the
