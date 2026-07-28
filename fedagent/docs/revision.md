@@ -52,6 +52,15 @@ duplicated here.
 | BM25 divergence probe | `tools/env_heterogeneity/probe_bm25_effective_fields.py` + `data/env_heterogeneity/probe_queries_agent_300.txt` | 2026-07-28 | — | service-faithful re-measurement on the EFFECTIVE indexes (paper Variant 2/3 stats source): V2 pool avg J@10 0.39 / top1≠ 69.8%, V3 0.62 / 63.9%, 300 replayed queries recovered from the original sweep logs |
 | Rank-Wrapper `shuffle_k` semantics | documented: never binds at `search_return_n` ≥ 50 (wrappers act on the full 200-candidate list; invert ⇒ target ~19 pages deep) | 2026-07-28 | — | engine comment + paper Variant-5 appendix disclosure; behavior deliberately UNCHANGED to preserve comparability with the executed runs |
 | ALFWorld task-type breakdown | `--mode single` default (ONE pass grouped by the per-row `task_type` tag = the paper-table estimator) | 2026-07-28 | — | [bugfix](./bugfixes.md); legacy 7-pass kept as `--mode per-type-passes` |
+| `keep_client_hf_rounds` | `2` | 2026-07-28 | — | NEW rolling window: round *r* prunes `round_(r-K)/client_*/{hf,critic_hf}`; aggregated merges never pruned; `<= 0` = the old keep-everything (~3 GB × clients × rounds) |
+| `val_search_return_n` | `50` | 2026-07-28 | — | val-service SRN decoupled from the run's `search_return_n`. Executed env-het runs forwarded their own 200 to validation (paper-disclosed); set `200` to reproduce that protocol, default keeps future arms comparable at the reference top-50 |
+| val specs (`*_val.yaml`) | `validate: true` row marker | 2026-07-28 | — | [bugfix](./bugfixes.md): concat-mode val rows stop carrying the invalid-action penalty (windowed already gated it); a custom val spec without the marker keeps the old penalized `reward_score` |
+| `alfworld_fallback` / `ENV_DIV` forwarding | `skip` / forwarded to ALFWorld services | 2026-07-28 | — | [bugfix](./bugfixes.md): `env_disjoint` runs previously ignored both knobs (always 0.7/`skip`) |
+| windowed divisor padding | evenly-spaced dup rows (`linspace`) | 2026-07-28 | — | [bugfix](./bugfixes.md); executed runs padded with the HEAD rows — future batches differ by those few dup indices |
+| port band, verl half | `RayWorkerGroup._get_master_addr_port` + `master_port_range` | 2026-07-28 | — | [bugfix](./bugfixes.md): the 2026-07-23 pin patched a function that is dead code in verl 0.8 — verl master-port draws are banded for the first time |
+| sitecustomize gates | fail-closed via `os._exit(1)` | 2026-07-28 | — | [bugfix](./bugfixes.md): bare `raise` was swallowed by `site.execsitecustomize` (fail-open) |
+| `--phase verify` (aggregator) | nonzero exit on FAIL + real structural check | 2026-07-28 | — | [bugfix](./bugfixes.md); scriptable gating (`&&`) now works |
+| legacy tool ports | `tools/verify_train_val_disjoint.py`, `tools/env_heterogeneity/gen_holdout_{webshop,alfworld}.py` | 2026-07-28 | — | provenance ports from the original experiment repo; `--check` reproduces the committed `data/env_heterogeneity/holdout_*.json` exactly; full ported/superseded/not-ported inventory in [tools/README.md](../../tools/README.md) |
 
 ---
 

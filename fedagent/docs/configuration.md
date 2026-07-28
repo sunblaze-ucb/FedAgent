@@ -281,6 +281,7 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | `wait_between_clients` | int (s) | `5` | Seconds between sequential client runs (let Ray/GPU release). |
 | `client_overrides` | list | `[]` | Extra `key=value` Hydra overrides applied to every client (and reused for eval). See [§ below](#client_overrides-and-adv_estimator). |
 | `cleanup_checkpoints` | bool | `True` | Delete consumed FSDP shards after each merge (keep HF + logs); disk hygiene. |
+| `keep_client_hf_rounds` | int | `2` | Rolling window of per-**client** `hf`/`critic_hf` merges kept on disk: round *r* prunes `round_(r-K)/client_*/{hf,critic_hf}`. Aggregated merges are NEVER pruned (resume + final eval read them). `<= 0` restores keep-everything (~3 GB × clients × rounds — a 70-round 5-client run is ~1 TB). |
 | `adv_estimator` | str | `grpo` | `grpo` (no critic) or `gae` (PPO: FedAvg actor **and** critic). |
 
 ### Env services
@@ -292,6 +293,7 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | `webshop_base_port` | int | `8080` | Client `c`'s replica `j` -> `webshop_base_port + c*replicas + j` (K=1 → `+ c`). |
 | `webshop_pool_size` | int | `8` | Env pool per WebShop service (must be `>= gen_batch`). |
 | `search_return_n` | int | `50` | `WEBSHOP_SEARCH_RETURN_N`: BM25 top-K. Default `50` (the engine/original value); the 16 env-het paper configs pin `200` so post-retrieval catalog filtering does not drop targets. |
+| `val_search_return_n` | int | `50` | SRN of the shared UNPERTURBED **val** service — a separate knob since 2026-07-28. The executed env-het runs forwarded the run's own `search_return_n` (=200) to validation, so those arms validated on top-200 pages vs the baselines' top-50 (disclosed in the paper). The pinned default keeps future arms comparable; set `200` to reproduce the executed env-het protocol. |
 | `alfworld_run_service` | path | `envs/alfworld/service/run_service.sh` | Launcher for an ALFWorld service. |
 | `alfworld_base_port` | int | `8200` | Client `c`'s replica `j` -> `alfworld_base_port + c*replicas + j` (K=1 → `+ c`). |
 | `alfworld_pool_size` | int | `4` | TextWorld env pool per **client**, split across its `alfworld_replicas` services (`ceil(pool/K)+2` each); total must be `>= gen_batch`. |
@@ -304,8 +306,9 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `partition_strategy` | str | `""` | `""` (IID) \| `catalog_split`/`task_disjoint` (WebShop env/task) \| `env_disjoint` (ALFWorld env) \| `preference`/`coverage`/`hardness` (task) \| `bm25_field_subset`/`bm25_reweight`/`lookalike`/`rank_wrapper` (WebShop env variants). |
-| `env_div` | float | `0.7` | catalog-split heterogeneity strength. |
+| `env_div` | float | `0.7` | env-het strength: **catalog_split** (WebShop) *and* **env_disjoint** (ALFWorld; forwarded since 2026-07-28 — before that env_disjoint silently ran the code default 0.7 whatever the config said). |
 | `keep_ratio` | float | `0.7` | catalog-split distractor density. |
+| `alfworld_fallback` | str | `skip` | **env_disjoint** single-scene specs: `skip` (drop the spec) \| `shared` (all clients get it) \| `trial-only` (trial-axis top-k). Forwarded since 2026-07-28 (previously stuck at the code default `skip`). |
 | `omega` | float | `0.5` | **preference** (task-het) Dirichlet spread ω, larger ω = more skew. |
 | `size_std` | float | `1.0` | **coverage** (task-het) Beta dispersion ξ. |
 | `success_std` | float | `1.0` | **hardness** (task-het) Beta dispersion ξ′. |
@@ -370,6 +373,7 @@ runtime behavior: `running.md`).
 | `windowed_history_length` | int | `2` | `FEDAGENT_HISTORY_LENGTH` for windowed (paper = 2); concat uses 0. |
 | `resume` | bool | `True` | Rerun with the same `--output-dir` ⇒ continue after the last completed round (`--fresh` disables; see running.md § Resume). |
 | `cleanup_checkpoints` | bool | `True` | Delete consumed FSDP shards after each merge (disk hygiene; keeps logs + HF). |
+| `keep_client_hf_rounds` | int | `2` | Rolling window of per-client `hf`/`critic_hf` merges (round *r* prunes round *r−K*'s); aggregated merges never pruned; `<= 0` keeps all. |
 | `persistent` / `cross_round` | bool | `False` | Lever #4: one trainer/vLLM per round / for the whole run (biggest single-node win). |
 | `eval_mode` | str | `inline` | `inline` \| `parallel` (spare GPUs) \| `shared` \| `worker` (hot-engine eval; needs persistent/cross_round). |
 | `eval_gpus` | int | `2` | `eval_mode: parallel`: how many trailing GPUs the async eval takes. |

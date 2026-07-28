@@ -8,6 +8,233 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-28: the port band never banded the real draw — the patched verl function is DEAD code in 0.8 (and the pid salt collapsed on small bands)
+
+- **Files:** `fedagent/port_band.py` (patch target re-pointed; salt headroom), `sitecustomize.py`
+  (unchanged arming path). Offline regression: `tests/test_port_band.py`.
+- **Severity:** medium — the collision class the band exists to kill was only *half* covered;
+  the log-signature retry (independent layer) still caught survivors.
+
+### Mechanism
+
+The 2026-07-23 fix pinned `WorkerHelper._get_free_port` (single_controller/base/worker.py) to
+band probing. In verl 0.8 that function is **dead**: its only consumer,
+`get_available_master_addr_port`, has no caller. The real FSDP `MASTER_PORT` draw is the
+`get_master_addr_port` Ray task (single_controller/ray/base.py:90), reached through
+`RayWorkerGroup._get_master_addr_port` — whose `master_port_range` parameter nothing in the
+stock stack ever passes, so every draw stayed a bare `bind(("", 0))` in the ephemeral range.
+Net effect: vLLM's half of the band worked (`VLLM_PORT` pid-salting), verl's half banded
+*nothing* — verl master-port collisions remained possible exactly as before the "fix".
+
+Second defect, same module: `assign_vllm_port` computed its salt space as
+`max(1, half - 8)`. At `port_band_stride <= 18` (`half <= 9`) that collapses to 1, giving
+every process the SAME starting port — the one-shared-start race the salt exists to prevent.
+The shipped default (stride 100 → half 50) was unaffected.
+
+### Fix
+
+`enable_port_band` now patches `RayWorkerGroup._get_master_addr_port` to default
+`master_port_range=[start, start + span//2]` when the caller passes none — verl's own remote
+probing loop then scans the band's lower half natively on the target node. The deferred
+import hook re-targets `verl.single_controller.ray.base` accordingly.
+`WorkerHelper._get_free_port` stays rebound as belt-and-braces for any future caller. The
+salt headroom becomes `min(8, half // 4)`: identical layout at the default stride, a real
+spread for small bands.
+
+---
+
+## 2026-07-28: five sitecustomize gates were fail-OPEN — a failed arm printed one line and ran the forbidden configuration anyway
+
+- **File:** `sitecustomize.py` (all 5 armed blocks: FedProx, persistent worker, critic-loss
+  parity, fp32 merge, port band).
+- **Severity:** high *if* an arm ever failed (none is known to have); the failure mode was
+  "experiment silently runs the configuration the gate exists to refuse".
+
+### Mechanism
+
+Each block ended in a bare `raise` on arming failure, believing that fails closed. It does
+not: CPython's `site.execsitecustomize` wraps the whole module in `except Exception` — it
+prints ONE stderr line ("Error in sitecustomize…") and the interpreter **continues with exit
+code 0**. A FedProx run whose patch failed to arm would train as plain FedAvg, a
+`FEDAGENT_CRITIC_LOSS_MODE=legacy_exact` PPO client would train on the unnormalized stock
+critic loss, a banded run would fall back to the ephemeral port lottery — all while every
+launcher-level check saw a healthy process.
+
+### Fix
+
+`_die(msg)`: print the reason + traceback to stderr, then `os._exit(1)` — the only reliable
+stop at interpreter startup. Every block wraps its import+arm in `try/except` and routes ANY
+failure (import error included) through `_die`. The env-service no-op paths (verl absent)
+are unchanged.
+
+---
+
+## 2026-07-28: `--phase verify` could not fail — PASS/FAIL was print-only and the structural check asserted nothing
+
+- **File:** `fedagent/fed/aggregate_fedavg_fsdp.py`.
+- **Severity:** low-medium — verify is an operator tool (run_fed does not call it per round),
+  but its one job is to be trustworthy under scripting.
+
+### Mechanism
+
+`verify()` printed `[verify] PASS`/`FAIL` on rank 0 and returned; the process exited 0
+either way, so `torchrun … --phase verify && next_step` gated nothing. The docstring also
+promised a structural round-trip check ("they round-trip as ShardedTensors"), but the code
+only *counted* ShardedTensors into a print — a save/load that silently degraded every shard
+to a plain tensor (which verl's strict load would later refuse) still printed "round-trip OK".
+
+### Fix
+
+The structural check is real (every key must come back in the same wrapper class client 0
+carries), the verdict is all-reduced so every rank agrees, and FAIL raises `SystemExit(1)`
+after the final barrier — torchrun propagates the nonzero exit.
+
+---
+
+## 2026-07-28: config-validation raises leaked the val service — 13 error paths ran serviceless cleanup
+
+- **File:** `fedagent/fed/run_fed.py` (val-service start moved below the validation block).
+- **Severity:** low — leak only on misconfigured launches, but those are exactly the runs a
+  user relaunches immediately, and the orphan holds the val port.
+
+### Mechanism
+
+`start_val_service` ran early in `main()`, ~150 lines and 13 config-validation `raise`s
+before the round loop's `try:`/`finally: stop_services(...)`. Any validation failure
+(bad `eval_mode` combo, missing critic path, …) propagated OUT of the service's lifetime
+scope: the run died, the WebShop/ALFWorld val service kept running, and the relaunch —
+typically seconds later, after fixing the YAML — found the val port occupied.
+
+### Fix
+
+The service starts immediately before the round-loop `try:` — after every validation raise —
+so from the first moment a service exists, the `finally` that stops it is armed.
+
+---
+
+## 2026-07-28: concat mode penalized VALIDATION rows — the invalid-action penalty leaked into val `reward_score`
+
+- **Files:** `fedagent/agent_loops/gym_text_agent_loop.py`,
+  `fedagent/data/agentic_dataset.py` (`is_validation` row column),
+  `fedagent/config/envs/{webshop_15_val,alfworld_val}.yaml` (`validate: true` marker).
+  Offline regression: `tests/test_concat_val_penalty.py`.
+- **Severity:** low — concat is the non-default mode, and the paper metrics
+  (`traj_success`, `task_score`) ride `reward_extra_info`, which was never penalized; only
+  concat-mode val `reward_mean` was shifted by `-0.1 × invalid actions`.
+
+### Mechanism
+
+The legacy stack applied `apply_invalid_action_penalty` in the TRAIN reward path only
+(`val_reward_fn` = the unpenalized episode return), and the windowed loop preserves that via
+the `validate` flag its manager passes natively. The concat loop runs under stock verl,
+which passes the dataset row's columns — but **not** `trajectory["validate"]` — into
+`AgentLoop.run()`, so it had no way to know it was scoring a val row and subtracted the
+penalty everywhere.
+
+### Fix
+
+The val marker rides the row: a spec with `validate: true` (set in both shared val specs)
+makes `AgenticDataset` emit `is_validation=True` on every row, which reaches `run()` as a
+kwarg; val episodes skip the penalty. Deliberate scoping: client in-job validation reuses
+the TRAIN spec (no marker) and keeps train-reward semantics; a custom val spec without the
+marker keeps the old penalized behavior.
+
+**Known concat limitation (documented, not changed):** the concat loop re-renders and
+re-tokenizes the FULL chat history every turn (`_tokenize_chat(messages)` on the whole
+list), an O(turns²) tokenization cost per episode. Harmless at WebShop/ALFWorld lengths
+and confined to the non-default mode; noted here so nobody rediscovers it as a perf bug.
+
+---
+
+## 2026-07-28: ALFWorld `env_disjoint` knobs were never forwarded — every run silently used `env_div=0.7`, `fallback='skip'`
+
+- **Files:** `fedagent/envs/alfworld/service/server.py` (ENV_DIV / ALFWORLD_FALLBACK read +
+  forwarded), `fedagent/fed/run_fed.py` (service env vars + `alfworld_fallback` DEFAULTS).
+- **Severity:** medium *for the arm* — an env_disjoint config setting `env_div: 0.3` trained
+  at 0.7 with no error; the paper's executed runs used the default, so no shipped result is
+  affected.
+
+### Mechanism
+
+The partition function (`_env_disjoint_partition_alfworld`) takes `env_div` and `fallback`,
+and the engine passes `**partition_kwargs` straight through (`alfred_tw_env.py` even names
+the viz file after both) — but the service's `_partition_kwargs()` returned `{}` for
+env_disjoint ("takes no extra kwargs"), and run_fed never exported the env vars. The whole
+plumbing existed except the middle segment.
+
+### Fix
+
+run_fed exports `ENV_DIV` (the shared `env_div` knob) + `ALFWORLD_FALLBACK` (new
+`alfworld_fallback` knob, default `skip` = the code default) to the ALFWorld services; the
+service forwards `{env_div, fallback}` for `env_disjoint`. The partition fn still validates
+the fallback vocabulary.
+
+---
+
+## 2026-07-28: ALFWorld hardness label-miss warning was gated on `show_progress` — silent in every real run
+
+- **File:** `fedagent/envs/alfworld/engine/agent_system/environments/partition_strategy.py`.
+- **Severity:** low — the warning is diagnostic; the floor-to-hard behavior it reports was
+  already correct and counted.
+
+### Mechanism
+
+`hardness_partition_alfworld`'s miss summary ("N games had NO task_id match … floored to
+HARD") required `show_progress and client_id == 0`. `show_progress` defaults False and no
+service sets it, so the guard built for the "labels don't match this pool" failure mode
+could never speak in production — and even had it fired, each client's service logs to its
+own file, so the `client_id == 0` gate would have hidden it from every other client's log.
+
+### Fix
+
+The warning is ungated (it fires on `n_label_miss` alone). Progress chat stays behind
+`show_progress`.
+
+---
+
+## 2026-07-28: windowed divisor padding always cloned the FIRST rows — every step over-weighted episode 0's turns
+
+- **File:** `fedagent/agent_loops/windowed_manager.py` (`_adjust_to_divisor`).
+  Regression: `tests/test_windowed_union_tag.py`.
+- **Severity:** low — a few duplicated rows per batch; but the duplication was *systematic*
+  (same batch position every step), not noise.
+
+### Mechanism
+
+The per-turn batch is episode-major (episode 0's turns first). Padding to the trainer's
+divisor duplicated rows `arange(to_add) % bs` — i.e. always the HEAD of the batch — so the
+first episode's opening turns were over-weighted in every single optimizer epoch, a small
+but persistent directional bias toward whatever goals sort first.
+
+### Fix
+
+Dup indices are evenly spaced over the batch (`linspace(0, bs-1, to_add)`): still
+deterministic (no RNG, resume-safe), no positional bias. Executed paper runs used the head
+slice; the reweight is a few rows of one batch, so curves remain comparable — noted in
+[revision.md](./revision.md).
+
+---
+
+## 2026-07-28: windowed turn samples carried empty `metrics` — rollout timing reported zero
+
+- **File:** `fedagent/agent_loops/windowed_agent_loop.py`.
+- **Severity:** cosmetic/observability — training math never reads these fields.
+
+### Mechanism
+
+Each per-turn `AgentLoopOutput` was built with `metrics={}`, which pydantic fills with
+`AgentLoopMetrics` defaults (`generate_sequences=0.0`) — so verl's per-request timing
+aggregation reported zero generate time for every windowed rollout, while the concat loop
+(which wraps its generate calls in `simple_timer`) reported real numbers.
+
+### Fix
+
+Each turn times its own generate call (`simple_timer("generate_sequences", …)`) and carries
+that on its row; summed over an episode's rows this equals the concat loop's single summed
+row, so the two modes' timing is comparable.
+
+---
+
 ## 2026-07-28: ALFWorld per-task-type tool measured a different quantity than the paper tables — could not reproduce them even in principle
 
 - **Files:** `tools/eval_alfworld_by_tasktype.py` (single-pass mode added, now the default),

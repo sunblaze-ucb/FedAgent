@@ -314,6 +314,15 @@ warmed, assembles the catalog with `catalog_from_target_asins` (same ASIN-keyed
 u/v math), retrofits `all_products`/`product_item_dict` onto the pool, and
 refuses to start unless every served goal keeps its product reachable.
 
+An optional **OOD holdout** rides the same constructor: `holdout_file`
+(-> service `HOLDOUT_FILE`) names distractor ASINs excluded from *every*
+client's catalog and reserved for out-of-distribution env eval. The shipped
+list, `data/env_heterogeneity/holdout_webshop_v1.json` (30 ASINs, 6 per
+category, seed 99999), is reproduced byte-for-byte by
+`tools/env_heterogeneity/gen_holdout_webshop.py --check`; its ALFWorld twin
+(`holdout_alfworld_v1.json`, 8 FloorPlans for `env_disjoint`'s
+`holdout_scenes`) by `gen_holdout_alfworld.py --check`.
+
 ### Field-Subset Index (Variant 2, encoding) and BM25 Reweighting (Variant 3, matching)
 
 [`../hetero/webshop_env_variants.py`](../hetero/webshop_env_variants.py),
@@ -443,6 +452,7 @@ values are the endpoints actually present under
 | `bm25_reweight` | environment | WebShop | `variant_n` -> `VARIANT_N` | `{4, 8}` | `env_heterogeneity/bm25_reweighting[_ppo]/...bm25_reweighting_N-*` |
 | `lookalike` | environment | WebShop | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/lookalike_injection[_ppo]/...lookalike_injection_N-*` |
 | `rank_wrapper` | environment | WebShop | `variant_n` -> `VARIANT_N` | `4` | `env_heterogeneity/rank_wrapper[_ppo]/...rank_wrapper_N-*` |
+| `env_disjoint` | environment | ALFWorld | `env_div`, `alfworld_fallback` -> `ENV_DIV`, `ALFWORLD_FALLBACK` | — (no paper arm) | none — code-supported scene-disjoint partition, unreported |
 
 Notes:
 
@@ -458,9 +468,13 @@ Notes:
   `*_ppo` sibling holds a single config (the most-divergent sweep point) for the
   GRPO-vs-PPO comparison.
 - **ALFWorld** gets only the env-agnostic task-level subset (`preference` /
-  `coverage` / `hardness`); there is no `env_heterogeneity/` ALFWorld arm because
-  the WebShop variants perturb WebShop's retrieval pipeline specifically and do
-  not transfer.
+  `coverage` / `hardness`) in the paper; there is no `env_heterogeneity/`
+  ALFWorld config family because the WebShop variants perturb WebShop's
+  retrieval pipeline specifically and do not transfer. The code additionally
+  ships `env_disjoint` (scene-disjoint (scene, trial) top-k per spec, optional
+  `holdout_scenes` OOD reserve) — no reported result uses it, and its knobs only
+  reach the service since 2026-07-28 ([bugfixes.md](./bugfixes.md)): earlier
+  env_disjoint runs always executed `env_div=0.7`, `fallback='skip'`.
 
 ---
 
