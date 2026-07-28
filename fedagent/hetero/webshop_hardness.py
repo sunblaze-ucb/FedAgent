@@ -237,7 +237,9 @@ def hardness_partition(
     #         coverage_partition uses, so each easy goal lands in ~floor/ceil(r_easy) clients and
     #         the union of {Y_i} covers the easy pool;
     #   F_i = fill the remainder up to size L from low_success_data ("hard") by simple
-    #         without-replacement sampling.
+    #         without-replacement sampling -- one INDEPENDENT draw per client (step 2
+    #         replays the full fill loop from the shared stream so the draws advance it
+    #         like a single global execution of the algorithm).
     # rho_i = |Y_i| / L is fixed by the Beta success COUNTS (generate_client_sizes), so
     # Delta^2_hard and rho_bar are unchanged vs an independent per-client easy draw; routing Y_i
     # through assign_with_overlap only changes WHICH easy goals each client sees and pins their
@@ -247,6 +249,7 @@ def hardness_partition(
     # step-1 picks, always == current_success_count, double-drawing |Y_i| extra items from the
     # UNSUCCESSFUL pool and flooring rho_i at the global rate g; that flooring bug is gone.)
     current_client_data = []
+    easy_sets = None   # set by step 1; step 2's replay derives ALL clients' sizes from it
 
     # 1. Y_i: place the easy quota via CoveragePartition on the success pool Y.
     #    generate_client_sizes already set the per-client success COUNTS; assign_with_overlap
@@ -265,20 +268,36 @@ def hardness_partition(
         high_success_data = [d for j, d in enumerate(high_success_data) if j not in chosen_ids]
 
     # 2. F_i: fill the remainder up to L strictly from low_success_data (hard goals),
-    #    so the filler contributes no additional successes.
-    remaining_needed = min_samples_per_client - len(current_client_data)
-    if remaining_needed > 0 and low_success_data:
-        filler = rng.choice(
-            low_success_data,
-            size=min(remaining_needed, len(low_success_data)),
-            replace=False
-        ).tolist()
-        current_client_data.extend(filler)
-
-        # Remove the chosen samples from low_success_data.
-        for sample in filler:
-            if sample in low_success_data:
-                low_success_data.remove(sample)
+    #    so the filler contributes no additional successes. Algorithm HardnessPartition's
+    #    fill loop is REPLAYED IN FULL from the shared stream: every invocation draws
+    #    F_0..F_{N-1} in client order from the FULL unsuccessful pool (the pseudocode
+    #    never consumes U) and keeps only its own, so all clients advance one global
+    #    sequence and each F_i is its own independent uniform draw. The previous revision
+    #    drew ONLY its own F_i, which left the stream state client-independent and
+    #    collapsed F_i into a pure function of the fill size L-|Y_i|: clients with equal
+    #    easy quotas trained on IDENTICAL hard goals (73-97% of clients at the paper
+    #    scale, worst at near-uniform xi' where the quotas concentrate). rho_i -- and so
+    #    Delta^2_hard / rho_bar / n_bar (D1-D3) -- never depended on WHICH hard goals
+    #    fill the shard; only the cross-client joint changes. docs/bugfixes.md 2026-07-26.
+    if low_success_data:
+        n_hard = len(low_success_data)
+        # ALL clients' easy sizes come from easy_sets (identical in every invocation),
+        # never from this client's filtered pools -- the replay must consume the stream
+        # identically no matter which client executes it.
+        easy_len = [len(s) for s in easy_sets] if easy_sets is not None else [0] * client_num
+        own_pick = None
+        for c in range(client_num):
+            need_c = min(min_samples_per_client - easy_len[c], n_hard)
+            if need_c <= 0:
+                continue
+            drawn = rng.choice(n_hard, size=need_c, replace=False)
+            if c == client_id:
+                own_pick = drawn
+        if own_pick is not None:
+            current_client_data.extend(low_success_data[i] for i in own_pick)
+            # Drop this client's fill (by index) so the safety top-up cannot re-select it.
+            _own = set(own_pick.tolist())
+            low_success_data = [d for j, d in enumerate(low_success_data) if j not in _own]
 
     # 3. Safety fill: only if the unsuccessful pool was exhausted before reaching L
     #    (does not trigger at the experimental scale, where |U| >> L). Top up from any

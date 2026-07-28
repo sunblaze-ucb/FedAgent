@@ -8,6 +8,74 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-27: Hardness `F_i` fill was a pure function of the fill SIZE — clients with equal easy quotas trained on byte-identical hard goals
+
+- **Files:** `fedagent/hetero/webshop_hardness.py` (step 2 of the partition body) and the
+  same block ×2 in
+  `fedagent/envs/alfworld/engine/agent_system/environments/partition_strategy.py`
+  (`hardness_partition`, `hardness_partition_alfworld`); offline regression
+  `tests/test_hardness_fill.py`.
+- **Severity:** medium, hardness arms only. The paper's formal quantities are all
+  UNAFFECTED — `rho_i = |Y_i|/L` is fixed upstream by the Beta sizing, so `Delta^2_hard`,
+  `rho_bar`, `n_bar` and the (D1)–(D3) control/invariance laws are identical before and
+  after. What was wrong is the **cross-client joint**: which hard goals fill the shards.
+
+### Mechanism
+
+Every client computes the partition locally from the shared seed
+(`np.random.default_rng(42)`). Steps 1's consumers (`generate_client_sizes`,
+`assign_with_overlap`) consume the stream identically in every invocation — that is the
+invariant that makes local recomputation consistent. Step 2 then drew ONLY the invoking
+client's fill:
+
+```python
+filler = rng.choice(low_success_data, size=L - |Y_i|, replace=False)
+```
+
+Identical stream state + identical pool ⇒ `F_i` is a pure function of the fill size
+`L-|Y_i|`. Clients with equal easy quotas therefore trained on **byte-identical** hard
+sets. At the paper scale (100 clients, L=100, 6410 goals) that is 73–97% of clients
+across the ξ′ sweep, and the effect is *worst at the near-uniform end*: at ξ′=256 the
+quotas concentrate on 16 distinct values, so ~5000 hard slots were filled by only **16
+independent draws** (vs 48 at ξ′=1) — the near-uniform baseline saw the fewest distinct
+hard goals of the whole sweep, an unmodeled diversity gradient riding along the ξ′ axis.
+
+The paper's Algorithm HardnessPartition writes the fill as
+`for i: F_i <- SampleWithoutReplacement(U, L-|Y_i|)` — in any faithful execution the
+draws advance one stream, so equal-quota clients share only `E[nu^2/|U|]` (~0.5 goals),
+not all ~51. Historical note: the ORIGINAL verl-agent body had this artifact on **both**
+stages (its easy picks were the same client-independent `rng.choice`); the 2026-07-19 fix
+moved the easy side onto the global `assign_with_overlap` machinery and left the hard
+side as-was, so the overlay was already strictly closer to the pseudocode than the code
+that produced the original numbers — this entry closes the remaining half.
+
+### Fix
+
+Step 2 now **replays the full fill loop from the shared stream**: every invocation draws
+`F_0..F_{N-1}` in client order from the FULL unsuccessful pool (the pseudocode never
+consumes `U`) and keeps only its own draw. All clients advance one global sequence — the
+same single-execution semantics as the pseudocode — and the per-client sizes are derived
+from `easy_sets` (identical in every invocation), never from the invoking client's
+filtered pools, so the stream is consumed identically no matter who executes it.
+Paper-scale check after the fix: **100/100 distinct fills at ξ′=256** (was 16), 81/100 at
+ξ′=1 (the ~20 clients whose easy quota already fills L draw nothing — correctly).
+
+> **Operational note:** the fix CHANGES every hardness shard. Do not `resume` a hardness
+> run across this commit (rounds before/after would train on different partitions);
+> finish in-flight runs on the old code or restart them fresh. Non-hardness arms are
+> byte-identical.
+
+### Verification
+
+- `tests/test_hardness_fill.py` (4, offline; parametrized over BOTH shipped copies of the
+  body): equal-quota clients get distinct fills with <50% overlap; all C fills pairwise
+  distinct and their union covers >1.5× any single fill; the realized easy counts still
+  match the replicated Beta-sizing + `assign_with_overlap` allocation exactly (marginal
+  invariance); recomputation is deterministic.
+- Paper-scale probe (6410 goals / 100 clients / L=100): distinct fills 16→100 (ξ′=256),
+  48→81 (ξ′=1, rest empty-by-quota); equal-quota client counts unchanged (97 / 73) —
+  confirming the quota marginals were untouched.
+
 ## 2026-07-27: nothing pinned WHICH ALFWorld games exist — the task set was a property of the machine's preprocessing state
 
 - **Files:** new `fedagent/envs/alfworld/game_manifest.py` + `tools/gen_alfworld_manifest.py` +

@@ -84,7 +84,11 @@ the verl-0.8 remote env service. The shared Beta-sizing primitives
 > implements the paper's `HardnessPartition` **literally**: `Y_i` is placed on the easy
 > bucket by `assign_with_overlap` (`Y_i <- CoveragePartition(Y, ..., xi', r)`: full
 > easy-pool coverage + exact replica budget), then `X_i = Y_i ∪ F_i` fills the remainder
-> **only** from the hard bucket. So `rho_i = |Y_i|/L` and the control law +
+> **only** from the hard bucket, with **one independent draw per client** (the fill loop
+> is replayed from the shared stream, 2026-07-26 — the earlier body drew only its own
+> `F_i` from a client-independent stream state, so equal-quota clients trained on
+> byte-identical hard goals: 73–97% of clients across the ξ′ sweep, worst at the
+> near-uniform end). So `rho_i = |Y_i|/L` and the control law +
 > mean-invariance hold. See [`bugfixes.md`](bugfixes.md).
 
 ---

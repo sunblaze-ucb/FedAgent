@@ -27,7 +27,10 @@ service ([`../envs/webshop/service/`](../envs/webshop/service/)).
 > **literally**: `Y_i` is placed on the easy pool by `assign_with_overlap` (the box's
 > `Y_i <- CoveragePartition(Y, ..., xi', r)`: full easy-pool coverage + exact cross-client
 > replica budget, vs ~6-9% orphaned by an independent draw), then `X_i = Y_i ∪ F_i` fills
-> the remainder **only** from the hard pool. So `rho_i = |Y_i|/L` and the D1/D3 guarantees
+> the remainder **only** from the hard pool — one **independent draw per client** (the
+> fill loop is replayed from the shared stream, 2026-07-26; the earlier body drew only
+> its own `F_i` from a client-independent stream state, so equal-quota clients got
+> byte-identical hard fills). So `rho_i = |Y_i|/L` and the D1/D3 guarantees
 > hold. Beta sizing, seeds, and `base_seed=42` are unchanged. See
 > [`../docs/bugfixes.md`](../docs/bugfixes.md).
 
