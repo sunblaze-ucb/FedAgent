@@ -36,14 +36,13 @@ def dumps_by_step(dump_dir) -> List[Path]:
                   key=lambda p: (0, int(p.stem), "") if p.stem.isdigit() else (1, 0, p.stem))
 
 
-def summarize_val_dump(dump_dir) -> Optional[dict]:
-    """``{n, success_rate, reward_mean, task_score_mean}`` for a dump dir, or None if it holds
-    no readable rows. Reads only the latest dump (see the module docstring); malformed lines are
-    skipped rather than failing the summary -- a truncated tail from a killed run must not cost
-    the whole round's point."""
+def read_latest_rows(dump_dir) -> List[dict]:
+    """Rows of the LATEST validation dump in ``dump_dir`` (empty list if none). Malformed
+    lines are skipped rather than failing the read -- a truncated tail from a killed run
+    must not cost the whole round's point."""
     files = dumps_by_step(dump_dir)
     if not files:
-        return None
+        return []
     rows = []
     with open(files[-1]) as f:
         for line in f:
@@ -51,12 +50,43 @@ def summarize_val_dump(dump_dir) -> Optional[dict]:
                 rows.append(json.loads(line))
             except Exception:
                 continue
+    return rows
+
+
+def _mean(rows, key):
+    vals = [float(r[key]) for r in rows if r.get(key) is not None]
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+
+def _row_stats(rows) -> dict:
+    return {"n": len(rows), "success_rate": _mean(rows, "traj_success"),
+            "reward_mean": _mean(rows, "score"), "task_score_mean": _mean(rows, "task_score")}
+
+
+def summarize_val_dump(dump_dir) -> Optional[dict]:
+    """``{n, success_rate, reward_mean, task_score_mean}`` for a dump dir, or None if it holds
+    no readable rows. Reads only the latest dump (see the module docstring)."""
+    rows = read_latest_rows(dump_dir)
+    return _row_stats(rows) if rows else None
+
+
+def summarize_val_dump_by_tasktype(dump_dir) -> Optional[dict]:
+    """Group the LATEST dump's rows by their ``task_type`` tag: the paper's per-task-type
+    breakdown estimator (ONE eval pass, partitioned; ``All`` = the pooled rows, so the
+    per-type numbers combine to ``All`` by construction).
+
+    The tag is written per row by the agent loop (ALFWorld: derived from the episode's
+    gamefile, e.g. ``pick_clean_then_place_in_recep``). Rows without the tag are grouped
+    under ``"untagged"`` -- a dump from a codebase predating the tag yields all-untagged,
+    which is the signal to re-run the eval rather than trust a partial breakdown.
+
+    Returns ``{"All": stats, "by_type": {type_name: stats}}`` (stats as in
+    ``summarize_val_dump``), or None if the dir holds no readable rows."""
+    rows = read_latest_rows(dump_dir)
     if not rows:
         return None
-
-    def mean(key):
-        vals = [float(r[key]) for r in rows if r.get(key) is not None]
-        return round(sum(vals) / len(vals), 4) if vals else None
-
-    return {"n": len(rows), "success_rate": mean("traj_success"), "reward_mean": mean("score"),
-            "task_score_mean": mean("task_score")}
+    by_type: dict = {}
+    for r in rows:
+        by_type.setdefault(r.get("task_type") or "untagged", []).append(r)
+    return {"All": _row_stats(rows),
+            "by_type": {t: _row_stats(rs) for t, rs in sorted(by_type.items())}}

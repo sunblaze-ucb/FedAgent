@@ -51,6 +51,7 @@ duplicated here.
 | lookalike synthesis script | `tools/env_heterogeneity/synthesize_lookalike.py` | 2026-07-28 | — | recovered from the original experiment repo; regeneration reproduces the 4 checked-in pools content-identically (SEED=99999) |
 | BM25 divergence probe | `tools/env_heterogeneity/probe_bm25_effective_fields.py` + `data/env_heterogeneity/probe_queries_agent_300.txt` | 2026-07-28 | — | service-faithful re-measurement on the EFFECTIVE indexes (paper Variant 2/3 stats source): V2 pool avg J@10 0.39 / top1≠ 69.8%, V3 0.62 / 63.9%, 300 replayed queries recovered from the original sweep logs |
 | Rank-Wrapper `shuffle_k` semantics | documented: never binds at `search_return_n` ≥ 50 (wrappers act on the full 200-candidate list; invert ⇒ target ~19 pages deep) | 2026-07-28 | — | engine comment + paper Variant-5 appendix disclosure; behavior deliberately UNCHANGED to preserve comparability with the executed runs |
+| ALFWorld task-type breakdown | `--mode single` default (ONE pass grouped by the per-row `task_type` tag = the paper-table estimator) | 2026-07-28 | — | [bugfix](./bugfixes.md); legacy 7-pass kept as `--mode per-type-passes` |
 
 ---
 

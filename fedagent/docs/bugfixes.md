@@ -8,6 +8,40 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-28: ALFWorld per-task-type tool measured a different quantity than the paper tables — could not reproduce them even in principle
+
+- **Files:** `tools/eval_alfworld_by_tasktype.py` (single-pass mode added, now the default),
+  `fedagent/fed/eval_dumps.py` (`summarize_val_dump_by_tasktype`, `read_latest_rows`);
+  offline regression `tests/test_tasktype_breakdown.py`.
+- **Severity:** high for release reproducibility; training validation, curves, and the
+  tables' All column were never affected.
+
+### Mechanism
+
+The paper's per-type columns are a **partition of ONE 64-trial val pass** — the 2026-07
+audit verified all 240 cells sit on the 1/n_t grids of the pass composition
+(Pick 14, Look 8, Clean 12, Heat 9, Cool 11, Pick2 10) and the weighted pool equals the
+All column on 40/40 rows. The tool (born in the verl-0.8 migration; the original repo
+had no such tool) instead ran **7 independent passes**: with the per-type filter the pool
+becomes that type's WHOLE split (35/13/27/16/25/24 games) and the pass still runs 64
+episodes, so games repeat via `gfs[seed % len(gfs)]` — every cell it produced was k/64 on
+a repetition-inflated pool, and its "All" was an eighth independent pass. Values like the
+tables' 14.3 (=2/14) or 22.2 (=2/9) are not multiples of 1/64, so the tool literally could
+not output them.
+
+### Fix
+
+The agent loop has always tagged every val row with `task_type` (derived from the episode
+gamefile in `alfworld_env.py`); nothing aggregated it. `--mode single` (new default) runs
+ONE unfiltered pass and groups the dump rows by that tag — the exact table estimator, with
+the pooling identity by construction. The 7-pass estimator survives as
+`--mode per-type-passes` (higher per-type sample size, explicitly labeled as a different
+quantity). Note: at HEAD the val-64 composition is (15,4,14,7,10,14) after the 2026-07-26
+machine-independent ordering fix, so fresh runs' per-type denominators differ from the
+paper's (14,8,12,9,11,10).
+
+---
+
 ## 2026-07-28: catalog_split protected the products of the WRONG goals — target floor derived from the PRE-shuffle goal order
 
 - **Files:** `fedagent/envs/webshop/service/server.py` (strategy branch + `_apply_deferred_catalog`
