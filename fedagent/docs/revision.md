@@ -45,8 +45,33 @@ duplicated here.
 | `alfworld_val_seed_is_index` | `True` | 2026-07-26 | — | val = `games[0:n_envs]`, each exactly once; `false` restores the legacy shuffle-draw |
 | ALFWorld game order | sorted before the seeded shuffle | 2026-07-26 | — | [bugfix](./bugfixes.md); shards + val set become machine-independent (and different from pre-fix) |
 | ALFWorld game list | shipped manifests, `data/alfworld_games/*.json` | 2026-07-27 | — | [bugfix](./bugfixes.md); the task set is now a repo asset, not a walk of `$ALFWORLD_DATA` |
+| hardness `F_i` fill | one independent draw per client (fill loop replayed) | 2026-07-27 | `6954940` | [bugfix](./bugfixes.md); **every hardness shard changes** — no `resume` across the boundary; quota marginals / labels unchanged |
 
 ---
+
+## 2026-07-27: hardness shards change — the `F_i` fill becomes one independent draw per client
+
+- **Commit:** `6954940`. **Mechanism, impact and verification:**
+  [bugfixes.md, 2026-07-27](./bugfixes.md) — this entry is only the *consequences* half.
+- **Assets affected:** none on disk (label files unchanged). What changes is **every hardness
+  partition** the code computes: which hard goals fill each client's shard.
+
+The fill used to be a pure function of the fill *size* (equal easy quotas ⇒ byte-identical hard
+sets; at ξ′=256 the whole federation's ~5000 hard slots came from 16 independent draws). It is now
+one independent draw per client, per the paper's Algorithm HardnessPartition. The quota marginals
+(`rho_i`, `Delta^2_hard`, `rho_bar`, `n_bar`) are identical on both sides of the boundary — only
+*which* hard goals land in each shard moves.
+
+**Run-inheritance rules:**
+
+- **Do not `resume` a hardness run across this commit.** Rounds before/after would train on
+  different partitions of the same pool. Finish in-flight hardness runs on the old code, or
+  restart them fresh on the new one.
+- Hardness numbers recorded before the boundary carry the collapsed-fill artifact (the
+  near-uniform ξ′ end saw the *least* hard-goal diversity of the sweep); treat pre/post curves
+  as different arms, not reruns of one.
+- Every non-hardness arm (uniform / preference / coverage / env-het / centralized / local) is
+  **byte-identical** across the boundary.
 
 ## 2026-07-27: a new shipped asset — the ALFWorld game manifests
 
