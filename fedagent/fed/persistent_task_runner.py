@@ -200,6 +200,20 @@ class PersistentFedTaskRunner(TaskRunner):
                 print(f"[persistent] >>> round {r} client {spec['client']} (idx {i}) fit() -> "
                       f"{spec['out_dir']}", flush=True)
                 self.trainer.fit()
+                # fit() EXITS with the rollout AWAKE: its last op is checkpoint_manager.update_weights
+                # (ray_trainer.py:1675; the loop's last sleep_replicas was at 1471, BEFORE that sync).
+                # Every later update_weights (client-end _worker_validate below, next round's
+                # round-level eval) assumes verl's precondition "rollout asleep before update_weights"
+                # (engine_workers.py:672). On an awake engine the two resume() wakes are no-ops
+                # ("Executor is not sleeping" x2) and the FSDP full_tensor() gather runs with the
+                # whole gpu_memory_utilization pool still resident -> weight-sync OOM after a
+                # headroom-dependent number of rounds (446MiB bf16 embed cast; GRPO r11 / PPO r8,
+                # both at awake-sync #17 == fits-in-process + 1). Re-sleep here (level 2: weights+kv
+                # released; the next update_weights re-syncs everything -- verl's own per-step
+                # sleep(1471)->update(1675) cycle). Never a no-op: fit() always exits awake.
+                cm = getattr(self.trainer, "checkpoint_manager", None)
+                if cm is not None:
+                    cm.sleep_replicas()
                 print(f"[persistent] <<< round {r} client {spec['client']} done", flush=True)
                 # client-end circle: score THIS client's just-trained model on the val service using the
                 # hot engine (no second vLLM). _worker_validate routes to the val service + syncs the
@@ -344,9 +358,11 @@ class PersistentFedTaskRunner(TaskRunner):
         # (ray_trainer.py:972); the real weights are synced from FSDP by checkpoint_manager.update_weights
         # at each rollout. The worker-eval runs BEFORE this round's fit(), so without the sync vLLM still
         # holds dummy weights -> CUDA illegal-memory-access / invalid-argument (EngineDeadError). The engine
-        # is asleep here (after init_workers, or after the previous fit()'s last sleep_replicas), so the
-        # update_weights precondition (rollout asleep) holds. _validate() leaves it AWAKE, so re-sleep in
-        # finally to restore the state fit()'s own update_weights (1387) and the training loop assume.
+        # is asleep here (after init_workers, after the previous _worker_validate's finally, or after
+        # run()'s post-fit re-sleep -- NOT fit() itself: fit() exits AWAKE, its last op is the 1675
+        # update_weights; relying on "fit's last sleep_replicas" was the r11/r8 weight-sync OOM), so
+        # the update_weights precondition (rollout asleep) holds. _validate() leaves it AWAKE, so
+        # re-sleep in finally to restore the state fit()'s own update_weights (1387) assumes.
         cm = getattr(t, "checkpoint_manager", None)
         if cm is not None:
             cm.update_weights(t.global_steps)

@@ -47,14 +47,21 @@ def _apply_persistent_patch() -> bool:
         # critic via reload_critic_model; the ref engine is forward_only -> no optimizer), so
         # reserved memory climbs ~0.6GB/round -> cross-round OOM. Drop the old refs FIRST (so the
         # rebuild reuses freed memory instead of peaking at 2x), then gc + empty_cache.
+        # FedProx: drop the OLD client's anchor FIRST -- a full fp32 param-shard clone
+        # (~1.44 GB/GPU for 1.5B @ 4-way FULL_SHARD). Deleting it AFTER initialize() (the
+        # previous ordering) kept it co-resident with the rebuild AND pinned its blocks across
+        # the empty_cache() below (allocated mid-training, interleaved with activation
+        # segments -> exactly the reserved-creep this function exists to prevent). Deleting it
+        # here is semantics-neutral: the next client re-snapshots lazily at its first
+        # optimizer_step (fedprox.py: `getattr(self, "_fedprox_w_t", None) is None`).
+        if hasattr(eng, "_fedprox_w_t"):
+            del eng._fedprox_w_t
         for _attr in ("module", "optimizer", "lr_scheduler", "checkpoint_manager"):
             if getattr(eng, _attr, None) is not None:
                 setattr(eng, _attr, None)
         gc.collect()
         torch.cuda.empty_cache()
         eng.initialize()  # _build_model_optimizer: new module(new weights)+optimizer+scheduler
-        if hasattr(eng, "_fedprox_w_t"):
-            del eng._fedprox_w_t  # re-anchor FedProx to this client's aggregated model
 
     def _load_model_shards(eng, shard_dir):
         """Tier-2d (hf_export=final): model-only load of the AGGREGATED FSDP shard checkpoint

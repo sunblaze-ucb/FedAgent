@@ -8,6 +8,139 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-07-29: cross_round weight-sync OOM — `fit()` exits with vLLM AWAKE, so the client-end eval's `update_weights` gathers FSDP `full_tensor()` against the full `gpu_memory_utilization` pool
+
+- **Files:** `fedagent/fed/persistent_task_runner.py` (post-`fit()` re-sleep + corrected
+  `_worker_validate` comment); `fedagent/fed/persistent_patch.py` (`_reset_engine` FedProx-anchor
+  drop reordered — completes the 2026-07-22 release-before-rebuild fix below).
+- **Severity:** blocker for every `cross_round: true` run with `client_end_eval` (all
+  `paper_accelerated` configs) — the process OOMs at a headroom-dependent round (crash + lost
+  round; resume from the last aggregated round is clean, numbers are NOT corrupted).
+- **Found while:** running the FedProx side of the ENV-heterogeneity mitigation ablation
+  (does the proximal term recover the rank_wrapper degradation vs FedAvg?) — the first
+  production runs combining the accelerated `cross_round` recipe with FedProx. Two cells
+  co-tenant on one 8×H100 node, Qwen2.5-1.5B-Instruct, WebShop 15-turn:
+  - **GRPO, GPUs 0-3** (run `fed_webshop_grpo_envhet_rankwrapper_N4_fedprox_qwen1.5b`):
+    `config/paper_accelerated/env_heterogeneity/rank_wrapper/fed_webshop_grpo_…_p-rank_wrapper_N-4.yaml`
+    + `--fedprox-mu 0.01` (CLI override — no committed fedprox variant exists, and 0.01 is
+    the fork's paper default, NOT the 0.1 the example configs show), gmu 0.6. The dying
+    process had resumed at round 3; it completed rounds 3-10 and OOM'd in round 11
+    (rounds 3-10 aggregated clean; `round_11` quarantined to `_stale_rounds/` by resume).
+  - **PPO twin, GPUs 4-7** (run `fed_webshop_ppo_envhet_rankwrapper_N4_fedprox_qwen1.5b`):
+    the `rank_wrapper_ppo/` twin + the same mu, gmu 0.5. Its process died in round 8 with
+    the identical signature at the identical call site.
+  The FedAvg twins had not run yet — which is why "both dead runs are FedProx arms" briefly
+  looked causal (see How-it-was-found §6).
+- **Crash signature:** `torch.OutOfMemoryError: Tried to allocate 446.00 MiB` inside
+  `actor_rollout_ref_update_weights()` → FSDP `full_tensor()`; the GRPO log carries exactly
+  34 `Executor is not sleeping` warnings before the crash (the PPO log shows the same
+  warning class; its count was not separately tallied). 446.00 MiB is the bf16 cast of
+  `embed_tokens.weight` (151936×1536×2 B = 445.125 MiB, rounded to the 2 MiB allocator
+  granule) — the sync's FIRST tensor: the fp32 all-gather (892 MiB) succeeded, the cast
+  did not.
+
+### Mechanism
+
+verl's own loop keeps a strict dance: `sleep_replicas()` right after generation
+(`ray_trainer.py:1471`, level-2 sleep = weights AND kv unmapped) → train → `update_weights`
+(`:1675`, resume weights → push → resume kv). So every verl-internal sync gathers with
+~`gmu × VRAM` returned to the driver. But `fit()` **ends** on the `:1675` sync — it returns
+with the rollout fully AWAKE. The client-end eval (`_worker_validate`, called immediately
+after `fit()`) then runs `cm.update_weights(...)` assuming verl's documented precondition
+"rollout should be in sleep mode" (`engine_workers.py:672`) — which nothing enforces. On an
+awake engine the two `resume()` wakes are no-ops (vLLM `executor_base.py:192-194` warns
+`Executor is not sleeping` and returns — nothing was released, so nothing resumes) and the
+gather must fit in what the resident 47.5 GB (gmu 0.6) pool leaves over. The old
+`_worker_validate` comment claimed the engine "is asleep here (… after the previous fit()'s
+last sleep_replicas)" — false: fit's last sleep is at `:1471`, BEFORE its last sync.
+
+The warning count is the fingerprint: 2 no-op wakes per awake sync × (fits-in-process + 1).
+GRPO: resumed at round 3 → 8 completed rounds × 2 clients + 1 = 17 awake syncs = 34
+warnings, exactly the logged count. The PPO twin died at the same call site after a similar
+round count — the same formula, different only in headroom. The fingerprint also proves the
+engines' sleep mode was ON and functioning: with `enable_sleep_mode=False`, `sleep()`
+"succeeds" vacuously (`is_sleeping=True` with nothing unmapped) and `wake_up` never warns.
+
+Two aggravators made the marginal budget tip earlier on the FedProx arms (but the failure
+family predates FedProx — see the 2026-07-22 entry's pre-FedProx r14/r27 provenance):
+
+1. The FedProx anchor `_fedprox_w_t` (a full fp32 param-shard clone, ~1.44 GB/GPU for 1.5B
+   @ 4-way FULL_SHARD) was `del`-ed AFTER `initialize()` and AFTER the 07-22 fix's
+   `empty_cache()` — i.e. it was left out of the release-before-rebuild set that fix
+   introduced, so on FedProx runs the anchor stayed co-resident with every rebuild and its
+   (mid-training, activation-interleaved) blocks were never returned.
+2. Ordinary reserved-memory fragmentation growth across rounds (dynamic batches), which the
+   awake-pool ceiling turns into a crash instead of a nuisance.
+
+Eval integrity note: the server-side `wake_up` resets the prefix cache UNCONDITIONALLY after
+`engine.wake_up` (`vllm_async_server.py:611-616`), so the historical awake syncs never served
+stale KV — eval numbers from the crashed runs are trustworthy.
+
+### How it was found
+
+An elimination chain, every step checkable from the crash logs + source alone (no GPU repro):
+
+1. **A static memory audit refuted "model too big".** Summing every resident consumer at the
+   sync instant (vLLM pool 47.5 GiB at gmu 0.6; fp32 actor shard 1.44 + Adam 2.88; FedProx
+   anchor 1.44; CUDA ctx ~1.5; transients: the 2 GiB `update_weights_bucket_megabytes`
+   staging buffer + 892 MiB fp32 gather + 446 MiB bf16 cast) gives ≈60 of 79.11 GiB — ~19 GiB
+   nominal spare. So the crash required a growth term or a spike term; static arithmetic
+   could not produce it. (Same conclusion for PPO at gmu 0.5 with the critic engine added.)
+2. **The failing size named the tensor.** 446.00 MiB is the bf16 `embed_tokens.weight`
+   exactly (445.125 MiB + 2 MiB large-block rounding), and its fp32 gather (892 MiB) had
+   already succeeded — so the sync died on its FIRST tensor. Whatever consumed the VRAM was
+   fully resident BEFORE the sync began, ruling out mid-sync accumulation.
+3. **The warning text located the state bug.** `Executor is not sleeping` has exactly one
+   emitter: vLLM `wake_up()` on an already-awake executor (`executor_base.py:192-194`), a
+   warn-and-return no-op — meaning nothing had been released in the first place. Those syncs
+   ran against a never-slept pool: the spike term of step 1.
+4. **The count matched a per-fit counter, not a leak threshold.** 34 = 2 × 17 = 2 ×
+   (fits-in-process + 1) exactly, on a process whose fit count (8 rounds × 2 clients + 1) is
+   known from the resume history. A fragmentation/leak threshold has no reason to land on
+   that counter value; a deterministic once-per-fit event must. The PPO twin dying at the
+   same call site at a similar round count — despite a different gmu and an extra critic
+   engine — fits the same formula.
+5. **The verl state machine confirmed the event.** `fit()` sleeps at `ray_trainer.py:1471`
+   but ENDS on the `:1675` sync → always exits awake; the only out-of-fit sync is the
+   client-end eval's. Its comment asserting "asleep here (after the previous fit()'s last
+   sleep_replicas)" was checked against the verl source and found false.
+6. **FedProx was excluded as root cause by prior provenance, not by contrast runs.** Both
+   dead runs were FedProx arms, but the FedAvg twins had not run yet (no controlled
+   contrast existed); the 2026-07-22 entry's pre-FedProx r14/r27 crash supplied the
+   discriminating evidence. The step-3 fingerprint also killed the rival hypothesis that the
+   PPO run had sleep mode disabled (via an exported `expandable_segments:True`): the warning
+   can only be emitted when sleep genuinely works — with `enable_sleep_mode=False`, `sleep()`
+   vacuously sets `is_sleeping=True` and `wake_up` never warns.
+
+Debugging lesson: the load-bearing claim was a prose comment, and the crash site was one
+layer away from the bug — the eval code didn't break, `fit()`'s exit state did. When a
+precondition exists only in prose ("rollout should be in sleep mode",
+`engine_workers.py:672`; our own "is asleep here"), verify it against the code that produces
+the state, not the site that consumes it.
+
+### Fix
+
+1. **Producer-side re-sleep** (`persistent_task_runner.py`, run loop): `cm.sleep_replicas()`
+   immediately after `trainer.fit()` returns. fit() always exits awake, so this is never a
+   no-op (zero log noise, and `Executor is not sleeping` stays meaningful as a regression
+   alarm); sleep→update is verl's own per-step `:1471`→`:1675` cycle, so numerics are
+   untouched. Recovers the full pool (~47.5 GB at gmu 0.6) at the exact gather moment.
+2. **Anchor drop reordered** (`persistent_patch.py` `_reset_engine`): `del _fedprox_w_t`
+   moved ABOVE the null-out loop, upstream of `gc.collect()` + `empty_cache()`.
+   Semantics-neutral: the wrapper re-snapshots lazily at the next client's first
+   `optimizer_step` (`fedprox.py`: `getattr(self, "_fedprox_w_t", None) is None`); the ref
+   engine never steps and the critic passes through unanchored, so `hasattr` is a no-op there.
+3. The false `_worker_validate` comment corrected in place.
+
+Do **not** mitigate by lowering `gpu_memory_utilization` (the 07-22 provenance shows it only
+defers: r14 → r27) and do **not** enable `rollout.layered_summon` (a no-op for full finetune —
+it only gates `collect_lora_params` — and it silently downgrades sleep to level 1).
+Post-fix signatures: zero `Executor is not sleeping` lines; two `It took … to fall asleep`
+lines per client; per-round training-side `memory_reserved` FLAT — the latter closes the
+2026-07-22 entry's pending live validation.
+
+---
+
 ## 2026-07-28: concat glue anchor silently no-ops on reasoning models — the history rewrite deletes the text the anchor searches for (back-port from the AccelAgent audit)
 
 - **Files:** `fedagent/agent_loops/_concat_glue.py` (identical copy in both repos);
@@ -2092,7 +2225,11 @@ import hook under `FEDAGENT_PERSISTENT=1` for every persistent/cross-round launc
   empty_cache, but **without** the `checkpoint_manager` drop) is under monitor on the original
   failing run; note that variant may retain a residual leak via the manager's pinned refs — if
   its curve bends but doesn't flatten, that's the expected signature, and this version
-  (manager included) is the one to sync.
+  (manager included) is the one to sync. **2026-07-29 update:** two production FedProx runs
+  (GRPO r11 / PPO r8) showed the curve was NOT yet flat — this fix's own `empty_cache()` ran
+  while the FedProx anchor was still live (left out of the release-before-rebuild set), and
+  the crash trigger was a separate awake-engine sync ceiling; both closed in the 2026-07-29
+  entry above, which inherits this pending flat-memory validation.
 
 **Scope audit — not exposed:** AccelAgent (`accelagent/train.py` → stock `run_ppo` →
 `fit()` once; `initialize()` runs once per process, no reload path — the verl rebind is inert
