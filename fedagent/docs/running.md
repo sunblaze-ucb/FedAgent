@@ -286,7 +286,7 @@ srun --jobid="$JID" --overlap bash -lc '
   source "$(conda info --base)/etc/profile.d/conda.sh"   # or your cluster conda module
   conda activate fedagent-verl08
 
-  cd /gpfs/projects/b1222/userdata/canyu/kangyu/fedagent
+  cd /path/to/fedagent                                       # your clone's repo root
   export PYTHONPATH="$PWD:$PYTHONPATH"                       # so `import fedagent` resolves (driver + Ray workers)
   export VERL_CFG="$(python -c "import verl,os;print(os.path.join(os.path.dirname(verl.__file__),\"trainer\",\"config\"))")"
   export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 VLLM_USE_V1=1

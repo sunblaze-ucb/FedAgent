@@ -159,7 +159,7 @@ CLI flags override the result.
 | Key | Default | Meaning |
 |---|---|---|
 | `model_path` | `""` | Base HF model for round 1; `""` auto-discovers a local Qwen2.5-0.5B-Instruct. |
-| `output_dir` | `/tmp/xbb9020_fedagent_fed_tinyguess` | Root for all rounds, logs, and the summary. |
+| `output_dir` | `outputs/fedagent_fed_tinyguess` | Root for all rounds, logs, and the summary. |
 | `total_clients` | `2` | Number of clients `N` in the federation. |
 | `clients_per_round` | `2` | Clients `M` sampled per round (all if `>= total_clients`). |
 | `total_rounds` | `2` | Number of federated rounds `T`. |
