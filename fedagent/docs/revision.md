@@ -61,6 +61,8 @@ duplicated here.
 | sitecustomize gates | fail-closed via `os._exit(1)` | 2026-07-28 | — | [bugfix](./bugfixes.md): bare `raise` was swallowed by `site.execsitecustomize` (fail-open) |
 | `--phase verify` (aggregator) | nonzero exit on FAIL + real structural check | 2026-07-28 | — | [bugfix](./bugfixes.md); scriptable gating (`&&`) now works |
 | legacy tool ports | `tools/verify_train_val_disjoint.py`, `tools/env_heterogeneity/gen_holdout_{webshop,alfworld}.py` | 2026-07-28 | — | provenance ports from the original experiment repo; `--check` reproduces the committed `data/env_heterogeneity/holdout_*.json` exactly; full ported/superseded/not-ported inventory in [tools/README.md](../../tools/README.md) |
+| cross_round reload teardown | hard storage release, default **ON** (`FEDAGENT_DISABLE_HARD_RELEASE=1` reverts) | 2026-08-18 | — | [bugfix](./bugfixes.md): ws=1/NO_SHARD flat-param leak (~1.33 GiB/client-fit at 0.5B); one `hard-release: freed N GiB` log line per client reload is the visible signature; numerics untouched (retired weights only) |
+| memory forensics | `FEDAGENT_MEM_DEBUG=1` (+ `FEDAGENT_MEM_DEBUG_DIR=<dir>`) | 2026-08-18 | — | NEW env-gated instrumentation: at every engine reset, dump post-release *current* allocated, a ≥32 MB CUDA-tensor gc-walk with referrer chains and metadata-vs-storage sizes, and a full allocator snapshot (`_record_memory_history` armed per worker). Off by default = zero overhead; the 2026-08-18 leak hunt is the reference use |
 
 ---
 

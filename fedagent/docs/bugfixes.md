@@ -8,6 +8,186 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-08-18: cross_round reload leaks ~one fp32 model copy per client-fit on world_size=1 — retired NO_SHARD flat-param storages outlive `_reset_engine`'s release, and the vLLM wake margin absorbs the debt until round 4
+
+- **Files:** `fedagent/fed/persistent_patch.py` — new `_hard_release_fsdp_storages()` called at the
+  top of `_reset_engine`, plus permanent env-gated forensics (`FEDAGENT_MEM_DEBUG=1` +
+  `FEDAGENT_MEM_DEBUG_DIR`: per-reset residue dump with referrer chains + allocator snapshot).
+  Root cause lives in PyTorch FSDP1's NO_SHARD internals as activated by our reload pattern;
+  the fix is overlay-side (no verl patch — the no-fork rule holds).
+- **Severity:** blocker for every `cross_round: true` run at `n_gpus_per_node: 1` — the process
+  OOMs at a headroom-dependent round (crash + lost round; numbers NOT corrupted, resume from the
+  last aggregated round is clean). The paper's 4×H100 runs are **not** exposed (see "why earlier
+  runs were fine"); the first exposed production target was the first ws=1 production run ever
+  attempted: Qwen2.5-0.5B uniform/main/GRPO on a shared 24 GB RTX 4090 (2026-08-17).
+- **Found while:** running the 0.5B WebShop uniform cell (`webshop_uniform_main_grpo_0p5b`,
+  gmu 0.45, fused kernels, `cross_round`+worker-eval recipe). Rounds 1–3 clean; round 4's first
+  client died in `wake_up()` → `torch.OutOfMemoryError` inside vLLM's
+  `cumem_allocator.cpp:62 create_and_map` — vLLM could not re-map its own sleeping weight/KV
+  pool because the training side had eaten the margin the pool was supposed to wake back into.
+- **Crash arithmetic (the confession):** the measured wake-margin fell **7.46 → 0.06 GiB over
+  the first six fits, −1.33 GiB/fit**, zero-crossing at fit 7 = round 4's first client — the
+  exact observed crash point. 1.33 GiB is not a generic number: it is **24 decoder-layer fp32
+  flat params** (24 × 14,912,384 × 4 B = 1.333 GiB) — one full non-embedding model copy in
+  fp32, per client-fit.
+
+### Mechanism
+
+`_reset_engine` (the 2026-07-22 fix below) retires an engine by nulling
+`module/optimizer/lr_scheduler/checkpoint_manager`, then `gc.collect()` +
+`torch.cuda.empty_cache()`, then `initialize()`. On the paper's 4-GPU FSDP that releases
+everything. On **world_size=1, PyTorch silently degrades FULL_SHARD to NO_SHARD**
+(`_init_utils.py:430` warns), and NO_SHARD changes what "release the module" means:
+
+1. **The fp32 flat params ARE the master weights** — one persistent, never-resharded CUDA
+   storage per FSDP wrapper (24 decoder layers + 1 root carrying embed/norm; Qwen2.5-0.5B:
+   24 × 56.9 MB + 519 MB + ε). There is no reshard path that ever frees them; only refcount
+   death can.
+2. **Refcount death doesn't happen at reset time.** After the attr-nulling + `gc.collect()`,
+   the retired flat params remain reachable through FSDP-internal containers — measured
+   referrer chains (probe-2, `FEDAGENT_MEM_DEBUG` dumps): `FlatParamHandle.flat_param`,
+   `FullyShardedDataParallel.__dict__['params']`, the wrapped
+   `Qwen2DecoderLayer._parameters['_flat_param']` registrations, `Parameter.__dict__
+   ['_local_shard']` self-views, and optimizer `param_groups` dicts — cycles and containers
+   whose *roots* die later than the reload. A single `gc.collect()` at the reset point is too
+   early; later collections reclaim *some* generations at gc-timing-dependent moments.
+3. **The >bucket-size embedding rides a third mechanism.** `embed_tokens.weight` (0.507 GiB
+   fp32, 544 MB > the 512 MB `update_weights_bucket_megabytes`) is CUDA-IPC'd to vLLM by
+   `_direct_send_large_weight` — the exporter-side IPC handle pins its storage until a *later*
+   transfer's `torch.cuda.ipc_collect()`. Probe-2 caught both phases on the same config:
+   residue 1.86 GiB (embed still pinned) and 1.35 GiB (embed already collected).
+
+Net effect: **≈ +1.33 GiB allocated per client-fit sustained** (occasionally +1.84 with the
+embed), confirmed three independent ways: the production margin series above; probe-1's
+allocator snapshot (3.17 GiB active in **49** ~57 MB blocks = *two* retired generations, every
+block's allocation stack ending `_flat_param.py:867 flatten_tensors ← FlatParamHandle.__init__
+← FSDP.__init__ ← transformer_impl.py _build_fsdp_module` — the **original** build-time
+storages, not copies); and probe-2's same-phase residue growth 1.35 → 4.52 GiB across reloads.
+The crash lands wherever the free margin runs out: at gmu 0.45 on 24 GB that is round 4;
+raising headroom only moves the wall (the 07-22 provenance's r14 → r27 lesson).
+
+**The instrument trap that misdirected round 1 of the investigation:** verl 0.8's logged
+`max_memory_allocated/reserved` are **process-lifetime high-water marks** — nothing in the
+hot path ever calls `reset_peak_memory_stats`, so they ratchet once at the first peak and go
+flat, exactly what a leak does NOT look like (and a flat high-water was initially misread as
+"no growth", then a rising one as "growth" — both invalid). The valid instruments are
+*current* values at a fixed phase point: verl's `log_gpu_memory_usage` lines,
+`torch.cuda.memory_allocated()` at the post-release point (now dumped by
+`FEDAGENT_MEM_DEBUG`), and the vLLM wake margin itself.
+
+### How it was found
+
+The chain, with the wrong turns kept (they are the reusable part):
+
+1. Round-4 crash. A first analysis misread high-water marks as live growth and proposed
+   dropping `cross_round` — rejected (rightly: +9 h/run and no mechanism), investigation
+   ordered instead.
+2. A static sweep of the July fix history sharpened the question: the 07-29 fix's crash
+   fingerprint (`Executor is not sleeping`) appears **zero** times in our logs — that fix
+   verifiably works — so this had to be a third, distinct leak.
+3. Corrected arithmetic on *current-value* telemetry produced the margin series above; its
+   −1.33 GiB/fit slope and exact fit-7 zero-cross turned "OOM" into a quantitative claim
+   (one fp32 non-embed model copy per fit).
+4. A minimal repro probe (`cross_round`, 2 rounds, 1 step/fit, 16-goal val) + allocator
+   history (`_record_memory_history`) named the residue's **birthplace**: the FSDP build's own
+   flat-param storages (probe-1 snapshot, stacks above).
+5. A second probe with gc referrer-chain dumps named the **holders** (mechanism §2/§3) — and
+   exposed a near-miss: the first "smoking-gun" dump (full module tree + `param_groups` alive
+   at 1.86 GiB) was actually the *freshly rebuilt* actor seen from the ref-engine's reset —
+   the leak had to be read at same-phase points only. The corrected same-phase series
+   (1.35 → 4.52 GiB) plus the two-generation snapshot made the accumulation undeniable.
+6. Git archaeology for "when introduced": the reload chain was touched by exactly three
+   commits since the lever's birth (`7fd91e9` 07-22, `3c1a128` 07-26, `de9ef57` 07-29), all
+   audited clean — **no regression exists**. The defect is latent-since-birth
+   (`3b8aa2d`, 2026-06-28, the persistent/cross-round lever itself) and *environment-gated*:
+   it needs ws=1 (NO_SHARD) and a card small enough that ~1.33 GiB/fit outruns the margin.
+   2026-08-17 was the first time both held.
+
+The repro is cheap to re-arm if this ever needs re-litigating: any cross_round config cut down
+to 2 rounds × 1 step/fit × a 16-goal val spec reproduces the residue in ~20 minutes under
+`FEDAGENT_MEM_DEBUG=1` (probe-2's chains and probe-3's acceptance both came from exactly that).
+
+### Why earlier runs were fine (and this one wasn't)
+
+Three legs, all necessary:
+
+1. **Sharding geometry.** All prior cross_round production ran 4×H100 = FULL_SHARD. The
+   pinned-storage mechanism is NO_SHARD-shaped (`_local_shard` aliases the flat param itself;
+   nothing ever reshards), and per-generation residue at ws=4 would be ¼-size anyway
+   (0.46 GiB/fit). The H100 runs' own margin/crash arithmetic (the 07-29 entry's static audit)
+   closes *without* a leak term and cannot absorb a 0.46 GiB/fit one — those runs measurably
+   did not carry this leak.
+2. **Headroom ratio.** 79 GiB/GPU vs 22.7 usable on the 4090; at H100 headroom even a
+   hypothetical same-size leak would have needed >40 rounds to surface, and
+3. **Short windows.** The H100 cross_round production windows never got that long — they were
+   ended earlier by the two *previous* leaks (07-22 rebind: r14/r27; 07-29 awake-sync: r11/r8),
+   and the post-07-29 harvest runs completed inside their budget. No logged memory series
+   exists for the completed pre-fix GRPO runs, which is why the 07-22 entry's "~half slope"
+   GRPO figure was an extrapolation — corrected today in that entry.
+
+So: **not a regression, a latent environment-gated defect** — the first ws=1 production run
+was the first execution of the exposing configuration, and it failed on schedule, at the round
+the arithmetic predicts.
+
+### Relationship to the 07-22 / 07-29 fixes (why they were incomplete)
+
+Each fix killed exactly the layer it named, and the measurement proves it: the residue
+contains **no optimizer state** (quantum = params only ⇒ 07-22's release of module/Adam at the
+attr level works) and **no awake-pool spike** (zero sleep warnings ⇒ 07-29's re-sleep works).
+What survived is one layer deeper than either: references *inside* FSDP's own machinery and
+the transfer IPC layer, below the engine-attr level the 07-22 audit covered ("the rollout side
+never pins the old module" was true at the attr level it checked, and false one level down —
+amended in place). Three leaks, one lesson: on this reload pattern, every teardown claim must
+be validated against *current* allocated memory at a fixed phase, not against object-level
+reasoning.
+
+### The fix
+
+Stop trusting refcount death; free the storages directly. `_reset_engine` now calls
+`_hard_release_fsdp_storages(eng.module)` **before** the attr-nulling: walk every FSDP
+wrapper of the retired module and `untyped_storage().resize_(0)` the flat param, its
+`_mp_shard`/`_local_shard`/`_full_param_padded`/`_saved_grad_shard`, its grad, and every raw
+leaf param/buffer (storage-level dedup keeps tied/viewed tensors single-counted). This is
+PyTorch's own retirement idiom — FSDP frees `_mp_shard` with the same
+`_free_storage`/`resize_(0)` mechanism every reshard — applied to the whole retired tree.
+
+Safety argument: after a reload the retired module is **never touched again** — `initialize()`
+builds a brand-new tree, weight aggregation reads on-disk exports, and the next vLLM sync
+state-dicts the new module — so any zombie holder only ever sees a 0-byte storage it will
+never read. On ws≥2 the walk frees the same storages refcount death frees anyway (it just does
+it earlier and deterministically). The release is unconditional-by-default with a kill switch
+for A/B repro (`FEDAGENT_DISABLE_HARD_RELEASE=1`), and logs one line per retirement
+(`[persistent-patch] reload hard-release: freed N GiB …`) so the fix's action is visible in
+every run log.
+
+### Verification
+
+Measured on probe-3 (the same minimal repro that measured the leak, fix armed):
+
+- Every actor retirement logs `hard-release: freed 1.84 GiB` — the full fp32 tree, exactly
+  the arithmetic quantum — and the post-release dump reads **0.02 GiB, flat at every reload**
+  (the unfixed same-phase series was 1.35 → 4.52 GiB and growing).
+- The dump still lists dozens of python-reachable ≥32 MB tensor *objects* after each reset —
+  now all 0-byte phantoms (`storage 0.000`). That is the designed signature: the holders this
+  entry documents persist; the memory no longer does. (A phantom-tensor listing at ~0 GiB
+  current is healthy; a listing with real storage sizes is the leak returning.)
+- Ref-engine retirements log `freed 0.00 GiB` (CPU-offloaded params — nothing CUDA to free),
+  and their dumps read ~1.86 GiB = the just-rebuilt actor's live fp32 tree, which is the
+  correct steady-state, not residue (same-phase comparison is mandatory; see found-§5).
+- The permanent guard is the instrument, not a threshold: `FEDAGENT_MEM_DEBUG=1` dumps
+  post-release *current* allocated at every reset — any future reappearance is a one-line
+  diff in the run log, not a round-4 surprise.
+
+**Scope audit — not exposed:** the default subprocess path and `persistent`-per-round (process
+exit bounds any accumulation); ws≥2 cross_round (leg 1 above — arithmetic and the H100 runs'
+own telemetry); completed runs' *numbers* everywhere (the leak crashes, it does not corrupt —
+the crashed run's rounds 1–3 were resumed and their eval series verified uncontaminated).
+ALFWorld cross_round on ws=1 was equally exposed (its no-fused quantum is the full 1.84 GiB);
+the fix is engine-level and covers it. AccelAgent has no reload path (its `initialize()` runs
+once per process).
+
+---
+
 ## 2026-07-29: cross_round weight-sync OOM — `fit()` exits with vLLM AWAKE, so the client-end eval's `update_weights` gathers FSDP `full_tensor()` against the full `gpu_memory_utilization` pool
 
 - **Files:** `fedagent/fed/persistent_task_runner.py` (post-`fit()` re-sleep + corrected
@@ -138,6 +318,16 @@ it only gates `collect_lora_params` — and it silently downgrades sleep to leve
 Post-fix signatures: zero `Executor is not sleeping` lines; two `It took … to fall asleep`
 lines per client; per-round training-side `memory_reserved` FLAT — the latter closes the
 2026-07-22 entry's pending live validation.
+
+> **2026-08-18 addendum:** the first fully-instrumented execution of this acceptance ran on the
+> first ws=1 production target (24 GB 4090, 0.5B). Split verdict: the sleep signature **PASSES**
+> (zero `Executor is not sleeping` lines across every log — this fix verifiably works), but the
+> flat-memory expectation **FAILED** (+1.33 GiB/fit at the *current-allocated* level) — a third,
+> deeper leak specific to world_size=1/NO_SHARD, fixed in the
+> [2026-08-18 entry](#2026-08-18-cross_round-reload-leaks-one-fp32-model-copy-per-client-fit-on-world_size1--retired-no_shard-flat-param-storages-outlive-_reset_engines-release-and-the-vllm-wake-margin-absorbs-the-debt-until-round-4)
+> above. Note its instrument caveat: `memory_reserved`/`max_memory_*` as logged by verl are
+> lifetime high-water marks and canNOT carry this acceptance; use current values at a fixed
+> phase point (`FEDAGENT_MEM_DEBUG=1` dumps them at every reset).
 
 ---
 
@@ -900,7 +1090,7 @@ goals that never once reached 1.0 — and whose best-ever score was a *fixed fra
 rather than a fluctuating one. Genuine difficulty produces variance; a constant `k/n` that is
 always short by exactly one component is the signature of a component that cannot be satisfied.
 Reading one such trajectory turn by turn closed it: val goal #4 wants `color: r.brown2060`,
-`size: 6.5`, price < $70; the policy clicked `r.brown2060`, clicked `6.5`, bought at $33.99 — a
+`size: 6.5`, price < \$70; the policy clicked `r.brown2060`, clicked `6.5`, bought at \$33.99 — a
 perfect play with no room for improvement — and scored 0.857.
 
 **Localisation** was then a two-line diff of the arguments: one side plain values, the other side
@@ -2179,7 +2369,13 @@ Rounds-to-OOM ≈ training-side headroom ÷ per-round leak. The two arms differ 
 
 PPO starts with far less headroom *and* burns it twice as fast → wall at ~rd27. GRPO's
 rounds-to-OOM simply exceeded the configured 70 rounds — those runs **finished while leaking**
-(their logs should show the same monotonic climb at ~half slope). A 210-round GRPO config
+(their logs should show the same monotonic climb at ~half slope). *[2026-08-18 correction: the
+"~0.3 GB/round, ~half slope" GRPO figure was an extrapolation from the PPO ratio, never a
+measurement — no memory series was logged for those runs, and verl's `max_memory_*` lines are
+lifetime high-water marks that could not have shown it anyway. The leak that survived this fix
+(see the 2026-08-18 entry) is param-only — Adam state does release — and is gated on ws=1, so
+the completed ws=4 GRPO runs' health is explained by geometry, not by luck with the slope.]*
+A 210-round GRPO config
 (`ep_per_round_change/`, `rd-210`) or a larger model would have hit the same wall. Mode matrix:
 the default subprocess-per-client path and `persistent`-per-round (process exits each round)
 never accumulate across rounds; **only `cross_round: true` exposes the leak**.
@@ -2219,7 +2415,10 @@ import hook under `FEDAGENT_PERSISTENT=1` for every persistent/cross-round launc
 - No dangling references that would defeat the release: `TrainingWorker`/`ActorRolloutRefWorker`
   hold only the engine (they call methods, never cache `module`); the FSDP→vLLM weight bridge
   fetches `get_per_tensor_param()` fresh at each sync (engine_workers.py:711), so the rollout
-  side never pins the old module; `flops_counter` holds only `hf_config`.
+  side never pins the old module; `flops_counter` holds only `hf_config`. *[2026-08-18
+  amendment: true at the engine-attr level this audit covered, and false one level down — on
+  ws=1/NO_SHARD, FSDP-internal containers and the transfer layer's CUDA-IPC handles pin the
+  retired flat-param storages past this release. Measured and fixed in the 2026-08-18 entry.]*
 - **Live validation pending:** the definitive check is a cross-round run whose per-round
   training-side memory is FLAT (vs the 0.6 GB/round ramp). A hot-patched variant (gc +
   empty_cache, but **without** the `checkpoint_manager` drop) is under monitor on the original
@@ -2229,7 +2428,11 @@ import hook under `FEDAGENT_PERSISTENT=1` for every persistent/cross-round launc
   (GRPO r11 / PPO r8) showed the curve was NOT yet flat — this fix's own `empty_cache()` ran
   while the FedProx anchor was still live (left out of the release-before-rebuild set), and
   the crash trigger was a separate awake-engine sync ceiling; both closed in the 2026-07-29
-  entry above, which inherits this pending flat-memory validation.
+  entry above, which inherits this pending flat-memory validation. **2026-08-18 closure:** the
+  inherited acceptance finally executed on the first ws=1 production run — and FAILED there
+  (param-only residue, +1.33 GiB/fit), exposing a third leak this fix's object-level release
+  cannot reach. Flat memory is now verified *post-hard-release* on the repro probe (residue
+  0.02 GiB at every reset); the full story is the 2026-08-18 entry.
 
 **Scope audit — not exposed:** AccelAgent (`accelagent/train.py` → stock `run_ppo` →
 `fit()` once; `initialize()` runs once per process, no reload path — the verl rebind is inert

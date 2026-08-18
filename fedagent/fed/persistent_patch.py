@@ -34,12 +34,168 @@ def _apply_persistent_patch() -> bool:
     from verl.single_controller.base.decorator import Dispatch, register
     from verl.workers.engine_workers import ActorRolloutRefWorker, TrainingWorker
 
+    # FEDAGENT_MEM_DEBUG=1: arm allocator-history recording in every worker process, so the
+    # _mem_debug_dump snapshots carry allocation STACKS for C++-held memory (autograd graph,
+    # dynamo caches, FSDP internals) -- the part a python gc-walk cannot attribute.
+    import os as _os
+    if _os.environ.get("FEDAGENT_MEM_DEBUG"):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.memory._record_memory_history(max_entries=200000)
+                print("[mem-debug] allocator history recording ON (this process)", flush=True)
+        except Exception as _e:  # instrumentation must never kill a run
+            print(f"[mem-debug] record_memory_history failed (non-fatal): {_e}", flush=True)
+
+    def _mem_debug_dump(tag):
+        """FEDAGENT_MEM_DEBUG=1: post-release forensic dump, called at the cleanest point of the
+        reload cycle (old engine nulled + gc'd + empty_cache'd, new one not yet built). Whatever
+        CUDA memory is still allocated HERE is the cross-fit residue. Emits (a) a gc-walk of all
+        live CUDA tensors >=32MB with their referrer types (names PYTHON-reachable holders) and
+        (b) a full allocator snapshot with stacks (names C++-held memory: autograd graph, dynamo
+        caches, FSDP internals). Never raises: instrumentation must not kill a run."""
+        import os
+
+        try:
+            import gc
+            import time
+
+            import torch
+
+            alloc = torch.cuda.memory_allocated() / 2**30
+            print(f"[mem-debug] {tag}: post-release current allocated = {alloc:.2f} GiB", flush=True)
+
+            import types
+
+            def _describe(r, child):
+                """One line for a referrer: its type, plus the attribute/key it holds the child
+                under (that's the holder's NAME, which is what this hunt is for)."""
+                t = type(r).__name__
+                try:
+                    if isinstance(r, dict):
+                        keys = [k for k, v in list(r.items())[:2000] if v is child]
+                        owner = ""
+                        for o2 in gc.get_referrers(r)[:8]:
+                            if getattr(o2, "__dict__", None) is r:
+                                owner = f" (__dict__ of {type(o2).__name__})"
+                                break
+                        return f"dict{owner} key={keys[:3]}"
+                    if isinstance(r, (list, tuple, set)):
+                        return f"{t}[len={len(r)}]"
+                except Exception:
+                    pass
+                return t
+
+            n, chains = 0, 0
+            for o in gc.get_objects():
+                try:
+                    if not (isinstance(o, torch.Tensor) and o.is_cuda):
+                        continue
+                    if o.numel() * o.element_size() < 32 * 2**20:
+                        continue
+                    n += 1
+                    try:  # metadata size vs ACTUAL storage: 0-byte = pinned-but-released phantom
+                        sto = o.untyped_storage().size() / 2**30
+                    except Exception:
+                        sto = float("nan")
+                    print(f"[mem-debug]   live {type(o).__name__} {tuple(o.shape)} {o.dtype} "
+                          f"{o.numel() * o.element_size() / 2**30:.3f} GiB (storage {sto:.3f})",
+                          flush=True)
+                    if chains < 6:   # full 2-hop referrer chain for the first few only
+                        chains += 1
+                        for r1 in [r for r in gc.get_referrers(o)
+                                   if not isinstance(r, types.FrameType)][:5]:
+                            print(f"[mem-debug]     <- {_describe(r1, o)}", flush=True)
+                            for r2 in [r for r in gc.get_referrers(r1)
+                                       if not isinstance(r, types.FrameType) and r is not o][:5]:
+                                print(f"[mem-debug]        <- {_describe(r2, r1)}", flush=True)
+                except Exception:
+                    continue
+            print(f"[mem-debug] {tag}: {n} python-reachable CUDA tensors >=32MB", flush=True)
+            d = os.environ.get("FEDAGENT_MEM_DEBUG_DIR", "/tmp")
+            os.makedirs(d, exist_ok=True)
+            p = os.path.join(d, f"snap_{tag}_{os.getpid()}_{int(time.time())}.pickle")
+            torch.cuda.memory._dump_snapshot(p)
+            print(f"[mem-debug] snapshot -> {p}", flush=True)
+        except Exception as e:
+            print(f"[mem-debug] dump failed (non-fatal): {e}", flush=True)
+
+    def _hard_release_fsdp_storages(module):
+        """Free the CUDA storages of a RETIRED engine's parameters/grads/FSDP shard copies
+        directly, instead of trusting refcounts+gc to do it.
+
+        Why: on world_size=1 PyTorch degrades FULL_SHARD to NO_SHARD, and there the fp32
+        flat params of a released engine outlive _reset_engine's gc.collect() -- FSDP-internal
+        containers (handle/wrapper param lists, flat_param._local_shard/_mp_shard views) plus,
+        for tensors that were CUDA-IPC'd to vLLM (>bucket-size direct send), the exporter-side
+        IPC handle, all keep references whose owners die later than the reload. Net effect
+        measured on the shared 24GB 4090: ~+1.33 GiB (one fp32 non-embed model copy) surviving
+        per reload, compounding into the round-4 vLLM wake_up OOM (docs/bugfixes.md 2026-08-18).
+        The retired module is never touched again -- initialize() builds a brand-new tree -- so
+        freeing storages out from under any zombie holder is safe, and is exactly how FSDP
+        itself retires _mp_shard (torch.distributed.utils._free_storage). Returns bytes freed.
+        Kill switch for A/B repro: FEDAGENT_DISABLE_HARD_RELEASE=1."""
+        import torch
+
+        freed = 0
+        seen = set()
+
+        def _free(t):
+            nonlocal freed
+            if not isinstance(t, torch.Tensor) or not t.is_cuda:
+                return
+            try:
+                st = t.untyped_storage()
+            except Exception:
+                return
+            n = st.size()
+            if n == 0 or st.data_ptr() in seen:
+                return
+            seen.add(st.data_ptr())
+            try:
+                st.resize_(0)
+                freed += n
+            except Exception:
+                pass
+
+        for sub in module.modules():
+            # FSDP1 wrappers: the flat param + its mixed-precision/shard copies + grad.
+            for h in [getattr(sub, "_handle", None)] + list(getattr(sub, "_handles", None) or []):
+                fp = getattr(h, "flat_param", None) if h is not None else None
+                if fp is None:
+                    continue
+                _free(fp.grad)
+                for attr in ("_mp_shard", "_local_shard", "_full_param_padded",
+                             "_saved_grad_shard"):
+                    _free(getattr(fp, attr, None))
+                _free(fp)
+            # Raw leaves (registered _flat_param aliases, unwrapped params, buffers).
+            # Storage-level dedup makes revisits and shared/tied views free.
+            for p in sub.parameters(recurse=False):
+                _free(p.grad)
+                _free(p)
+            for b in sub.buffers(recurse=False):
+                _free(b)
+        return freed
+
     def _reset_engine(eng, model_local_path):
         import gc
+        import os as _os
 
         import torch
 
         eng.model_config.local_path = model_local_path
+        # Deterministic release of the RETIRED engine's CUDA storages (2026-08-18): dropping
+        # the attrs below is NOT enough on ws=1/NO_SHARD -- see _hard_release_fsdp_storages.
+        mod = getattr(eng, "module", None)
+        if mod is not None and not _os.environ.get("FEDAGENT_DISABLE_HARD_RELEASE"):
+            try:
+                freed = _hard_release_fsdp_storages(mod)
+                if freed:
+                    print(f"[persistent-patch] reload hard-release: freed {freed / 2**30:.2f} GiB "
+                          f"of retired {eng.__class__.__name__} param storage", flush=True)
+            except Exception as _e:
+                print(f"[persistent-patch] hard-release failed (non-fatal): {_e!r}", flush=True)
         # Cross-round leak fix: initialize() (_build_model_optimizer, transformer_impl.py:427-429)
         # REBINDS self.module/optimizer/lr_scheduler without freeing the old ones -- and the CUDA
         # caching allocator keeps the dropped blocks RESERVED (never returned) absent empty_cache().
@@ -61,6 +217,8 @@ def _apply_persistent_patch() -> bool:
                 setattr(eng, _attr, None)
         gc.collect()
         torch.cuda.empty_cache()
+        if _os.environ.get("FEDAGENT_MEM_DEBUG"):
+            _mem_debug_dump(f"reset_{eng.__class__.__name__}")
         eng.initialize()  # _build_model_optimizer: new module(new weights)+optimizer+scheduler
 
     def _load_model_shards(eng, shard_dir):

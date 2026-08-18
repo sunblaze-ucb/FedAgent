@@ -29,6 +29,10 @@ Per-count best practice:
 
 - **1 GPU**: debugging, partition/wiring checks (`--rounds 2`), and ALFWorld-on-a-budget.
   Expect paper-scale WebShop to be painfully slow; that is the bottleneck class, not a bug.
+  If you combine 1 GPU with `cross_round: true` (e.g. a 0.5B budget run on a 24 GB card),
+  you need the 2026-08-18 reload hard-release fix ([bugfixes.md](./bugfixes.md)): ws=1
+  degrades FSDP to NO_SHARD, and on older checkouts each client reload strands ~one fp32
+  model copy (~1.33 GiB at 0.5B) → OOM at a headroom-dependent round.
 - **2 GPUs**: smokes. On a 4-GPU node this also leaves 2 GPUs free for a second *small* run;
   give it its own `--output-dir` + `--port-base` ([running.md](./running.md#concurrent-runs-on-one-node)).
 - **4 GPUs**: all paper runs, GRPO and PPO. Memory at the shipped settings: 1.5B fits
