@@ -16,7 +16,7 @@
 
 env_kind: webshop
 env_spec: config/envs/webshop.yaml          # resolved against the package dir
-output_dir: /tmp/xbb9020_fedagent_fed_webshop
+output_dir: outputs/fedagent_fed_webshop
 
 total_clients: 2
 clients_per_round: 2

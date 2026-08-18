@@ -9,7 +9,7 @@
 env_kind: webshop
 env_spec: config/envs/webshop_15_ppo.yaml
 val_env_spec: config/envs/webshop_15_val.yaml
-output_dir: /tmp/xbb9020_fedpaper_accel/uniform/Qwen2.5-1.5B-Instruct/centralized/ppo/fed_webshop_ppo_total-1_cl-per-rd-1_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform
+output_dir: outputs/fedpaper_accel/uniform/Qwen2.5-1.5B-Instruct/centralized/ppo/fed_webshop_ppo_total-1_cl-per-rd-1_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform
 model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 adv_estimator: gae                                  # PPO: federate actor + critic

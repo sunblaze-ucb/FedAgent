@@ -6,7 +6,7 @@
 
 env_kind: alfworld
 env_spec: config/envs/alfworld.yaml
-output_dir: /tmp/xbb9020_fedagent_alfworld_smoke
+output_dir: outputs/fedagent_alfworld_smoke
 model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 total_clients: 2

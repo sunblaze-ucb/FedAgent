@@ -9,9 +9,9 @@
 #   collect_fed_logs.sh STAGE LABEL:JOBID:OUTDIR [LABEL:JOBID:OUTDIR ...]
 # Example (the 3-way asymmetry):
 #   collect_fed_logs.sh /gpfs/.../fedagent/_stage/c4 \
-#       envhet:3927334:/tmp/xbb9020_fedagent_envhet_c4 \
-#       task:4200903:/tmp/xbb9020_fedagent_task_c4 \
-#       homog:4542895:/tmp/xbb9020_fedagent_homog_c4
+#       envhet:<jobid>:outputs/fedagent_envhet_c4 \
+#       task:<jobid>:outputs/fedagent_task_c4 \
+#       homog:<jobid>:outputs/fedagent_homog_c4
 # then it runs: summarize_fed_run.py envhet=STAGE/envhet task=STAGE/task homog=STAGE/homog \
 #                                    --decomp=envhet,task,homog
 set -euo pipefail

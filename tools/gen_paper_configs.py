@@ -272,7 +272,7 @@ def build_config(header, *, env_kind, algo, model, total, m, t, e, seed, min_goa
         f"env_kind: {env_kind}",
         f"env_spec: {env_spec}",
         f"val_env_spec: {val_spec}",
-        f"output_dir: /tmp/xbb9020_fedpaper{'_accel' if ACCEL else ''}/{out_tag}",
+        f"output_dir: outputs/fedpaper{'_accel' if ACCEL else ''}/{out_tag}",
         f"model_path: {model}                  # HF id; offline clusters: --model-path <local snapshot>",
     ]
     if is_ppo:

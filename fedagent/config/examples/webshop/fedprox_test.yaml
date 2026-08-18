@@ -6,7 +6,7 @@
 
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
-output_dir: /tmp/xbb9020_fedagent_fedprox_test
+output_dir: outputs/fedagent_fedprox_test
 model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 
 total_clients: 1

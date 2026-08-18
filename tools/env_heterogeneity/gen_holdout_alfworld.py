@@ -29,7 +29,7 @@ from collections import defaultdict, Counter
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_PATH = REPO_ROOT / "data" / "env_heterogeneity" / "holdout_alfworld_v1.json"
-DEFAULT_ALFWORLD_DATA = "/gpfs/projects/b1222/userdata/canyu/.cache/alfworld"
+DEFAULT_ALFWORLD_DATA = os.path.expanduser("~/.cache/alfworld")
 TASK_TYPES_USED = {
     "pick_and_place_simple",
     "look_at_obj_in_light",

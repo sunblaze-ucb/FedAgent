@@ -8,7 +8,7 @@
 
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
-output_dir: /tmp/xbb9020_fedagent_webshop_probe
+output_dir: outputs/fedagent_webshop_probe
 # capable model (vs the 0.5B smoke default) so the agent can actually shop in 15 turns
 model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
 

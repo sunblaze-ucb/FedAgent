@@ -40,7 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-DEFAULT_ALFWORLD_DATA = "/gpfs/projects/b1222/userdata/canyu/.cache/alfworld"
+DEFAULT_ALFWORLD_DATA = os.path.expanduser("~/.cache/alfworld")
 
 # -----------------------------------------------------------------------------
 # WebShop

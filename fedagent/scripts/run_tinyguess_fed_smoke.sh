@@ -27,6 +27,6 @@ echo "host=$(hostname) ndev=$(python -c 'import torch;print(torch.cuda.device_co
 python -m fedagent.fed.run_fed --config "$CONFIG"
 
 echo "===== federated tree ====="
-OUT=$(python -c "from omegaconf import OmegaConf;import sys;print(OmegaConf.load('$CONFIG').get('output_dir','/tmp/xbb9020_fedagent_fed_tinyguess'))")
+OUT=$(python -c "from omegaconf import OmegaConf;import sys;print(OmegaConf.load('$CONFIG').get('output_dir','outputs/fedagent_fed_tinyguess'))")
 find "$OUT" -maxdepth 5 \( -name "federated_summary.json" -o -name "config.json" -o -name "*.safetensors" -o -name "model_world_size_*_rank_*.pt" -o -name "latest_checkpointed_iteration.txt" \) 2>/dev/null | sort
 echo "===== DONE ====="

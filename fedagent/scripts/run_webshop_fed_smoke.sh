@@ -28,6 +28,6 @@ echo "host=$(hostname) ndev=$(python -c 'import torch;print(torch.cuda.device_co
 python -m fedagent.fed.run_fed --config "$CONFIG" "${@:2}"   # extra args (e.g. --base-seed 43 --output-dir ... --port-base 8086) forwarded
 
 echo "===== federated tree ====="
-OUT=$(python -c "from omegaconf import OmegaConf;print(OmegaConf.load('$CONFIG').get('output_dir','/tmp/xbb9020_fedagent_fed_webshop'))")
+OUT=$(python -c "from omegaconf import OmegaConf;print(OmegaConf.load('$CONFIG').get('output_dir','outputs/fedagent_fed_webshop'))")
 find "$OUT" -maxdepth 5 \( -name "federated_summary.json" -o -name "config.json" -o -name "*.safetensors" -o -name "model_world_size_*_rank_*.pt" \) 2>/dev/null | sort
 echo "===== DONE ====="

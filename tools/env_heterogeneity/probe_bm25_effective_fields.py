@@ -22,7 +22,7 @@ training clients actually experienced; use them for the paper's Variant-2/3
 divergence statistics.
 
 Run (needs rank_bm25; the webshop service env has it):
-    /home/xbb9020/.conda/envs/verl-agent-webshop/bin/python \
+    conda run -n verl-agent-webshop python \
         tools/env_heterogeneity/probe_bm25_effective_fields.py
 """
 import json

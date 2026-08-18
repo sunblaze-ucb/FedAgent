@@ -29,7 +29,7 @@ done
 [ -z "$MODEL" ] && { echo "No local Qwen2.5-0.5B-Instruct snapshot found"; exit 1; }
 MODEL="${MODEL%/}"   # verl copy_to_local rejects a trailing slash
 
-CKPT=/tmp/xbb9020_fedagent_phase1_ckpts
+CKPT="$REPO_ROOT/outputs/fedagent_phase1_ckpts"
 rm -rf "$CKPT"
 
 echo "REPO_ROOT=$REPO_ROOT"

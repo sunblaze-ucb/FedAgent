@@ -10,7 +10,7 @@
 # that aggregated model. Kept tiny (1 PPO step/client/round) for fast iteration.
 
 model_path: ""                 # "" => auto-discover local Qwen2.5-0.5B-Instruct
-output_dir: /tmp/xbb9020_fedagent_fed_tinyguess
+output_dir: outputs/fedagent_fed_tinyguess
 
 total_clients: 2
 clients_per_round: 2           # smoke: both clients every round

@@ -265,7 +265,7 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `model_path` | str | `""` | Base HF model dir for round 1; `""` => auto-discover a local Qwen2.5-0.5B-Instruct snapshot. |
-| `output_dir` | path | `/tmp/xbb9020_fedagent_fed_tinyguess` | Run root: per-round client/aggregated checkpoints, logs, `federated_summary.json`. |
+| `output_dir` | path | `outputs/fedagent_fed_tinyguess` | Run root: per-round client/aggregated checkpoints, logs, `federated_summary.json`. |
 | `env_spec` | path | `config/envs/tiny_guess.yaml` | Env spec -> `data.{train,val}_files` for every client. |
 | `custom_cls_path` | path | `data/agentic_dataset.py` | Path to `AgenticDataset` (-> `data.custom_cls.path`). |
 | `agent_config_path` | path | `config/agent.yaml` | Agent-loop registry (-> `rollout.agent.agent_loop_config_path`). |
@@ -476,7 +476,7 @@ A real `uniform/main/grpo` WebShop config
 env_kind: webshop
 env_spec: config/envs/webshop_15.yaml
 val_env_spec: config/envs/webshop_15_val.yaml
-output_dir: /tmp/xbb9020_fedpaper/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform
+output_dir: outputs/fedpaper/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform
 model_path: Qwen/Qwen2.5-1.5B-Instruct
 
 total_clients: 100

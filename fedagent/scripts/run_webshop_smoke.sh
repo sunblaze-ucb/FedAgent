@@ -19,7 +19,7 @@ for __c in "$CONDA_PREFIX_1" "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda /so
 conda activate fedagent-verl08                      # trainer env (parent shell: health check + training)
 
 # --- 1. start the WebShop service in its own env (background) ---
-SVC_LOG=/tmp/xbb9020_webshop_service.log
+SVC_LOG=/tmp/fedagent_webshop_service.log
 rm -f "$SVC_LOG"
 WEBSHOP_PORT="$PORT" WEBSHOP_POOL_SIZE="$WEBSHOP_POOL_SIZE" \
   bash "$PKG_DIR/envs/webshop/service/run_service.sh" > "$SVC_LOG" 2>&1 &
@@ -55,7 +55,7 @@ done
 [ -z "$MODEL" ] && { echo "No local Qwen2.5-0.5B-Instruct snapshot"; exit 1; }
 MODEL="${MODEL%/}"
 
-CKPT=/tmp/xbb9020_fedagent_webshop_ckpts
+CKPT="$REPO_ROOT/outputs/fedagent_webshop_ckpts"
 rm -rf "$CKPT"
 echo "[smoke] MODEL=$MODEL  WEBSHOP_SERVICE_URL=$WEBSHOP_SERVICE_URL"
 

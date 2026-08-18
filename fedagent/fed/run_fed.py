@@ -80,7 +80,7 @@ DEFAULTS = {
     "env_spec": str(PKG_DIR / "config" / "envs" / "tiny_guess.yaml"),
     "custom_cls_path": str(PKG_DIR / "data" / "agentic_dataset.py"),
     "agent_config_path": str(PKG_DIR / "config" / "agent.yaml"),
-    "output_dir": "/tmp/xbb9020_fedagent_fed_tinyguess",
+    "output_dir": "outputs/fedagent_fed_tinyguess",
     "total_clients": 2,
     "clients_per_round": 2,
     "total_rounds": 2,
