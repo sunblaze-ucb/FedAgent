@@ -118,6 +118,10 @@ DEFAULTS = {
     "webshop_run_service": str(PKG_DIR / "envs" / "webshop" / "service" / "run_service.sh"),
     "webshop_base_port": 8080,              # client c's service -> webshop_base_port + c*replicas + j (K=1 -> +c)
     "webshop_pool_size": 8,                 # env pool per service (must be >= gen_batch)
+    "service_port_autoshift": True,         # preflight the env-service port block and relocate it when it
+                                            #   overlaps the kernel ephemeral range (a mid-run squatter can
+                                            #   appear there at any time -- 2026-08-19 bugfix) or is already
+                                            #   occupied. false = keep the literal ports and only warn.
     "port_band_base": 26000,                # deterministic per-process port bands for the RANDOM-port
                                             #   pickers inside each verl trainer/eval (vLLM get_open_port +
                                             #   verl WorkerHelper._get_free_port): process slot s gets
@@ -807,6 +811,108 @@ def _wait_services_healthy(cfg, services: List[dict], tag: str) -> None:
 
 
 # ----------------------------------------------------------------- webshop services
+def _ephemeral_port_range():
+    """The kernel's auto-assign (ephemeral) port range; Linux default 32768-60999."""
+    try:
+        lo, hi = open("/proc/sys/net/ipv4/ip_local_port_range").read().split()[:2]
+        return int(lo), int(hi)
+    except Exception:
+        return 32768, 60999
+
+
+# Regions the kernel never hands out for a bind(port 0) draw, so a service band placed here can
+# only ever be squatted by a DELIBERATE listener (which the preflight below detects and avoids).
+# ORDER = relocation preference: [61000, 65536) first because gen_paper_configs deliberately
+# assigns NO tree there -- it is the reserved shift pool, so a relocated run lands on empty space
+# instead of on the static band of a config that merely has not started yet.
+_SAFE_PORT_REGIONS = ((61000, 65536), (10000, 32768))
+
+
+def _first_busy_port(base: int, span: int):
+    """The first port in [base, base+span) that already has a live listener, or None if the whole
+    block is bindable. SO_REUSEADDR so a stale TIME_WAIT socket does not read as occupied (a real
+    LISTEN still refuses the bind, which is exactly the condition we are testing for)."""
+    import socket
+
+    for p in range(base, base + span):
+        try:
+            with socket.socket() as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("", p))
+        except OSError:
+            return p
+    return None
+
+
+def _ensure_safe_service_band(cfg, log):
+    """Preflight the env-service port block and relocate it if it is unusable.
+
+    Two independent hazards, both observed in the field (docs/bugfixes.md 2026-08-19):
+
+    1. **Ephemeral-range bands.** A band inside the kernel's auto-assign range is not "usually
+       fine" -- the kernel gives those numbers to any process that binds port 0, at any moment.
+       The shipped ALFWorld bands (40000+/52224+) sat entirely inside it, and a run died at
+       round 13 when Ray's own DashboardAgent drew a port in the middle of the band. A startup
+       check alone cannot fix this: the band WAS free at round 1. Only moving out of the range
+       does.
+    2. **A live squatter.** Another run (or a stale service of a crashed one) already holding a
+       port in the block. Previously this surfaced as a partial fleet -> teardown -> a multi-
+       minute hang; now it relocates before anything starts.
+
+    Relocation keeps the layout's one invariant -- the val service sits just above the client
+    band -- so ``<env>_val_port`` moves with the base whenever it followed that convention.
+    Set ``service_port_autoshift: false`` to keep the literal configured ports (a band inside the
+    ephemeral range then only warns)."""
+    kind = str(cfg.get("env_kind", ""))
+    if kind not in ("webshop", "alfworld"):
+        return
+    reps = int(cfg.get(f"{kind}_replicas", 1) or 1)
+    client_span = int(cfg.total_clients) * reps          # base + c*reps + j
+    span = client_span + reps                            # + the val service's own replica band
+    base = int(cfg.get(f"{kind}_base_port"))
+    val = int(cfg.get(f"{kind}_val_port"))
+    tied = (val == base + client_span)                   # generated-config convention
+
+    elo, ehi = _ephemeral_port_range()
+    in_ephemeral = base < ehi and elo < base + span
+    busy = _first_busy_port(base, span)
+    if not in_ephemeral and busy is None:
+        return
+
+    why = []
+    if in_ephemeral:
+        why.append(f"band [{base}, {base + span}) overlaps the kernel ephemeral range "
+                   f"[{elo}, {ehi}] -- any process binding port 0 can squat it MID-RUN")
+    if busy is not None:
+        why.append(f"port {busy} already has a live listener")
+    reason = "; ".join(why)
+
+    if not bool(cfg.get("service_port_autoshift", True)):
+        log(f"WARNING: {kind} service ports: {reason}. service_port_autoshift=false -> keeping "
+            f"the configured ports; expect a bind failure if the squatter stays.")
+        return
+
+    step = 1024 if reps > 1 else 128                     # keep blocks aligned like the generator
+    for lo, hi in _SAFE_PORT_REGIONS:
+        cand = lo + (-lo % step)
+        while cand + span <= hi:
+            if cand != base and _first_busy_port(cand, span) is None:
+                cfg[f"{kind}_base_port"] = cand
+                log(f"{kind} service ports RELOCATED {base} -> {cand} ({reason})")
+                if tied:
+                    cfg[f"{kind}_val_port"] = cand + client_span
+                    log(f"  {kind}_val_port follows the base: {val} -> {cand + client_span}")
+                elif _first_busy_port(val, reps) is not None:
+                    log(f"  WARNING: {kind}_val_port {val} is also occupied and does not follow "
+                        f"the base convention (base+{client_span}) -- move it by hand.")
+                return
+            cand += step
+    raise RuntimeError(
+        f"{kind} service ports: {reason}, and no free {span}-port block exists in the "
+        f"ephemeral-safe regions {_SAFE_PORT_REGIONS}. Clear stale services on this host "
+        f"(pgrep -af uvicorn) or lower total_clients/{kind}_replicas.")
+
+
 def webshop_service_url(cfg, client_id: int) -> str:
     """Client c's service URL. With webshop_replicas=K>1 this is a COMMA-SEPARATED list of K
     replica URLs (ports base + c*K + j); the env client binds each episode to one replica
@@ -2021,6 +2127,9 @@ def run(cfg) -> dict:
         log(f"env_kind={cfg.env_kind} -> per-client services start LAZILY each round "
             f"(<= clients_per_round={cfg.clients_per_round} alive at a time; "
             f"partition={cfg.partition_strategy or ('uniform' if cfg.env_kind == 'alfworld' else 'none')})")
+        # Must run BEFORE val_service_url()/any start_*_services: both derive their ports from
+        # <env>_base_port, so the band has to be final by now (see _ensure_safe_service_band).
+        _ensure_safe_service_band(cfg, log)
 
     # shared unperturbed validation service + the round->val-metrics curve (off unless val_env_spec set)
     do_eval = bool(cfg.get("val_env_spec"))

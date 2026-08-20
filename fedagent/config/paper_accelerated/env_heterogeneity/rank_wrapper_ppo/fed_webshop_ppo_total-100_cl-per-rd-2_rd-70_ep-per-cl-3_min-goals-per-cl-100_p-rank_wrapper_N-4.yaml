@@ -32,8 +32,8 @@ val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 100
 webshop_pool_size: 16
-webshop_base_port: 34088
-webshop_val_port: 34188
+webshop_base_port: 25472
+webshop_val_port: 25572
 search_return_n: 200                               # env-het perturbs the catalog -> paper top-K
 
 # --- acceleration stack (docs/acceleration.md; every knob A/B-equivalent, max|delta| <= 9.3e-5) ---

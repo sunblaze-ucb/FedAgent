@@ -26,8 +26,8 @@ val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 100
 alfworld_pool_size: 8
-alfworld_base_port: 46144
-alfworld_val_port: 46145
+alfworld_base_port: 16384
+alfworld_val_port: 16385
 
 # --- heterogeneity ---
 partition_strategy: ""

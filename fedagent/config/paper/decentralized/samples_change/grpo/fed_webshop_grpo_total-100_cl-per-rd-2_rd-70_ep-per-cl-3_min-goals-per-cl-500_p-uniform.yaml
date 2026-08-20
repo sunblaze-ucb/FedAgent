@@ -26,8 +26,8 @@ val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 500
 webshop_pool_size: 16
-webshop_base_port: 21392
-webshop_val_port: 21492
+webshop_base_port: 15248
+webshop_val_port: 15348
 search_return_n: 50                               # engine default (matches the original non-het baselines)
 
 # --- heterogeneity ---

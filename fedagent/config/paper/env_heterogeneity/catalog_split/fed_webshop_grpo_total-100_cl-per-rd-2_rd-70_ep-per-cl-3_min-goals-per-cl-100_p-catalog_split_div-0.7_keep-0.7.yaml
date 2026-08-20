@@ -26,8 +26,8 @@ val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 100
 webshop_pool_size: 16
-webshop_base_port: 17424
-webshop_val_port: 17524
+webshop_base_port: 11280
+webshop_val_port: 11380
 search_return_n: 200                               # env-het perturbs the catalog -> paper top-K
 
 # --- heterogeneity ---

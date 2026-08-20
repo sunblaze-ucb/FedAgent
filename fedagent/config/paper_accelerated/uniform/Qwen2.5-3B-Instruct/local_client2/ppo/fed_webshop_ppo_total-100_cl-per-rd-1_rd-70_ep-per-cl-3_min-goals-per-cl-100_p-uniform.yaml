@@ -33,8 +33,8 @@ val_temperature: 0.4
 wait_between_clients: 8
 min_goals_per_client: 100
 webshop_pool_size: 16
-webshop_base_port: 28200
-webshop_val_port: 28300
+webshop_base_port: 25728
+webshop_val_port: 25828
 search_return_n: 50                               # engine default (matches the original non-het baselines)
 
 # --- acceleration stack (docs/acceleration.md; every knob A/B-equivalent, max|delta| <= 9.3e-5) ---

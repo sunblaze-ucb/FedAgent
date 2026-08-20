@@ -140,29 +140,48 @@ DECENTRALIZED = {
 # in disjoint webshop/alfworld bands, so per-client ranges never overlap across configs and several
 # configs CAN run on one host. Each config also emits its own val port = base + total_clients (just
 # above its client band), so the always-on val service never collides with a client service.
+#
+# EVERY band stays OUTSIDE the kernel's ephemeral range (Linux default 32768-60999). Bands inside
+# it are not merely "occasionally unlucky": the kernel hands those numbers out to ANY process that
+# binds port 0, at any time, so a band that was free at round 1 can be squatted mid-run. That is
+# exactly how the 2026-08-19 failure happened -- Ray's DashboardAgent drew 52365 while the run was
+# going, and round 13's client-17 replica died on `[Errno 98] address already in use`
+# (docs/bugfixes.md 2026-08-19). Safe space is [1024, 32768) and [61000, 65536); the four trees
+# below fit into the low region, and the high region is deliberately left free as the runtime
+# auto-shift pool (run_fed._ensure_safe_service_band).
 _WEBSHOP_PORT = itertools.count(10000, 128)
-_ALFWORLD_PORT = itertools.count(40000, 128)
+_ALFWORLD_PORT = itertools.count(16384, 128)
 
 # --accel: emit the adopted acceleration stack into every config (docs/acceleration.md).
 ACCEL = False
 
 
 def _init_ports(accel):
-    """Port bands. Plain tree: 128-port blocks, webshop 10000+ / alfworld 40000+ (K=1: the client
-    band is total_clients wide). Accel tree: DISJOINT bands so a paper config and its accelerated
-    twin can coexist on one host -- webshop 25000+ in 128-blocks (top 37288 < the plain alfworld
-    band), alfworld in 1024-port blocks from 52224 (alfworld_replicas=8 => client c binds
-    base+c*8..+7, so the client band is total*8 = 800 ports wide; val sits at base+800). Only 12
-    such blocks fit under 65536, so the 80 ALFWorld twins CYCLE them -- twins 12 apart share a
-    band (a full ALFWorld paper run holds 4 GPUs, so same-host collisions are already unlikely;
-    deconflict by editing alfworld_base_port, same as any two concurrent runs)."""
+    """Port bands, all four DISJOINT (a paper config and its accelerated twin can share a host)
+    and all inside the ephemeral-safe low region [10000, 32768):
+
+        plain  webshop   10000 + 128*(i % 48)   -> 10000..16144
+        plain  alfworld  16384 + 128*(i % 48)   -> 16384..22528   (K=1: client band = total)
+        accel  webshop   22528 + 128*(i % 48)   -> 22528..28672
+        accel  alfworld  28672 + 1024*(i % 4)   -> 28672..32768   (K=8: client band = total*8
+                                                                   = 800, val at base+800)
+
+    Rewritten 2026-08-19 (docs/bugfixes.md): the previous layout put plain-alfworld at 40000+,
+    accel-alfworld at 52224+ and the top third of accel-webshop above 32768 -- all inside the
+    kernel ephemeral range, where any process binding port 0 can squat a service port mid-run.
+
+    Four trees at 128/1024-port blocks need ~47k ports for full per-config uniqueness, which does
+    not fit in the ~22k safe low region, so each tree CYCLES its blocks: configs that are one
+    cycle apart share a band. That is no longer a hazard -- `run_fed` preflights the whole block
+    at startup and shifts to a free one (into the deliberately-reserved [61000, 65536) pool) when
+    it is occupied, so co-hosted configs deconflict themselves instead of dying at round k."""
     global _WEBSHOP_PORT, _ALFWORLD_PORT
     if accel:
-        _WEBSHOP_PORT = itertools.count(25000, 128)
-        _ALFWORLD_PORT = itertools.cycle(range(52224, 52224 + 12 * 1024, 1024))
+        _WEBSHOP_PORT = itertools.cycle(range(22528, 22528 + 48 * 128, 128))
+        _ALFWORLD_PORT = itertools.cycle(range(28672, 28672 + 4 * 1024, 1024))
     else:
-        _WEBSHOP_PORT = itertools.count(10000, 128)
-        _ALFWORLD_PORT = itertools.count(40000, 128)
+        _WEBSHOP_PORT = itertools.cycle(range(10000, 10000 + 48 * 128, 128))
+        _ALFWORLD_PORT = itertools.cycle(range(16384, 16384 + 48 * 128, 128))
 
 
 def _fmt(v):

@@ -35,8 +35,8 @@ min_goals_per_client: 100
 alfworld_pool_size: 64                              # total across the 8 replicas (~10 envs each)
 alfworld_replicas: 8                                # K service processes/client shard the TextWorld lock (step -57%)
 alfworld_manifest_cache: true                       # reuse the 8810-game manifest across boots (-18%)
-alfworld_base_port: 63488
-alfworld_val_port: 64288
+alfworld_base_port: 31744
+alfworld_val_port: 32544
 
 # --- acceleration stack (docs/acceleration.md; every knob A/B-equivalent, max|delta| <= 9.3e-5) ---
 cross_round: true                                   # ONE trainer+vLLM process for the whole run (no per-(client,round) cold start)

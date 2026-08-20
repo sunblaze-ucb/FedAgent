@@ -82,11 +82,15 @@ Deliberate choices baked into the twins:
   pass).
 - **No `webshop_replicas`.** Measured a wash at paper scale (WebShop is GPU-bound); its
   absence is intentional, not an omission.
-- **Disjoint port bands.** Twins use WebShop `25000+` / ALFWorld `52224+` (originals:
-  `10000+` / `40000+`), so a cell and its twin can share a host. ALFWorld twins need wide
-  bands (`replicas=8` ⇒ the 100-client band is 800 ports), so their 80 configs cycle 12
-  1024-port blocks; two ALFWorld twins 12 apart share a band; deconflict via
-  `alfworld_base_port` if you ever co-host them.
+- **Disjoint port bands, all outside the kernel ephemeral range.** Twins use WebShop `22528+` /
+  ALFWorld `28672+` (originals: `10000+` / `16384+`), so a cell and its twin can share a host.
+  Every band sits below 32768 — a band inside the ephemeral range (32768–60999) can be squatted
+  *mid-run* by any process binding port 0, which killed a round-13 client before the
+  [2026-08-19 fix](./bugfixes.md). ALFWorld twins need wide bands (`replicas=8` ⇒ the 100-client
+  band is 800 ports), so their 80 configs cycle 4 1024-port blocks, and the 128-block trees cycle
+  48 — configs one cycle apart share a band **by design**: `run_fed` preflights the block at
+  startup and relocates it (into the reserved `[61000, 65536)` pool) if it is occupied, so
+  co-hosted configs deconflict themselves. `service_port_autoshift: false` opts out.
 
 Regenerate the whole tree (it is generated, never hand-edited):
 

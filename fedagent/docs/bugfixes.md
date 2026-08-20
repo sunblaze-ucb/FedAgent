@@ -8,6 +8,92 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-08-19: every shipped ALFWorld port band sat INSIDE the kernel ephemeral range — a service port can be squatted mid-run, and a 70-round run died at round 13
+
+- **Files:** `tools/gen_paper_configs.py` (`_init_ports` — all four bands relocated, 352 configs
+  regenerated); `fedagent/fed/run_fed.py` (new `_ensure_safe_service_band` preflight +
+  `service_port_autoshift` default). Companion to the 2026-07-23/07-28 port-band work, which
+  fixed the *verl/vLLM* random-port half (`fedagent/port_band.py`) and left the **env-service**
+  half exposed.
+- **Severity:** blocker, probabilistic — any ALFWorld run (both config trees) and the top third of
+  the accelerated WebShop tree could lose a round at an arbitrary point. Numbers are NOT corrupted
+  (the run dies or hangs; resume from the last aggregated round is clean).
+- **Found while:** running the 0.5B ALFWorld production cell. Round 13 started normally, client
+  17's 8 service replicas began booting, and replica `r5` died with
+  `ERROR: [Errno 98] error while attempting to bind on address ('0.0.0.0', 52365): address
+  already in use`. The squatter was **Ray's own DashboardAgent**, which had drawn 52365 as an
+  ephemeral port *while the run was in progress*.
+
+### Mechanism
+
+Service ports are a deterministic function of the client id — `base + client*replicas + j` — so
+a config reserves a contiguous block (ALFWorld accel: 100 clients × 8 replicas = 800 ports, val
+at `base+800`). The shipped bands were:
+
+| tree | env | band | inside ephemeral (32768–60999)? |
+|---|---|---|---|
+| `paper/` | WebShop | 10000–22288 | no |
+| `paper/` | ALFWorld | **40000–50112** | **entirely** |
+| `paper_accelerated/` | WebShop | 25000–**37288** | **top third** |
+| `paper_accelerated/` | ALFWorld | **52224–64511** | **entirely** |
+
+A band inside that range is not "occasionally unlucky" — the kernel hands those numbers to *any*
+process that binds port 0, at *any* moment. The band is therefore not a reservation at all; it is
+a bet that nothing draws inside it for the run's whole lifetime, and the exposure grows with run
+length. Our failure is the clean demonstration: the band was free when the run started at 22:47
+and was squatted ~7 hours later, at round 13.
+
+**Why the failure was worse than a bind error.** The fleet came up partially (5 of 8 replicas
+healthy), the run tore down the round, published a final-eval plan for the last completed round —
+and then **hung for 85 minutes** with a worker spinning at 56 % CPU and zero file output, until
+killed by hand. A collision that should have been a one-line startup error consumed 1.5 h of
+wall-clock and looked, from the outside, exactly like a slow eval.
+
+### The fix
+
+1. **All four bands moved into the ephemeral-safe low region** `[10000, 32768)`, kept mutually
+   disjoint so a paper config and its accelerated twin still co-host:
+
+   | tree | env | band | block | cycle |
+   |---|---|---|---|---|
+   | `paper/` | WebShop | 10000–16144 | 128 | 48 |
+   | `paper/` | ALFWorld | 16384–22528 | 128 | 48 |
+   | `paper_accelerated/` | WebShop | 22528–28672 | 128 | 48 |
+   | `paper_accelerated/` | ALFWorld | 28672–32768 | 1024 | 4 |
+
+   Four trees at full per-config uniqueness would need ~47 k ports and the safe low region holds
+   ~22 k, so each tree now CYCLES its blocks (configs one cycle apart share a band) — which the
+   runtime preflight below makes harmless. `[61000, 65536)` is deliberately left **unassigned**:
+   it is the relocation pool.
+
+2. **Runtime preflight, `run_fed._ensure_safe_service_band`** — runs before any service starts or
+   any service URL is derived. It relocates the whole block (preferring the reserved
+   `[61000, 65536)` pool) when the configured band either overlaps the ephemeral range *or* has a
+   live listener in it, moving `<env>_val_port` with the base when it followed the
+   `base + client_band` convention. This is what protects **existing** configs and hand-written
+   ones: a startup check alone could not have saved our run (the band *was* free at round 1), but
+   relocating out of the ephemeral range at startup removes the mid-run hazard entirely. Escape
+   hatch `service_port_autoshift: false` keeps the literal ports and only warns.
+
+### Verification
+
+- All **352** generated configs (176 × 2 trees) re-checked programmatically: every config's full
+  span (client band ∪ val band) is outside 32768–60999, and the four trees have zero cross-tree
+  overlap. The 22 non-generated env configs were checked too (they use the 8080/8200 defaults —
+  already safe).
+- Preflight unit-tested on three cases: an ephemeral-range band relocates (52224 → 61440, val
+  53024 → 62240); an already-safe free band is left untouched; `service_port_autoshift: false`
+  warns and keeps the ports.
+- The in-flight 0.5B ALFWorld run was moved to 20224+ by hand before this landed and has run
+  cleanly since (rounds 13→41 at the time of writing).
+
+**Scope audit — not exposed:** WebShop `paper/` (10000–22288, always below the range); the
+verl/vLLM random-port pickers (already banded at `port_band_base: 26000`, see
+`fedagent/port_band.py`); every run's *numbers* (a collision kills or hangs a round, it does not
+corrupt weights or rewards).
+
+---
+
 ## 2026-08-18: cross_round reload leaks ~one fp32 model copy per client-fit on world_size=1 — retired NO_SHARD flat-param storages outlive `_reset_engine`'s release, and the vLLM wake margin absorbs the debt until round 4
 
 - **Files:** `fedagent/fed/persistent_patch.py` — new `_hard_release_fsdp_storages()` called at the
