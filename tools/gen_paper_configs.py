@@ -1,26 +1,35 @@
 #!/usr/bin/env python
 """Emit the paper-faithful federated config matrix for the verl-0.8 overlay.
 
-This mirrors the ORIGINAL FedAgent config tree 1:1 in STRUCTURE + NAMING (the family
-layout config/{uniform,env_heterogeneity,task_heterogeneity,decentralized}/ and the
-descriptive fed_<env>_<algo>_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-<strategy>_<knobs>
-filenames). The file CONTENTS are verl-0.8 run_fed.py configs (flat schema), because that
-is what `python -m fedagent.fed.run_fed --config <...>` consumes -- the migration changed
-the runner, not the experiment design.
+This mirrors the ORIGINAL FedAgent config tree in STRUCTURE + NAMING (the family layout
+config/{uniform,env_heterogeneity,task_heterogeneity,decentralized}/ and the descriptive
+fed_<env>_<algo>_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-<strategy>_<knobs>
+filenames), with ONE deliberate 2026-08-23 departure: env_heterogeneity/ moved from the
+original flat webshop-only `<arm>[_ppo]/` layout to the task_heterogeneity convention
+`{grpo,ppo}/{webshop,alfworld}/<arm>/` when the family grew its ALFWorld side (old->new
+mapping in the emitted env_heterogeneity/README.md; file NAMES are unchanged). The file
+CONTENTS are verl-0.8 run_fed.py configs (flat schema), because that is what
+`python -m fedagent.fed.run_fed --config <...>` consumes -- the migration changed the
+runner, not the experiment design.
 
-Coverage = the paper's 176 configs:
+Coverage = 194 configs (the paper's 176-config matrix, whose env_heterogeneity family was
+restructured + extended 2026-08-23 to cover BOTH envs -- see ENV_HET below):
   uniform/<Model>/{main,main_seed1,main_seed2,centralized,local_client1-3}/{grpo,ppo}/   112
       4 backbones x 7 settings x 2 algos x 2 envs (webshop + alfworld). p-uniform.
-  env_heterogeneity/<strategy>[_ppo]/                                                      16
-      Qwen2.5-1.5B only, WebShop only (these perturb the catalog/search engine):
-      catalog_split (grpo div 0/0.3/0.7/1.0; ppo div 1.0), bm25_reweighting (grpo N4,N8;
-      ppo N4), field_subset_index (grpo N4,N8; ppo N4), lookalike_injection (grpo N2,N4;
-      ppo N4), rank_wrapper (grpo N4; ppo N4).
+  env_heterogeneity/{grpo,ppo}/{webshop,alfworld}/<arm>/                                    34
+      Qwen2.5-1.5B only. grpo/ = each arm's FULL knob sweep, ppo/ = its most-divergent
+      point (the GRPO-vs-PPO pair). WebShop (retrieval pipeline): catalog_split
+      (div 0/0.3/0.7/1.0; ppo 1.0) + its task_disjoint ablation (div sweep, grpo-only),
+      field_subset_index (N4,N8; ppo N4), bm25_reweighting (N4,N8; ppo N4),
+      lookalike_injection (N2,N4; ppo N4), rank_wrapper (N4; ppo N4). ALFWorld (symbolic
+      kernel; docs/dev_doc/alfworld_env_heterogeneity.md): scene_disjoint (div
+      0/0.3/0.7/1.0, spc 8; ppo 1.0), obs_variant / dyn_variant / goal_variant
+      (N2,N4; ppo N4). A generated env_heterogeneity/README.md maps every cell.
   task_heterogeneity/{grpo,ppo}/{webshop,alfworld}/                                         24
       Qwen2.5-1.5B only: preference(omega 0.01,0.99), coverage(std 1,256), hardness(success_std 1,256).
   decentralized/{ep_per_round_change,samples_change,selected_cl_change}/{grpo,ppo}/         24
       Qwen2.5-1.5B only, on the homog uniform baseline; each varies ONE protocol knob.
-                                                                                   total = 176
+                                                                                   total = 194
 
 Three migration fidelity fixes are baked in (see fedagent/docs/migration.md):
   (1) WEBSHOP_SEARCH_RETURN_N: env-het arms perturb the catalog/search and need the paper's
@@ -96,27 +105,82 @@ UNIFORM_SETTINGS = {
     "local_client3": dict(total=N, m=1, seed=42, local_client_id=84),
 }
 
-# env-het arms (WebShop only). (algo, orig_strategy_name, run_fed_partition, extra, p_suffix).
-# orig_strategy_name -> the directory + filename token (mirrors the original); run_fed_partition
-# -> the value run_fed.py actually consumes (bm25_reweighting->bm25_reweight etc.).
+# env-het arms, BOTH envs, laid out env_heterogeneity/{algo}/{env}/{arm}/ (the
+# task_heterogeneity convention; restructured 2026-08-23 when the family grew its ALFWorld
+# side -- the pre-restructure flat webshop-only layout is mapped in the emitted README.md).
+# Rows: (env, algo, arm_dir, run_fed_partition, extra_knobs, p_suffix). arm_dir keeps the
+# PAPER's variant names (mirrors the original repo); run_fed_partition is the value
+# run_fed.py consumes (bm25_reweighting -> bm25_reweight etc.).
+#
+# Sweep design: every arm's GRPO row-set is the FULL knob sweep (all heterogeneity degrees
+# the construction supports); the PPO row is the single most-divergent point, giving each
+# arm its GRPO-vs-PPO pair (docs/heterogeneity.md "the asymmetric-robustness spectrum").
 ENV_HET = [
-    ("grpo", "catalog_split",      "catalog_split",     dict(env_div=0.0, keep_ratio=0.7), "catalog_split_div-0.0_keep-0.7"),
-    ("grpo", "catalog_split",      "catalog_split",     dict(env_div=0.3, keep_ratio=0.7), "catalog_split_div-0.3_keep-0.7"),
-    ("grpo", "catalog_split",      "catalog_split",     dict(env_div=0.7, keep_ratio=0.7), "catalog_split_div-0.7_keep-0.7"),
-    ("grpo", "catalog_split",      "catalog_split",     dict(env_div=1.0, keep_ratio=0.7), "catalog_split_div-1.0_keep-0.7"),
-    ("ppo",  "catalog_split",      "catalog_split",     dict(env_div=1.0, keep_ratio=0.7), "catalog_split_div-1.0_keep-0.7"),
-    ("grpo", "bm25_reweighting",   "bm25_reweight",     dict(variant_n=4), "bm25_reweighting_N-4"),
-    ("grpo", "bm25_reweighting",   "bm25_reweight",     dict(variant_n=8), "bm25_reweighting_N-8"),
-    ("ppo",  "bm25_reweighting",   "bm25_reweight",     dict(variant_n=4), "bm25_reweighting_N-4"),
-    ("grpo", "field_subset_index", "bm25_field_subset", dict(variant_n=4), "field_subset_index_N-4"),
-    ("grpo", "field_subset_index", "bm25_field_subset", dict(variant_n=8), "field_subset_index_N-8"),
-    ("ppo",  "field_subset_index", "bm25_field_subset", dict(variant_n=4), "field_subset_index_N-4"),
-    ("grpo", "lookalike_injection","lookalike",         dict(variant_n=2), "lookalike_injection_N-2"),
-    ("grpo", "lookalike_injection","lookalike",         dict(variant_n=4), "lookalike_injection_N-4"),
-    ("ppo",  "lookalike_injection","lookalike",         dict(variant_n=4), "lookalike_injection_N-4"),
-    ("grpo", "rank_wrapper",       "rank_wrapper",      dict(variant_n=4), "rank_wrapper_N-4"),
-    ("ppo",  "rank_wrapper",       "rank_wrapper",      dict(variant_n=4), "rank_wrapper_N-4"),
+    # ---- WebShop: retrieval-pipeline perturbations (paper Variants 1-5) ----
+    # Variant 1 (content): per-client catalogs diverge; env_div 0.0 = homogeneous floor.
+    ("webshop", "grpo", "catalog_split",      "catalog_split",     dict(env_div=0.0, keep_ratio=0.7), "catalog_split_div-0.0_keep-0.7"),
+    ("webshop", "grpo", "catalog_split",      "catalog_split",     dict(env_div=0.3, keep_ratio=0.7), "catalog_split_div-0.3_keep-0.7"),
+    ("webshop", "grpo", "catalog_split",      "catalog_split",     dict(env_div=0.7, keep_ratio=0.7), "catalog_split_div-0.7_keep-0.7"),
+    ("webshop", "grpo", "catalog_split",      "catalog_split",     dict(env_div=1.0, keep_ratio=0.7), "catalog_split_div-1.0_keep-0.7"),
+    ("webshop", "ppo",  "catalog_split",      "catalog_split",     dict(env_div=1.0, keep_ratio=0.7), "catalog_split_div-1.0_keep-0.7"),
+    # Ablation: SAME disjoint goal slices as catalog_split but over the FULL catalog --
+    # attributes any catalog_split divergence to the hidden catalog, not the goal split.
+    # GRPO only (it is a control, not an attack); points match catalog_split's sweep.
+    ("webshop", "grpo", "task_disjoint",      "task_disjoint",     dict(env_div=0.0, keep_ratio=0.7), "task_disjoint_div-0.0_keep-0.7"),
+    ("webshop", "grpo", "task_disjoint",      "task_disjoint",     dict(env_div=0.3, keep_ratio=0.7), "task_disjoint_div-0.3_keep-0.7"),
+    ("webshop", "grpo", "task_disjoint",      "task_disjoint",     dict(env_div=0.7, keep_ratio=0.7), "task_disjoint_div-0.7_keep-0.7"),
+    ("webshop", "grpo", "task_disjoint",      "task_disjoint",     dict(env_div=1.0, keep_ratio=0.7), "task_disjoint_div-1.0_keep-0.7"),
+    # Variant 2 (encoding): which product fields feed the BM25 index.
+    ("webshop", "grpo", "field_subset_index", "bm25_field_subset", dict(variant_n=4), "field_subset_index_N-4"),
+    ("webshop", "grpo", "field_subset_index", "bm25_field_subset", dict(variant_n=8), "field_subset_index_N-8"),
+    ("webshop", "ppo",  "field_subset_index", "bm25_field_subset", dict(variant_n=4), "field_subset_index_N-4"),
+    # Variant 3 (matching): extreme BM25 (k1, b) corners.
+    ("webshop", "grpo", "bm25_reweighting",   "bm25_reweight",     dict(variant_n=4), "bm25_reweighting_N-4"),
+    ("webshop", "grpo", "bm25_reweighting",   "bm25_reweight",     dict(variant_n=8), "bm25_reweighting_N-8"),
+    ("webshop", "ppo",  "bm25_reweighting",   "bm25_reweight",     dict(variant_n=4), "bm25_reweighting_N-4"),
+    # Variant 4 (content x reward): per-client lookalike products defeating one reward subterm.
+    ("webshop", "grpo", "lookalike_injection","lookalike",         dict(variant_n=2), "lookalike_injection_N-2"),
+    ("webshop", "grpo", "lookalike_injection","lookalike",         dict(variant_n=4), "lookalike_injection_N-4"),
+    ("webshop", "ppo",  "lookalike_injection","lookalike",         dict(variant_n=4), "lookalike_injection_N-4"),
+    # Variant 5 (rendering): result-page wrappers over the same BM25 base.
+    ("webshop", "grpo", "rank_wrapper",       "rank_wrapper",      dict(variant_n=4), "rank_wrapper_N-4"),
+    ("webshop", "ppo",  "rank_wrapper",       "rank_wrapper",      dict(variant_n=4), "rank_wrapper_N-4"),
+    # ---- ALFWorld: symbolic-kernel perturbations (docs/dev_doc/alfworld_env_heterogeneity.md) ----
+    # scene_disjoint (content): room-type-stratified FloorPlan top-k, FIXED 100 games/client,
+    # task-type quota matched to the global marginal; env_div 0.0 = byte-identical shards.
+    ("alfworld", "grpo", "scene_disjoint",    "scene_disjoint",    dict(env_div=0.0, alfworld_scenes_per_client=8), "scene_disjoint_div-0.0_spc-8"),
+    ("alfworld", "grpo", "scene_disjoint",    "scene_disjoint",    dict(env_div=0.3, alfworld_scenes_per_client=8), "scene_disjoint_div-0.3_spc-8"),
+    ("alfworld", "grpo", "scene_disjoint",    "scene_disjoint",    dict(env_div=0.7, alfworld_scenes_per_client=8), "scene_disjoint_div-0.7_spc-8"),
+    ("alfworld", "grpo", "scene_disjoint",    "scene_disjoint",    dict(env_div=1.0, alfworld_scenes_per_client=8), "scene_disjoint_div-1.0_spc-8"),
+    ("alfworld", "ppo",  "scene_disjoint",    "scene_disjoint",    dict(env_div=1.0, alfworld_scenes_per_client=8), "scene_disjoint_div-1.0_spc-8"),
+    # obs_variant (rendering/encoding): per-client grammar rewrites (observation kernel O).
+    ("alfworld", "grpo", "obs_variant",       "obs_variant",       dict(variant_n=2), "obs_variant_N-2"),
+    ("alfworld", "grpo", "obs_variant",       "obs_variant",       dict(variant_n=4), "obs_variant_N-4"),
+    ("alfworld", "ppo",  "obs_variant",       "obs_variant",       dict(variant_n=4), "obs_variant_N-4"),
+    # dyn_variant (dynamics): per-client PDDL precondition/effect rewrites (hidden P).
+    ("alfworld", "grpo", "dyn_variant",       "dyn_variant",       dict(variant_n=2), "dyn_variant_N-2"),
+    ("alfworld", "grpo", "dyn_variant",       "dyn_variant",       dict(variant_n=4), "dyn_variant_N-4"),
+    ("alfworld", "ppo",  "dyn_variant",       "dyn_variant",       dict(variant_n=4), "dyn_variant_N-4"),
+    # goal_variant (hidden success predicate): the Lookalike analog; instruction text unchanged.
+    ("alfworld", "grpo", "goal_variant",      "goal_variant",      dict(variant_n=2), "goal_variant_N-2"),
+    ("alfworld", "grpo", "goal_variant",      "goal_variant",      dict(variant_n=4), "goal_variant_N-4"),
+    ("alfworld", "ppo",  "goal_variant",      "goal_variant",      dict(variant_n=4), "goal_variant_N-4"),
 ]
+
+# Per-arm metadata for the emitted env_heterogeneity/README.md (channel taxonomy + knob
+# semantics + doc pointer). Keys = arm_dir.
+ENV_HET_ARM_INFO = {
+    "catalog_split":      ("content",           "env_div 0.0(floor)->1.0(max catalog divergence); keep_ratio = distractor density", "docs/heterogeneity.md"),
+    "task_disjoint":      ("ablation (control)", "same goal slices as catalog_split, FULL catalog; run at matched env_div points",   "docs/heterogeneity.md"),
+    "field_subset_index": ("encoding",          "variant_n = size of the indexed-field-subset pool (4 or 8)",                        "docs/heterogeneity.md"),
+    "bm25_reweighting":   ("matching",          "variant_n = size of the (k1,b)-corner pool (4 or 8)",                               "docs/heterogeneity.md"),
+    "lookalike_injection":("content x reward",  "variant_n = size of the attack pool (2: price,color; 4: +size,price_color)",        "docs/heterogeneity.md"),
+    "rank_wrapper":       ("rendering",         "variant_n = size of the wrapper pool (4; invert arm unwinnable at top-K 200 -- disclosed)", "docs/heterogeneity.md"),
+    "scene_disjoint":     ("content",           "env_div 0.0(byte-identical shards)->1.0(disjoint FloorPlans); spc = scenes/client (stratified /4 room types)", "docs/dev_doc/alfworld_env_heterogeneity.md"),
+    "obs_variant":        ("rendering/encoding","variant_n = grammar-rewrite pool (2: control+terse_goto; 4: +blind_intro,paraphrase)", "docs/dev_doc/alfworld_env_heterogeneity.md"),
+    "dyn_variant":        ("dynamics",          "variant_n = PDDL-rewrite pool (2: control+examine_gate; 4: +autoclose,gate_autoclose)", "docs/dev_doc/alfworld_env_heterogeneity.md"),
+    "goal_variant":       ("hidden reward",     "variant_n = goal-conjunct pool (2: control+examined; 4: +closed,examined_closed)",  "docs/dev_doc/alfworld_env_heterogeneity.md"),
+}
 
 # task-het arms (both envs). (run_fed_partition, extra, p_suffix). hardness needs a trajectories file.
 TASK_HET = [
@@ -393,18 +457,79 @@ def emit_uniform(out):
 def emit_env_het(out):
     mdir, mid = HET_MODEL
     n = 0
-    for algo, orig, part, extra, psuf in ENV_HET:
-        d = out / "env_heterogeneity" / (orig + ("_ppo" if algo == "ppo" else ""))
+    rows = []
+    for env, algo, arm, part, extra, psuf in ENV_HET:
+        d = out / "env_heterogeneity" / algo / env / arm
         d.mkdir(parents=True, exist_ok=True)
-        fn = fed_filename("webshop", algo, N, M, T, E, MIN_GOALS, psuf)
+        fn = fed_filename(env, algo, N, M, T, E, MIN_GOALS, psuf)
         text = build_config(
-            f"ENV-HET {orig} | {algo.upper()} | webshop | {mdir}",
-            env_kind="webshop", algo=algo, model=mid, total=N, m=M, t=T, e=E, seed=42,
+            f"ENV-HET {arm} | {algo.upper()} | {env} | {mdir}",
+            env_kind=env, algo=algo, model=mid, total=N, m=M, t=T, e=E, seed=42,
             min_goals=MIN_GOALS, partition=part, extra=extra, family="env_heterogeneity",
-            out_tag=f"env_heterogeneity/{orig + ('_ppo' if algo == 'ppo' else '')}/{fn}")
+            out_tag=f"env_heterogeneity/{algo}/{env}/{arm}/{fn}")
         (d / f"{fn}.yaml").write_text(text)
+        rows.append((env, algo, arm, part, extra, f"{algo}/{env}/{arm}/{fn}.yaml"))
         n += 1
+    _emit_env_het_readme(out / "env_heterogeneity", rows)
     return n
+
+
+def _emit_env_het_readme(d, rows):
+    """The family map, regenerated with the configs so it can never go stale."""
+    lines = [
+        "# env_heterogeneity/ -- the environment-level heterogeneity config family",
+        "",
+        "> AUTO-GENERATED by tools/gen_paper_configs.py (regenerate: `python -m",
+        "> tools.gen_paper_configs [--accel]`). Do not edit by hand.",
+        "",
+        "Layout (the task_heterogeneity convention; restructured 2026-08-23 when the",
+        "family grew its ALFWorld side):",
+        "",
+        "    env_heterogeneity/{grpo,ppo}/{webshop,alfworld}/<arm>/fed_<env>_<algo>_..._p-<arm>_<knobs>.yaml",
+        "",
+        "Every arm's **grpo/** directory holds the FULL knob sweep (all heterogeneity",
+        "degrees the construction supports); its **ppo/** directory holds the single",
+        "most-divergent point -- the GRPO-vs-PPO pair of the asymmetric-robustness",
+        "figure. All cells: Qwen2.5-1.5B, the paper federation protocol",
+        f"(total-{N}, {M}/round, {T} rounds, E={E}, min-goals {MIN_GOALS}, seed 42),",
+        "scored on the shared UNPERTURBED val service.",
+        "",
+        "| env | arm | channel | `partition_strategy` | knob semantics | grpo sweep | ppo point | docs |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    by_arm = {}
+    for env, algo, arm, part, extra, rel in rows:
+        by_arm.setdefault((env, arm, part), {"grpo": [], "ppo": []})[algo].append(extra)
+    seen = []
+    for env, algo, arm, part, extra, rel in rows:
+        if (env, arm, part) in seen:
+            continue
+        seen.append((env, arm, part))
+        info = ENV_HET_ARM_INFO[arm]
+        fmt = lambda e: ",".join(f"{k}={v}" for k, v in e.items())
+        g = "; ".join(fmt(e) for e in by_arm[(env, arm, part)]["grpo"]) or "--"
+        p = "; ".join(fmt(e) for e in by_arm[(env, arm, part)]["ppo"]) or "-- (control arm)"
+        lines.append(f"| {env} | `{arm}/` | {info[0]} | `{part}` | {info[1]} | {g} | {p} | {info[2]} |")
+    lines += [
+        "",
+        "## File index",
+        "",
+    ]
+    for env, algo, arm, part, extra, rel in rows:
+        lines.append(f"- `{rel}`")
+    lines += [
+        "",
+        "## Pre-2026-08-23 layout (old -> new)",
+        "",
+        "The family was previously flat and WebShop-only: `env_heterogeneity/<arm>[_ppo]/`.",
+        "Mapping: `<arm>/x.yaml -> grpo/webshop/<arm>/x.yaml`,",
+        "`<arm>_ppo/x.yaml -> ppo/webshop/<arm>/x.yaml`. File names are unchanged, so any",
+        "old reference is recovered by prefixing `{grpo|ppo}/webshop/` and dropping `_ppo`.",
+        "`task_disjoint/` (the catalog_split ablation) and the whole `alfworld` side are",
+        "new with the restructure.",
+        "",
+    ]
+    (d / "README.md").write_text("\n".join(lines))
 
 
 def emit_task_het(out):
@@ -470,7 +595,7 @@ def main():
     print(f"wrote {total} configs to {out}:")
     for k, v in counts.items():
         print(f"  {k:20s} {v}")
-    assert total == 176, f"expected 176 paper configs, got {total}"
+    assert total == 194, f"expected 194 configs (176 paper + 18 env-het additions), got {total}"
     print("\n3-seed replication: base_seed 42/21/84 are uniform/main, main_seed1, main_seed2.")
     print("hardness arms: generate trajectories_file via gen_hardness_trajectories.py before running.")
     print("ALFWorld max_turns=50 + widened context are GPU-VERIFY (see docstring fix #2/#3).")
