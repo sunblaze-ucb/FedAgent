@@ -4,8 +4,16 @@ import json
 import random
 import hashlib
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+# matplotlib/seaborn feed only the (dormant) visualization helpers below, each of which
+# re-imports matplotlib locally. Keep them OPTIONAL at module load so importing this module
+# -- which the ALFWorld runtime AND the trainer-side het tooling do -- never hard-requires
+# plotting deps (the fedagent-verl08 env ships without matplotlib).
+try:
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+except Exception:  # noqa: BLE001 -- plotting is not on any partition runtime path
+    plt = None
+    sns = None
 from collections import defaultdict
 import math
 
@@ -1493,6 +1501,19 @@ def partition_dataset(
         return _env_disjoint_partition_alfworld(
             data, client_id, client_num, min_samples_per_client, **kwargs
         )
+    elif strategy == 'scene_disjoint':
+        # Env-level heterogeneity for AlfWorld, scene granularity: room-type-stratified
+        # scene top-k with a FIXED per-client game count and a task-type quota matched to
+        # the global marginal (decouples env_div from data quantity, keeps tau invariant).
+        # See docs/dev_doc/alfworld_env_heterogeneity.md
+        if data_type != 'alfworld':
+            raise ValueError(
+                f"strategy 'scene_disjoint' only supports data_type='alfworld', "
+                f"got data_type={data_type}"
+            )
+        return _scene_disjoint_partition_alfworld(
+            data, client_id, client_num, min_samples_per_client, **kwargs
+        )
     elif strategy == 'catalog_split':
         # Catalog-Split: per-client target floor distractor disjoint
         # See docs/heterogeneity.md
@@ -1503,7 +1524,7 @@ def partition_dataset(
             "directly from fed_env_manager.py, not via partition_dataset()"
         )
     else:
-        raise ValueError(f"Unknown partition strategy: {strategy}. Supported strategies: uniform, preference, coverage, hardness, env_disjoint, catalog_split")
+        raise ValueError(f"Unknown partition strategy: {strategy}. Supported strategies: uniform, preference, coverage, hardness, env_disjoint, scene_disjoint, catalog_split")
 
 
 def get_partition_info(
@@ -1578,6 +1599,18 @@ def get_partition_info(
         }
     elif strategy == 'env_disjoint':
         client_data = _env_disjoint_partition_alfworld(
+            data, client_id, client_num, min_samples_per_client, **kwargs
+        )
+        return {
+            'strategy': strategy,
+            'client_id': client_id,
+            'client_num': client_num,
+            'data_size': len(client_data),
+            'min_samples_per_client': min_samples_per_client,
+            'actual_samples': len(client_data)
+        }
+    elif strategy == 'scene_disjoint':
+        client_data = _scene_disjoint_partition_alfworld(
             data, client_id, client_num, min_samples_per_client, **kwargs
         )
         return {
@@ -2606,6 +2639,175 @@ def _env_disjoint_partition_alfworld(
           f"(out of {n_specs_total}); single-scene specs: skipped={n_specs_skipped}, "
           f"shared={n_specs_fallback_shared}, trial-only={n_specs_fallback_trial}; "
           f"env_div={env_div}, fallback={fallback}")
+    return client_paths
+
+
+def _alfworld_room_type(scene: str) -> str:
+    """FloorPlan number -> room type (1-30 kitchen / 201-230 living / 301-330
+    bedroom / 401-430 bathroom, the AI2-THOR convention)."""
+    try:
+        n = int(scene)
+    except ValueError:
+        return 'unknown'
+    if n < 100:
+        return 'kitchen'
+    if n < 300:
+        return 'living'
+    if n < 400:
+        return 'bedroom'
+    return 'bathroom'
+
+
+def _scene_disjoint_partition_alfworld(
+    data: List[str],            # game_files (abs paths)
+    client_id: int,
+    client_num: int,
+    min_samples_per_client: int = 100,   # FIXED per-client game count (n_games)
+    env_div: float = 0.7,
+    scenes_per_client: int = 8,
+    holdout_scenes: Optional[List[str]] = None,
+    base_seed: int = 42,
+    **kwargs,
+) -> List[str]:
+    """Scene-granularity env-level partition for AlfWorld (Catalog-Split analog).
+
+    Differences vs `_env_disjoint_partition_alfworld` (kept verbatim, unreported):
+      * SCENE-level divergence: clients differ in which FloorPlans (world layouts,
+        i.e. transition kernels) they train in, not merely in which (scene, trial)
+        instances of a shared scene pool they sample. Room-type stratification
+        (scenes_per_client/4 per room type) keeps every client's kitchen-only task
+        types (heat/cool/clean) servable.
+      * FIXED per-client size: exactly `min_samples_per_client` games per client
+        (pool permitting), so `env_div` moves ONLY catalog divergence, never data
+        quantity -- the confound measured on env_disjoint (union coverage 8.8% ->
+        82.7% across its env_div sweep) is removed by construction.
+      * Task-type quota: the per-client sample matches the global task-type
+        marginal (largest-remainder quotas), so the observable tau marginal is
+        preserved while the hidden P diverges.
+
+    Divergence math is Catalog Split's, keyed by scene id via the globally sorted
+    scene list (the analog of ASIN-string keying -- alignment is independent of
+    holdout composition and of which scenes a client ends up with):
+        u        ~ RandomState(base_seed)                (shared)
+        v_k      ~ RandomState(base_seed + 1000*k)       (per-client)
+        e_k      = (1-env_div)*u + env_div*v_k
+        chosen_r = argsort(e_k within room type r)[:scenes_per_client/4]
+    env_div=0 -> every client keeps the SAME top scenes (byte-identical shards,
+    the homogeneous floor); env_div=1 -> fully client-local rankings.
+
+    Game subsampling inside the chosen scenes is keyed per GAME PATH by a shared
+    score drawn over the globally sorted game list (client-independent), so two
+    clients sharing a scene also share that scene's selected games.
+    """
+    if not 0.0 <= float(env_div) <= 1.0:
+        raise ValueError(f"env_div must be in [0, 1], got {env_div}")
+    scenes_per_client = int(scenes_per_client)
+    if scenes_per_client < 4:
+        raise ValueError(
+            f"scenes_per_client must be >= 4 (one per room type), got {scenes_per_client}"
+        )
+    holdout = set(holdout_scenes or [])
+
+    # Step 1: parse paths; bucket games by scene (holdout dropped AFTER u/v keying).
+    scene_to_games = defaultdict(list)
+    game_task_type = {}
+    n_unparsed = 0
+    for path in data:
+        spec, scene, trial = _parse_alfworld_path(path)
+        if spec is None:
+            n_unparsed += 1
+            continue
+        scene_to_games[scene].append(path)
+        game_task_type[path] = spec.split('-')[0]
+    if n_unparsed > 0:
+        print(f"[SCENE-AlfWorld] WARNING: {n_unparsed} paths failed to parse")
+
+    all_scenes = sorted(scene_to_games.keys(), key=lambda s: (int(s) if s.isdigit() else 10**9, s))
+    # Shared u and per-client v, keyed by scene via the globally sorted order.
+    u_seq = np.random.RandomState(base_seed).random_sample(len(all_scenes))
+    v_seq = np.random.RandomState(base_seed + 1000 * int(client_id)).random_sample(len(all_scenes))
+    scene_u = dict(zip(all_scenes, u_seq))
+    scene_v = dict(zip(all_scenes, v_seq))
+
+    # Step 2: room-type-stratified scene top-k by e = (1-div)*u + div*v.
+    per_room = scenes_per_client // 4
+    extras = scenes_per_client % 4
+    chosen_scenes = []
+    for r_i, room in enumerate(sorted({'kitchen', 'living', 'bedroom', 'bathroom'})):
+        candidates = [s for s in all_scenes if _alfworld_room_type(s) == room and s not in holdout]
+        k = per_room + (1 if r_i < extras else 0)
+        if k > len(candidates):
+            print(f"[SCENE-AlfWorld] WARNING: room {room} has only {len(candidates)} "
+                  f"scenes (< {k}); taking all")
+            k = len(candidates)
+        e = np.array([(1.0 - env_div) * scene_u[s] + env_div * scene_v[s] for s in candidates])
+        chosen_scenes.extend(candidates[i] for i in np.argsort(e)[:k])
+
+    # Step 3: per-game shared score (client-independent keying over sorted paths).
+    all_games_sorted = sorted(game_task_type.keys())
+    g_seq = np.random.RandomState(base_seed).random_sample(len(all_games_sorted))
+    game_score = dict(zip(all_games_sorted, g_seq))
+
+    pool = [p for s in chosen_scenes for p in scene_to_games[s]]
+    pool_by_type = defaultdict(list)
+    for p in pool:
+        pool_by_type[game_task_type[p]].append(p)
+    for t in pool_by_type:
+        pool_by_type[t].sort(key=lambda p: game_score[p])
+
+    # Step 4: task-type quotas from the post-holdout global marginal
+    # (largest-remainder rounding to exactly n_games).
+    n_games = int(min_samples_per_client)
+    global_by_type = defaultdict(int)
+    for p, t in game_task_type.items():
+        spec, scene, _ = _parse_alfworld_path(p)
+        if scene in holdout:
+            continue
+        global_by_type[t] += 1
+    types_sorted = sorted(global_by_type.keys())
+    total_global = sum(global_by_type.values())
+    raw = {t: n_games * global_by_type[t] / total_global for t in types_sorted}
+    quota = {t: int(math.floor(raw[t])) for t in types_sorted}
+    for t in sorted(types_sorted, key=lambda t: raw[t] - quota[t], reverse=True):
+        if sum(quota.values()) >= n_games:
+            break
+        quota[t] += 1
+
+    # Step 5: fill quotas; redistribute any per-type shortfall by remaining capacity.
+    client_paths = []
+    deficit = 0
+    for t in types_sorted:
+        take = min(quota[t], len(pool_by_type[t]))
+        if take < quota[t]:
+            print(f"[SCENE-AlfWorld] WARNING: client {client_id} pool lacks "
+                  f"{quota[t] - take} games of type {t}; redistributing")
+            deficit += quota[t] - take
+        client_paths.extend(pool_by_type[t][:take])
+        pool_by_type[t] = pool_by_type[t][take:]
+    while deficit > 0:
+        spill = sorted(
+            (t for t in types_sorted if pool_by_type[t]),
+            key=lambda t: len(pool_by_type[t]), reverse=True,
+        )
+        if not spill:
+            print(f"[SCENE-AlfWorld] WARNING: client {client_id} pool exhausted "
+                  f"at {len(client_paths)} games (target {n_games})")
+            break
+        for t in spill:
+            if deficit <= 0:
+                break
+            client_paths.append(pool_by_type[t].pop(0))
+            deficit -= 1
+
+    client_paths = sorted(client_paths)
+    tt_counts = defaultdict(int)
+    for p in client_paths:
+        tt_counts[game_task_type[p]] += 1
+    print(f"[SCENE-AlfWorld] client {client_id}/{client_num}: "
+          f"|game_files|={len(client_paths)} from {len(chosen_scenes)} scenes "
+          f"({sorted(chosen_scenes, key=lambda s: int(s) if s.isdigit() else 0)}); "
+          f"env_div={env_div}, scenes_per_client={scenes_per_client}, "
+          f"task_mix={dict(sorted(tt_counts.items()))}, holdout={len(holdout)} scenes")
     return client_paths
 
 

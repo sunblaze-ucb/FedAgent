@@ -104,6 +104,12 @@ SUCCESS_STD = os.environ.get("SUCCESS_STD", "")
 TRAJECTORIES_FILE = os.environ.get("TRAJECTORIES_FILE", "")
 ENV_DIV = os.environ.get("ENV_DIV", "")
 ALFWORLD_FALLBACK = os.environ.get("ALFWORLD_FALLBACK", "")
+# ALFWorld env-het additions (docs/dev_doc/alfworld_env_heterogeneity.md):
+# scene_disjoint takes ENV_DIV/ALFWORLD_SCENES_PER_CLIENT/ALFWORLD_HOLDOUT_FILE;
+# obs_variant/dyn_variant/goal_variant take VARIANT_N (0 => pool default).
+VARIANT_N = os.environ.get("VARIANT_N", "")
+ALFWORLD_SCENES_PER_CLIENT = os.environ.get("ALFWORLD_SCENES_PER_CLIENT", "")
+ALFWORLD_HOLDOUT_FILE = os.environ.get("ALFWORLD_HOLDOUT_FILE", "")
 _CLIENT_ID = int(CLIENT_ID) if CLIENT_ID not in (None, "") else None
 _CLIENT_NUM = int(CLIENT_NUM) if CLIENT_NUM not in (None, "") else None
 
@@ -142,6 +148,24 @@ def _partition_kwargs() -> dict:
         if fb:
             kw["fallback"] = fb   # 'skip' | 'shared' | 'trial-only'; the partition fn validates
         return kw
+    if s == "scene_disjoint":
+        # scene-level env het (docs/dev_doc/alfworld_env_heterogeneity.md)
+        kw = {"env_div": _float_env("ENV_DIV", ENV_DIV, 0.7)}
+        if ALFWORLD_SCENES_PER_CLIENT.strip():
+            kw["scenes_per_client"] = int(ALFWORLD_SCENES_PER_CLIENT)
+        if ALFWORLD_HOLDOUT_FILE.strip():
+            if not os.path.isfile(ALFWORLD_HOLDOUT_FILE):
+                raise FileNotFoundError(
+                    f"ALFWORLD_HOLDOUT_FILE not found: {ALFWORLD_HOLDOUT_FILE}"
+                )
+            import json as _json
+            with open(ALFWORLD_HOLDOUT_FILE) as _f:
+                kw["holdout_scenes"] = list(_json.load(_f)["scenes"])
+        return kw
+    if s in ("obs_variant", "dyn_variant", "goal_variant"):
+        # kernel-variant arms: games stay the uniform slice; the per-client
+        # grammar/domain/goal rewrite is applied by AlfredTWEnv's kernel wrapper.
+        return {"variant_n": int(VARIANT_N) if VARIANT_N.strip() else 0}
     return {}  # uniform takes no extra kwargs
 
 

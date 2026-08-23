@@ -157,14 +157,16 @@ DEFAULTS = {
     "webshop_replicas": 1,
     "alfworld_train_eval": "train",         # game split: train | eval_in_distribution | eval_out_of_distribution
     "alfworld_task_types": "",               # "" => all 6 types; else comma-sep IDs (1=Pick..6=Pick2) for the eval breakdown
-    "partition_strategy": "",               # "" | catalog_split/task_disjoint/env_disjoint (env) | preference/coverage/hardness (task) | bm25_field_subset/bm25_reweight/lookalike/rank_wrapper (env variants 2-5)
-    "env_div": 0.7,                         # env-het strength: catalog_split (WebShop) AND env_disjoint (ALFWorld)
+    "partition_strategy": "",               # "" | catalog_split/task_disjoint/env_disjoint (env) | preference/coverage/hardness (task) | bm25_field_subset/bm25_reweight/lookalike/rank_wrapper (WebShop env variants 2-5) | scene_disjoint/obs_variant/dyn_variant/goal_variant (ALFWorld env het, docs/dev_doc/alfworld_env_heterogeneity.md)
+    "env_div": 0.7,                         # env-het strength: catalog_split (WebShop) AND env_disjoint/scene_disjoint (ALFWorld)
     "keep_ratio": 0.7,                      # catalog-split distractor density
     "alfworld_fallback": "skip",            # env_disjoint single-scene specs: skip | shared | trial-only
+    "alfworld_scenes_per_client": 8,        # scene_disjoint: scenes per client (stratified /4 room types)
+    "alfworld_holdout_file": "",            # scene_disjoint: OOD holdout json (e.g. data/env_heterogeneity/holdout_alfworld_v1.json)
     "omega": 0.5,                           # preference (task-het) Dirichlet spread
     "size_std": 1.0,                        # coverage (task-het) Beta dispersion (xi)
     "success_std": 1.0,                     # hardness (task-het) Beta dispersion (xi')
-    "variant_n": 0,                         # env-variant arms (bm25/lookalike/rank): # variants in pool (0 => fn default 2/4)
+    "variant_n": 0,                         # env-variant arms (WebShop bm25/lookalike/rank AND ALFWorld obs/dyn/goal_variant): # variants in pool (0 => fn default)
     "trajectories_file": "",                # hardness: REQUIRED task_id->success labels file
     "min_goals_per_client": 100,
     "service_health_timeout": 900,          # seconds to wait for a service /health
@@ -1118,14 +1120,18 @@ def start_alfworld_services(cfg, env_base: dict, client_ids: Optional[List[int]]
                     "MIN_GOALS_PER_CLIENT": str(cfg.min_goals_per_client),
                     # het knobs (the service forwards only the ones its strategy needs ->
                     # AlfredTWEnv -> partition_dataset): preference(omega)/coverage(size_std)/
-                    # hardness(success_std,trajectories_file)/env_disjoint(env_div,fallback).
-                    # uniform ignores them.
+                    # hardness(success_std,trajectories_file)/env_disjoint(env_div,fallback)/
+                    # scene_disjoint(env_div,scenes_per_client,holdout)/obs|dyn|goal_variant
+                    # (variant_n). uniform ignores them.
                     "OMEGA": str(cfg.get("omega", 0.5)),
                     "SIZE_STD": str(cfg.get("size_std", 1.0)),
                     "SUCCESS_STD": str(cfg.get("success_std", 1.0)),
                     "TRAJECTORIES_FILE": str(cfg.get("trajectories_file", "")),
                     "ENV_DIV": str(cfg.env_div),
                     "ALFWORLD_FALLBACK": str(cfg.get("alfworld_fallback", "skip")),
+                    "ALFWORLD_SCENES_PER_CLIENT": str(cfg.get("alfworld_scenes_per_client", 8)),
+                    "ALFWORLD_HOLDOUT_FILE": str(cfg.get("alfworld_holdout_file", "") or ""),
+                    "VARIANT_N": (str(cfg.get("variant_n")) if cfg.get("variant_n", 0) else ""),
                     **alfworld_game_list_env(cfg),          # the shipped per-split game list
                     **alfworld_manifest_env(cfg, str(cfg.get("alfworld_train_eval", "train"))),
                 })
@@ -2740,6 +2746,10 @@ def load_cfg(args) -> "OmegaConf":
     if v and not os.path.isabs(str(v)):
         root_p, pkg_p = REPO_ROOT / str(v), PKG_DIR / str(v)
         cfg["trajectories_file"] = str(pkg_p if (pkg_p.is_file() and not root_p.is_file()) else root_p)
+    # scene_disjoint's OOD holdout list is a repo-root data asset like trajectories_file.
+    v = cfg.get("alfworld_holdout_file")
+    if v and not os.path.isabs(str(v)):
+        cfg["alfworld_holdout_file"] = str(REPO_ROOT / str(v))
     if str(cfg.get("partition_strategy", "")).strip().lower() == "hardness":
         if not cfg.get("trajectories_file"):
             raise ValueError(

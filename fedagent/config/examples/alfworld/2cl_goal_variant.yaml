@@ -1,0 +1,41 @@
+# ALFWorld env-het SMOKE: goal_variant (hidden success predicate, the Lookalike analog).
+# Same proven 2-client recipe as smoke.yaml; the only delta is the partition strategy:
+# every client keeps its uniform game slice and the SAME instruction text, but client
+# k's win condition is rewritten per variant_for_client(strategy, k) -- e.g. under
+# v_examined the goal receptacle must additionally have been examined. Validation stays
+# on the shared unperturbed val service. See docs/dev_doc/alfworld_env_heterogeneity.md.
+# obs_variant / dyn_variant smokes: copy this file and switch partition_strategy.
+
+env_kind: alfworld
+env_spec: config/envs/alfworld.yaml
+output_dir: outputs/fedagent_alfworld_goal_variant_smoke
+model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
+
+total_clients: 2
+clients_per_round: 2
+total_rounds: 2
+epochs_per_round: 1
+base_seed: 42
+
+n_gpus_per_node: 4
+total_training_steps: 4
+save_freq: 4
+wait_between_clients: 8
+
+partition_strategy: goal_variant
+variant_n: 4                    # seed-42 assignment at 2 clients: client0=v_closed, client1=v_default
+                                # (at variant_n=2 both smoke clients happen to draw v_default -- no asymmetry)
+alfworld_pool_size: 16          # >= gen_batch (train_batch_size 8 x rollout.n 2 = 16)
+alfworld_base_port: 8200
+alfworld_train_eval: train
+
+client_overrides:
+  - data.train_batch_size=8     # proven WebShop batch shape on 4 GPUs (divisible by force_group_size*micro_batch)
+  - data.max_prompt_length=2048
+  - data.max_response_length=4096
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=2
+  - actor_rollout_ref.rollout.prompt_length=2048
+  - actor_rollout_ref.rollout.response_length=4096
+  - actor_rollout_ref.rollout.max_model_len=8192
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.5   # headroom on shared 4-GPU node

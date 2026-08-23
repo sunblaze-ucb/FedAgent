@@ -12,6 +12,11 @@ import textworld.gym
 from alfworld.agents.utils.misc import Demangler, add_task_to_grammar
 from alfworld.agents.expert import HandCodedTWAgent, HandCodedAgentTimeout
 from agent_system.environments.partition_strategy import partition_dataset, get_partition_info, visualize_alfworld_client_category_distribution, visualize_all_clients_category_distribution, visualize_coverage_normal_distribution
+from agent_system.environments.alfworld_kernel_variants import (
+    KERNEL_VARIANT_STRATEGIES,
+    make_kernel_wrapper,
+    variant_for_client,
+)
 
 
 TASK_TYPES = {1: "pick_and_place_simple",
@@ -124,6 +129,7 @@ class AlfredTWEnv(object):
         self.partition_strategy = partition_strategy
         self.min_games_per_client = min_games_per_client
         self.partition_kwargs = partition_kwargs  # Extra parameters for the partition strategy
+        self.kernel_variant = None  # set by slice_games_for_client for the *_variant arms
         self.start_idx = start_idx
         self.end_idx = end_idx
         if config["env"]["goal_desc_human_anns_prob"] > 0:
@@ -710,20 +716,70 @@ class AlfredTWEnv(object):
                       f"run tools/env_heterogeneity/viz_alfworld_partition.py offline)")
             except Exception as e:
                 print(f"[ENV-AlfWorld] viz hook failed: {e}")
+        elif self.partition_strategy == 'scene_disjoint':
+            # Env-level heterogeneity, scene granularity (Catalog-Split analog):
+            # room-type-stratified scene top-k, FIXED per-client game count,
+            # task-type quota matched to the global marginal.
+            # See docs/dev_doc/alfworld_env_heterogeneity.md
+            client_games_slice = partition_dataset(
+                data=game_files,
+                strategy=self.partition_strategy,
+                client_id=client_id_zero_based,
+                client_num=self.client_num,
+                min_samples_per_client=self.min_games_per_client,
+                start_idx=0,
+                data_type='alfworld',
+                **self.partition_kwargs
+            )
+            self.game_files = client_games_slice
+        elif self.partition_strategy in KERNEL_VARIANT_STRATEGIES:
+            # Kernel-variant arms (obs_variant / dyn_variant / goal_variant): the game
+            # split stays the UNIFORM contiguous slice (the homogeneous-baseline task
+            # split, mirroring WebShop env variants 2-5); the heterogeneity is the
+            # per-client rewrite of grammar / pddl_domain / pddl_problem, applied at
+            # episode load time by the kernel wrapper init_env() inserts.
+            # See docs/dev_doc/alfworld_env_heterogeneity.md
+            result = partition_dataset(
+                data=game_files,
+                strategy='uniform',
+                client_id=client_id_zero_based,
+                client_num=self.client_num,
+                min_samples_per_client=self.min_games_per_client,
+                start_idx=0,
+                data_type='alfworld'
+            )
+            client_games_slice, start_slice, end_slice = result
+            self.game_files = client_games_slice
+            variant_n = int(self.partition_kwargs.get('variant_n', 0) or 0)
+            self.kernel_variant = variant_for_client(
+                self.partition_strategy, client_id_zero_based, variant_n
+            )
+            print(f"[KERNEL-AlfWorld] client {client_id_zero_based}/{self.client_num}: "
+                  f"strategy={self.partition_strategy} "
+                  f"variant={self.kernel_variant['key']} (pool N={self.kernel_variant['n']}) "
+                  f"games={len(client_games_slice)} slice=[{start_slice}:{end_slice}]")
         else:
             raise ValueError(f"Invalid partition strategy: {self.partition_strategy}. "
-                             f"Supported: uniform, preference, coverage, hardness, env_disjoint")
+                             f"Supported: uniform, preference, coverage, hardness, env_disjoint, "
+                             f"scene_disjoint, obs_variant, dyn_variant, goal_variant")
         
-        # Get the partition info for log output
+        # Get the partition info for log output. The kernel-variant arms slice games
+        # UNIFORMLY (their heterogeneity lives in the per-client kernel rewrite, not
+        # the game split), so their info row is the uniform one; variant_n is not a
+        # partition_dataset kwarg.
+        if self.partition_strategy in KERNEL_VARIANT_STRATEGIES:
+            _info_strategy, _info_kwargs = 'uniform', {}
+        else:
+            _info_strategy, _info_kwargs = self.partition_strategy, self.partition_kwargs
         partition_info = get_partition_info(
             data=game_files,
-            strategy=self.partition_strategy,
+            strategy=_info_strategy,
             client_id=client_id_zero_based,
             client_num=self.client_num,
             min_samples_per_client=self.min_games_per_client,
             start_idx=0,
             data_type='alfworld',
-            **self.partition_kwargs
+            **_info_kwargs
         )
         
         if self.partition_strategy == 'uniform':
@@ -906,6 +962,28 @@ class AlfredTWEnv(object):
 
         alfred_demangler = AlfredDemangler(shuffle=domain_randomization)
         wrappers = [alfred_demangler, AlfredInfos]
+
+        # fedagent: per-client hidden-kernel rewrite (obs/dyn/goal_variant arms).
+        # Wrapper lists build inner->outer, so PREPENDING makes the kernel wrapper
+        # innermost: the outer AlfredInfos still records the ORIGINAL game path
+        # (extra.gamefile / seed==index mode unaffected) while the backend loads
+        # the rewritten copy. Train split only -- eval/val stays unperturbed
+        # (science red line). See docs/dev_doc/alfworld_env_heterogeneity.md
+        if getattr(self, "kernel_variant", None) and self.train_eval == "train":
+            wrappers = [make_kernel_wrapper(self.kernel_variant)] + wrappers
+
+        # fedagent: scene_disjoint canonicalizes the task WORDING (the generator
+        # froze one of two templates per goal type into each game -- scene-
+        # independent noise, but across scene-disjoint client shards it becomes a
+        # lexical tau leak). Canonicalization makes the arm's tau-invariance hold
+        # by construction. Train split only; val (uniform) never sees it.
+        # See docs/dev_doc/alfworld_env_heterogeneity.md (1.2) and
+        # docs/dev_doc/alfworld_query_env_decoupling.md (3.3).
+        if self.partition_strategy == "scene_disjoint" and self.train_eval == "train":
+            from agent_system.environments.alfworld_kernel_variants import (
+                make_task_normalizer_wrapper,
+            )
+            wrappers = [make_task_normalizer_wrapper()] + wrappers
 
         # Register a new Gym environment.
         request_infos = textworld.EnvInfos(won=True, admissible_commands=True, extras=["gamefile"])
