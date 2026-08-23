@@ -348,7 +348,7 @@ python -m fedagent.fed.run_fed --config <...same...> \
 
 # Environment-level heterogeneity (Catalog Split)
 python -m fedagent.fed.run_fed \
-  --config fedagent/config/paper/env_heterogeneity/catalog_split/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-catalog_split_div-0.7_keep-0.7.yaml
+  --config fedagent/config/paper/env_heterogeneity/grpo/webshop/catalog_split/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-catalog_split_div-0.7_keep-0.7.yaml
 
 # Centralized baseline (total_clients=1)
 python -m fedagent.fed.run_fed \

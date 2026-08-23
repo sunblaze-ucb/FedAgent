@@ -131,10 +131,12 @@ applies three fixes surfaced by the WebShop/ALFWorld implementation audits:
 
 ## Config tree
 
-The paper configs (`fedagent/config/paper/`) mirror the original `config/` tree 1:1 in
+The paper configs (`fedagent/config/paper/`) mirror the original `config/` tree in
 structure and naming, `uniform/<Model>/<setting>/<algo>/`, `env_heterogeneity/`,
-`task_heterogeneity/{grpo,ppo}/{env}/`, `decentralized/`: 176 configs total (see
-[reproducing.md](./reproducing.md)). The one intentional deviation: **centralized/local
+`task_heterogeneity/{grpo,ppo}/{env}/`, `decentralized/`: 194 configs total (see
+[reproducing.md](./reproducing.md); `env_heterogeneity/` was restructured 2026-08-23
+to `{grpo,ppo}/{webshop,alfworld}/<arm>/` when it grew its ALFWorld side — old→new
+map in the generated `env_heterogeneity/README.md`). The one intentional deviation: **centralized/local
 baselines use T=70 × E=3 (=210 epochs)** rather than the original's 1 round × 210 epochs,
 because the verl-0.8 runner draws goal variety from **rounds** (the round-threaded seed), so a
 single round would repeat the same goals. Same total epochs; correct goal coverage.

@@ -288,6 +288,7 @@ once per process).
   co-tenant on one 8×H100 node, Qwen2.5-1.5B-Instruct, WebShop 15-turn:
   - **GRPO, GPUs 0-3** (run `fed_webshop_grpo_envhet_rankwrapper_N4_fedprox_qwen1.5b`):
     `config/paper_accelerated/env_heterogeneity/rank_wrapper/fed_webshop_grpo_…_p-rank_wrapper_N-4.yaml`
+    (path as of that run; since the 2026-08-23 restructure: `env_heterogeneity/grpo/webshop/rank_wrapper/…`)
     + `--fedprox-mu 0.01` (CLI override — no committed fedprox variant exists, and 0.01 is
     the fork's paper default, NOT the 0.1 the example configs show), gmu 0.6. The dying
     process had resumed at round 3; it completed rounds 3-10 and OOM'd in round 11

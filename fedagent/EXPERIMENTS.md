@@ -305,7 +305,7 @@ Priority order; each row updated to ✅ with results as it lands. "Cost" = rough
 | 4 | **Faithful task variants**: Preference(ω)✅wired, Coverage(ξ)✅wired, Hardness(ξ')✅wired | **CODE DONE** (run pending) | ~3h | canonical task arm (vs the task_disjoint stand-in) |
 | 5 | **Other env variants**: Field-Subset, BM25 Reweight, Lookalike, Rank Wrapper | **CODE DONE** (ported+wired+verified; run pending) | ~4h | full env-het suite (Patterns B/C/D) |
 | 6 | **Baselines**: Local (1 client), Centralized (1 client, all data) | configs only | ~2h | FedAgent vs Centralized vs Local |
-| 7 | **ALFWorld** env_disjoint | **SERVICE SMOKE ✅ + fed plumbing DONE** (federated GPU run pending) | ~4h | 2nd environment, env-het generality |
+| 7 | **ALFWorld env-het suite**: scene_disjoint + obs/dyn/goal_variant (supersedes env_disjoint) + query×env cell library | **CODE DONE + CPU-VERIFIED** (270 planner combos 0-unsolvable; 0.5B federated GPU smoke in flight 2026-08-23) | ~4h | 2nd environment, env-het generality — [dev doc](docs/dev_doc/alfworld_env_heterogeneity.md), [comparison](docs/dev_doc/webshop_vs_alfworld_env_heterogeneity.md) |
 | 8 | **PPO** variants of the key conditions | config (verl native PPO) | ~3h | GRPO + PPO coverage |
 | 9 | **Phase 8-full**: 3 seeds × E×T=210 × {1.5B,3B,7B} × {GRPO,PPO}, unperturbed val | all above + ops resume | large (needs a dedicated allocation) | full reproduction vs 0.3.1 |
 

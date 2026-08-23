@@ -99,7 +99,7 @@ python -m fedagent.fed.run_fed --config \
 
 # Environment-level heterogeneity: catalog split (div 0.7):
 python -m fedagent.fed.run_fed --config \
-  fedagent/config/paper/env_heterogeneity/catalog_split/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-catalog_split_div-0.7_keep-0.7.yaml
+  fedagent/config/paper/env_heterogeneity/grpo/webshop/catalog_split/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-catalog_split_div-0.7_keep-0.7.yaml
 
 # Task-level heterogeneity: preference skew (omega 0.99):
 python -m fedagent.fed.run_fed --config \
@@ -152,7 +152,7 @@ heterogeneity and decentralized families are run on a single backbone
 |---|---|---|---|---|
 | **[Uniform (main)](#1-uniform-the-main-table)** | `uniform/<Model>/{main,main_seed1,main_seed2}/{grpo,ppo}/` | Main table **FedAgent** rows + the training-dynamics curve | 4 | (in 112) |
 | **[Uniform (baselines)](#1-uniform-the-main-table)** | `uniform/<Model>/{centralized,local_client1-3}/{grpo,ppo}/` | Main table **Centralized** + **Local Agent** rows | 4 | (in 112) |
-| **[Env heterogeneity](#2-environment-level-heterogeneity-the-worst-case-non-robust-study)** | `env_heterogeneity/<strategy>[_ppo]/` | The env-variant figure (worst-case non-robust) | Qwen2.5-1.5B | 16 |
+| **[Env heterogeneity](#2-environment-level-heterogeneity-the-worst-case-non-robust-study)** | `env_heterogeneity/{grpo,ppo}/{webshop,alfworld}/<arm>/` | The env-variant figure (worst-case non-robust), both benchmarks; grpo = full knob sweep, ppo = most-divergent point (map: [env_heterogeneity/README.md](../config/paper/env_heterogeneity/README.md)) | Qwen2.5-1.5B | 34 |
 | **[Task heterogeneity](#3-task-level-heterogeneity-the-robust-study)** | `task_heterogeneity/{grpo,ppo}/{webshop,alfworld}/` | The task-het figure, 6 sub-type × benchmark panels (robust) | Qwen2.5-1.5B | 24 |
 | **[Decentralized](#4-decentralized-protocol-ablations)** | `decentralized/{ep_per_round_change,samples_change,selected_cl_change}/{grpo,ppo}/` | The protocol-sensitivity ablation figure | Qwen2.5-1.5B | 24 |
 
@@ -313,13 +313,21 @@ conda activate fedagent-verl08
 
 # Catalog Split, full divergence, GRPO:
 python -m fedagent.fed.run_fed --config \
-  fedagent/config/paper/env_heterogeneity/catalog_split/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-catalog_split_div-1.0_keep-0.7.yaml
+  fedagent/config/paper/env_heterogeneity/grpo/webshop/catalog_split/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-catalog_split_div-1.0_keep-0.7.yaml
 
 # Lookalike Injection, GRPO vs PPO (the worst-case contrast):
 python -m fedagent.fed.run_fed --config \
-  fedagent/config/paper/env_heterogeneity/lookalike_injection/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-lookalike_injection_N-4.yaml
+  fedagent/config/paper/env_heterogeneity/grpo/webshop/lookalike_injection/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-lookalike_injection_N-4.yaml
 python -m fedagent.fed.run_fed --config \
-  fedagent/config/paper/env_heterogeneity/lookalike_injection_ppo/fed_webshop_ppo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-lookalike_injection_N-4.yaml
+  fedagent/config/paper/env_heterogeneity/ppo/webshop/lookalike_injection/fed_webshop_ppo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-lookalike_injection_N-4.yaml
+
+# ALFWorld: Scene Disjoint (full divergence) + goal_variant, its GRPO-vs-PPO pair:
+python -m fedagent.fed.run_fed --config \
+  fedagent/config/paper/env_heterogeneity/grpo/alfworld/scene_disjoint/fed_alfworld_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-scene_disjoint_div-1.0_spc-8.yaml
+python -m fedagent.fed.run_fed --config \
+  fedagent/config/paper/env_heterogeneity/grpo/alfworld/goal_variant/fed_alfworld_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-goal_variant_N-4.yaml
+python -m fedagent.fed.run_fed --config \
+  fedagent/config/paper/env_heterogeneity/ppo/alfworld/goal_variant/fed_alfworld_ppo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-goal_variant_N-4.yaml
 ```
 
 ### Notes

@@ -49,7 +49,7 @@ for the config-to-figure mapping read [`./reproducing.md`](./reproducing.md).
 | Level | Channel perturbed | Observable to policy? | WebShop arms | ALFWorld arms |
 |---|---|---|---|---|
 | **Task** | goal distribution `D_tau` over a **shared, unperturbed** environment | **yes** (goal is in the prompt) | `preference`, `coverage`, `hardness`, plus the `task_disjoint` ablation | `preference`, `coverage`, `hardness` |
-| **Environment** | **transition kernel `P` / catalog** (the retrieval pipeline) | **no** (only via successor states) | `catalog_split` + 4 retrieval-pipeline variants (`bm25_field_subset`, `bm25_reweight`, `lookalike`, `rank_wrapper`) | *(none, WebShop-specific)* |
+| **Environment** | **transition kernel `P` / catalog** (the retrieval pipeline) | **no** (only via successor states) | `catalog_split` + 4 retrieval-pipeline variants (`bm25_field_subset`, `bm25_reweight`, `lookalike`, `rank_wrapper`) | `scene_disjoint` + 3 kernel variants (`obs_variant`, `dyn_variant`, `goal_variant`) — [dev doc](./dev_doc/alfworld_env_heterogeneity.md) |
 
 Throughout the **task-level** sweep the transition kernel is held fixed (every
 client searches the **full 1000-product catalog**); throughout the
@@ -251,13 +251,13 @@ environment variants perturb across them:
 3. **matching**: *how a query is scored* (the BM25 ranking function);
 4. **rendering**: *how the ranked page is presented* to the agent.
 
-| Variant (paper) | Stage(s) | `run_fed` strategy | Verbatim constructor | Config dir |
+| Variant (paper) | Stage(s) | `run_fed` strategy | Verbatim constructor | Config dir (under `env_heterogeneity/{grpo,ppo}/webshop/`) |
 |---|---|---|---|---|
-| **Catalog Split** (Variant 1) | content | `catalog_split` | `_distractor_disjoint_partition_webshop_v5` | `env_heterogeneity/catalog_split/` |
-| **Field-Subset Index** (Variant 2) | encoding | `bm25_field_subset` | `_bm25_variant_partition_webshop` (`fields_only` pool) | `env_heterogeneity/field_subset_index/` |
-| **BM25 Reweighting** (Variant 3) | matching | `bm25_reweight` | `_bm25_variant_partition_webshop` (default pool) | `env_heterogeneity/bm25_reweighting/` |
-| **Lookalike Injection** (Variant 4) | content + matching | `lookalike` | `_lookalike_injection_partition_webshop` | `env_heterogeneity/lookalike_injection/` |
-| **Rank Wrapper** (Variant 5) | rendering | `rank_wrapper` | `_rank_wrapper_partition_webshop` | `env_heterogeneity/rank_wrapper/` |
+| **Catalog Split** (Variant 1) | content | `catalog_split` | `_distractor_disjoint_partition_webshop_v5` | `catalog_split/` |
+| **Field-Subset Index** (Variant 2) | encoding | `bm25_field_subset` | `_bm25_variant_partition_webshop` (`fields_only` pool) | `field_subset_index/` |
+| **BM25 Reweighting** (Variant 3) | matching | `bm25_reweight` | `_bm25_variant_partition_webshop` (default pool) | `bm25_reweighting/` |
+| **Lookalike Injection** (Variant 4) | content + matching | `lookalike` | `_lookalike_injection_partition_webshop` | `lookalike_injection/` |
+| **Rank Wrapper** (Variant 5) | rendering | `rank_wrapper` | `_rank_wrapper_partition_webshop` | `rank_wrapper/` |
 
 > **Naming caution.** The Catalog-Split helper's `_v4`/`_v5` suffix is an
 > **implementation-revision number of paper Variant 1**, *not* paper Variant 4
@@ -446,35 +446,54 @@ values are the endpoints actually present under
 | `preference` | task | WebShop, ALFWorld | `omega` -> `OMEGA` | `{0.01, 0.99}` | `task_heterogeneity/{grpo,ppo}/{webshop,alfworld}/...preference_omega-*` |
 | `coverage` | task | WebShop, ALFWorld | `size_std` -> `SIZE_STD` | `{256, 1}` | `..._coverage_std-*` |
 | `hardness` | task | WebShop, ALFWorld | `success_std` -> `SUCCESS_STD` (+ `trajectories_file` -> `TRAJECTORIES_FILE`) | `{256, 1}` | `..._hardness_success_std-*` |
-| `task_disjoint` | task | WebShop | `env_div`, `keep_ratio` -> `ENV_DIV`, `KEEP_RATIO` | matches `catalog_split` | env-effect ablation against `catalog_split` |
-| `catalog_split` | environment | WebShop | `env_div`, `keep_ratio` -> `ENV_DIV`, `KEEP_RATIO` | `env_div in {0.0, 0.3, 0.7, 1.0}`, `keep_ratio 0.7` | `env_heterogeneity/catalog_split[_ppo]/...div-*_keep-0.7` |
-| `bm25_field_subset` | environment | WebShop | `variant_n` -> `VARIANT_N` | `{4, 8}` | `env_heterogeneity/field_subset_index[_ppo]/...field_subset_index_N-*` |
-| `bm25_reweight` | environment | WebShop | `variant_n` -> `VARIANT_N` | `{4, 8}` | `env_heterogeneity/bm25_reweighting[_ppo]/...bm25_reweighting_N-*` |
-| `lookalike` | environment | WebShop | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/lookalike_injection[_ppo]/...lookalike_injection_N-*` |
-| `rank_wrapper` | environment | WebShop | `variant_n` -> `VARIANT_N` | `4` | `env_heterogeneity/rank_wrapper[_ppo]/...rank_wrapper_N-*` |
-| `env_disjoint` | environment | ALFWorld | `env_div`, `alfworld_fallback` -> `ENV_DIV`, `ALFWORLD_FALLBACK` | — (no paper arm) | none — code-supported scene-disjoint partition, unreported |
+| `task_disjoint` | task | WebShop | `env_div`, `keep_ratio` -> `ENV_DIV`, `KEEP_RATIO` | matches `catalog_split` (4-point sweep, GRPO-only) | `env_heterogeneity/grpo/webshop/task_disjoint/` — the env-effect ablation against `catalog_split` |
+| `catalog_split` | environment | WebShop | `env_div`, `keep_ratio` -> `ENV_DIV`, `KEEP_RATIO` | `env_div in {0.0, 0.3, 0.7, 1.0}`, `keep_ratio 0.7` | `env_heterogeneity/{grpo,ppo}/webshop/catalog_split/...div-*_keep-0.7` |
+| `bm25_field_subset` | environment | WebShop | `variant_n` -> `VARIANT_N` | `{4, 8}` | `env_heterogeneity/{grpo,ppo}/webshop/field_subset_index/...N-*` |
+| `bm25_reweight` | environment | WebShop | `variant_n` -> `VARIANT_N` | `{4, 8}` | `env_heterogeneity/{grpo,ppo}/webshop/bm25_reweighting/...N-*` |
+| `lookalike` | environment | WebShop | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/webshop/lookalike_injection/...N-*` |
+| `rank_wrapper` | environment | WebShop | `variant_n` -> `VARIANT_N` | `4` | `env_heterogeneity/{grpo,ppo}/webshop/rank_wrapper/...N-*` |
+| `env_disjoint` | environment | ALFWorld | `env_div`, `alfworld_fallback` -> `ENV_DIV`, `ALFWORLD_FALLBACK` | — (no paper arm) | none — code-supported (scene, trial) instance partition, unreported; superseded by `scene_disjoint` |
+| `scene_disjoint` | environment | ALFWorld | `env_div`, `alfworld_scenes_per_client`, `alfworld_holdout_file` -> `ENV_DIV`, `ALFWORLD_SCENES_PER_CLIENT`, `ALFWORLD_HOLDOUT_FILE` | `env_div in {0.0, 0.3, 0.7, 1.0}`, `spc 8` | `env_heterogeneity/{grpo,ppo}/alfworld/scene_disjoint/...div-*_spc-8`; [dev doc](./dev_doc/alfworld_env_heterogeneity.md); smoke `examples/alfworld/2cl_scene_disjoint.yaml` |
+| `obs_variant` | environment | ALFWorld | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/alfworld/obs_variant/...N-*` — grammar (observation-kernel) rewrites, [dev doc](./dev_doc/alfworld_env_heterogeneity.md) |
+| `dyn_variant` | environment | ALFWorld | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/alfworld/dyn_variant/...N-*` — pddl_domain (action pre/effect) rewrites, [dev doc](./dev_doc/alfworld_env_heterogeneity.md) |
+| `goal_variant` | environment | ALFWorld | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/alfworld/goal_variant/...N-*` — hidden success-predicate rewrites (Lookalike analog), [dev doc](./dev_doc/alfworld_env_heterogeneity.md); smoke `examples/alfworld/2cl_goal_variant.yaml` |
 
 Notes:
 
+- **Layout (restructured 2026-08-23)**: the `env_heterogeneity/` config family
+  uses the task_heterogeneity convention
+  `env_heterogeneity/{grpo,ppo}/{webshop,alfworld}/<arm>/` in both
+  `config/paper/` and `config/paper_accelerated/`. Each arm's `grpo/` directory
+  holds the **full knob sweep** (every heterogeneity degree the construction
+  supports); its `ppo/` directory holds the single **most-divergent** point (the
+  GRPO-vs-PPO pair). A generated
+  [`env_heterogeneity/README.md`](../config/paper/env_heterogeneity/README.md)
+  maps every cell and records the old flat `<arm>[_ppo]/` -> new path mapping
+  (file names unchanged). Regenerate with `python -m tools.gen_paper_configs
+  [--accel]`.
 - The env-variant **config directory names** (`field_subset_index`,
   `bm25_reweighting`, `lookalike_injection`) differ from the `partition_strategy`
   **values** (`bm25_field_subset`, `bm25_reweight`, `lookalike`). The strategy
   value is what the service dispatches on.
 - `variant_n` is the number of variants in the per-client pool (passed as `N`). A
-  value of `0` means "use the constructor default" (4 for bm25/rank, 2 for
-  lookalike); the paper configs set it explicitly.
-- The multi-point sweeps (`catalog_split` 4-point `env_div`; bm25/field-subset
-  `N in {4,8}`; lookalike `N in {2,4}`) exist only in the GRPO directories; each
-  `*_ppo` sibling holds a single config (the most-divergent sweep point) for the
-  GRPO-vs-PPO comparison.
+  value of `0` means "use the constructor default" (4 for bm25/rank/ALFWorld
+  variants, 2 for lookalike); the paper configs set it explicitly.
 - **ALFWorld** gets only the env-agnostic task-level subset (`preference` /
-  `coverage` / `hardness`) in the paper; there is no `env_heterogeneity/`
-  ALFWorld config family because the WebShop variants perturb WebShop's
+  `coverage` / `hardness`) in the paper; the WebShop variants perturb WebShop's
   retrieval pipeline specifically and do not transfer. The code additionally
-  ships `env_disjoint` (scene-disjoint (scene, trial) top-k per spec, optional
+  ships `env_disjoint` (instance-level (scene, trial) top-k per spec, optional
   `holdout_scenes` OOD reserve) — no reported result uses it, and its knobs only
   reach the service since 2026-07-28 ([bugfixes.md](./bugfixes.md)): earlier
   env_disjoint runs always executed `env_div=0.7`, `fallback='skip'`.
+  **Since 2026-08-22** ALFWorld has its own four-arm env-het suite
+  (`scene_disjoint` + `obs_variant`/`dyn_variant`/`goal_variant`, the ALFWorld
+  analogs of Catalog Split and the WebShop kernel variants): construction,
+  measured divergence and verification protocol live in
+  [dev_doc/alfworld_env_heterogeneity.md](./dev_doc/alfworld_env_heterogeneity.md),
+  and since **2026-08-23** the suite has its full paper config family at
+  `env_heterogeneity/{grpo,ppo}/alfworld/` (scene_disjoint 4-point `env_div`
+  sweep + the three kernel variants at `N in {2,4}`, each with a PPO
+  most-divergent sibling) in both `config/paper/` and `config/paper_accelerated/`.
 
 ---
 
@@ -524,6 +543,27 @@ The env-variant arms set `search_return_n: 200`: raising the BM25 top-K keeps th
 rendered result page full after aggressive per-client filtering so a target is
 never silently dropped. The task-level arms leave it at the engine default (50),
 matching the non-het baselines.
+
+**Scene Disjoint** (ALFWorld env level), the four-point `env_div` sweep:
+
+```yaml
+env_kind: alfworld
+partition_strategy: scene_disjoint
+env_div: 1.0                    # 0.0 byte-identical shards -> 1.0 disjoint FloorPlans
+alfworld_scenes_per_client: 8   # stratified 2 per room type
+```
+
+An **ALFWorld kernel-variant** arm mirrors the WebShop variant shape:
+
+```yaml
+env_kind: alfworld
+partition_strategy: goal_variant   # or obs_variant / dyn_variant
+variant_n: 4                       # pool size; N=2 = [control, strongest-universal]
+```
+
+Ready-made cells for every point above live under
+`config/{paper,paper_accelerated}/env_heterogeneity/{grpo,ppo}/{webshop,alfworld}/`
+(see the family [README](../config/paper/env_heterogeneity/README.md)).
 
 ---
 

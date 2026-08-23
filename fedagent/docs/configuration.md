@@ -223,7 +223,7 @@ filenames:
 | Family | Layout | What varies |
 |---|---|---|
 | `uniform/<Model>/<setting>/<algo>/` | per-backbone IID + baselines | the **setting** (see below). |
-| `env_heterogeneity/<strategy>[_ppo]/` | webshop only | the env-level perturbation strategy (`_ppo` => `adv_estimator: gae`). |
+| `env_heterogeneity/<algo>/<env>/<arm>/` | grpo+ppo × webshop+alfworld | the env-level perturbation arm; `grpo/` = full knob sweep, `ppo/` = the most-divergent point (`adv_estimator: gae`). Restructured 2026-08-23 (was flat webshop-only `<strategy>[_ppo]/`); map in the generated `env_heterogeneity/README.md`. |
 | `task_heterogeneity/<algo>/<env>/` | grpo+ppo × webshop+alfworld | the task-level partition (preference / coverage / hardness). |
 | `decentralized/<change>/<algo>/` | webshop+alfworld | one protocol knob (`selected_cl_change` => M∈{1,4}; `ep_per_round_change` => (E,T)∈{(1,210),(5,42)}; `samples_change` => G∈{500,1000}). |
 

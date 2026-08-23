@@ -19,8 +19,8 @@ config/
 │   ├── webshop/                       #   *_long / probe / fedprox / 2cl_catalog_split smokes
 │   │   └── scaled/                    #   the 15 scaled WebShop arms (homog, task, pref, …, ppo)
 │   └── alfworld/                      #   smoke.yaml + paper.yaml (env-het, 8cl x 70rd)
-├── paper/                     # generated paper matrix (176): uniform/ env_heterogeneity/ task_heterogeneity/ decentralized/
-└── paper_accelerated/         # the same 176 cells + the A/B-equivalent acceleration stack (gen_paper_configs.py --accel)
+├── paper/                     # generated matrix (194): uniform/ env_heterogeneity/ task_heterogeneity/ decentralized/
+└── paper_accelerated/         # the same 194 cells + the A/B-equivalent acceleration stack (gen_paper_configs.py --accel)
 ```
 
 See the top-level [`../README.md`](../README.md) for the project overview,
@@ -187,15 +187,20 @@ FSDP, unperturbed validation). It mirrors the **original FedAgent `config/` tree
 structure + naming**: the four experiment families and the descriptive
 `fed_<env>_<algo>_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-<strategy>_<knobs>.yaml`
 filenames; only the file *contents* are verl-0.8 `run_fed.py` configs (the migration changed
-the runner, not the experiment design). **176 configs** total:
+the runner, not the experiment design). **194 configs** total (the paper's 176 +
+the 2026-08-23 env-het extension):
 
 ```
 paper/
 ├── uniform/<Model>/{main,main_seed1,main_seed2,centralized,local_client1-3}/{grpo,ppo}/   112
 │       4 backbones × 7 settings × {grpo,ppo} × {webshop,alfworld}; p-uniform
-├── env_heterogeneity/<strategy>[_ppo]/                                                      16
-│       Qwen2.5-1.5B, WebShop only: catalog_split, bm25_reweighting, field_subset_index,
-│       lookalike_injection, rank_wrapper
+├── env_heterogeneity/{grpo,ppo}/{webshop,alfworld}/<arm>/                                   34
+│       Qwen2.5-1.5B. grpo/ = each arm's FULL knob sweep; ppo/ = its most-divergent point.
+│       webshop: catalog_split(div 0/0.3/0.7/1.0) + task_disjoint ablation(div sweep),
+│                field_subset_index(N4,8), bm25_reweighting(N4,8), lookalike_injection(N2,4),
+│                rank_wrapper(N4)
+│       alfworld: scene_disjoint(div 0/0.3/0.7/1.0, spc 8), obs/dyn/goal_variant(N2,4)
+│       (restructured 2026-08-23; cell map + old→new paths in env_heterogeneity/README.md)
 ├── task_heterogeneity/{grpo,ppo}/{webshop,alfworld}/                                        24
 │       Qwen2.5-1.5B: preference(ω), coverage(ξ), hardness(ξ′)
 └── decentralized/{ep_per_round_change,samples_change,selected_cl_change}/{grpo,ppo}/        24
