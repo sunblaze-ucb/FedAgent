@@ -96,7 +96,22 @@ Regenerate the whole tree (it is generated, never hand-edited):
 
 ```bash
 python tools/gen_paper_configs.py --accel
+python tools/gen_paper_configs.py --accel --n-gpus 1   # -> config/paper_accelerated_1gpu/ (below)
 ```
+
+### The single-H100 tree: `config/paper_accelerated_1gpu/`
+
+`--n-gpus 1` emits the same 194 accelerated cells with `n_gpus_per_node: 1` (FSDP world size 1,
+NO_SHARD). The science is untouched (prompts, `rollout.n`, minibatch, lr, KL, seeds, eval cadence);
+only per-GPU memory placement changes: vLLM `gpu_memory_utilization` 0.5 (GRPO) / 0.4 (PPO)
+because actor (+ critic) and engine share one 80 GB card, GRPO gains
+`actor.fsdp_config.optimizer_offload=true` (PPO already had it), and every config carries a
+`port_band_base` cycling over four disjoint 3300-port bands (5000/8400/11800/15200) so **four
+single-GPU cells can share one 4-GPU node**. To co-host them, launch each driver with
+`CUDA_VISIBLE_DEVICES=<k>` (its physical card) and its own `--output-dir`: `run_fed` maps its lane
+pins through the driver's `CUDA_VISIBLE_DEVICES` (2026-09-10; before that the pin was the literal
+`"0"`, so every co-hosted cell landed on physical GPU 0). Do not rely on `srun --overlap
+--gres=gpu:1` steps for the split: overlapping steps are all handed the same GPU.
 
 ---
 

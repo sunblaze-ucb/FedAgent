@@ -1457,6 +1457,24 @@ def select_clients(round_num: int, total: int, per_round: int, base_seed: int,
     return sorted(rng.sample(range(total), per_round))
 
 
+def _phys_gpu_ids(lo: int, hi: int) -> str:
+    """GPU ids [lo, hi) for a CUDA_VISIBLE_DEVICES pin, mapped through the DRIVER's own
+    CUDA_VISIBLE_DEVICES when one is set. Every pin below used to write literal ids
+    (``"0"`` for lane 0), which a child interprets against the PHYSICAL device list -- so a
+    driver launched with ``CUDA_VISIBLE_DEVICES=2 ... --n-gpus 1`` still trained on physical
+    GPU 0, and four single-GPU cells on one 4-GPU node all piled onto the same card. Mapping
+    through the parent's list makes ``CUDA_VISIBLE_DEVICES=k`` mean "this run owns physical
+    GPU k". Unset => the legacy literal ids (byte-identical behavior)."""
+    vis = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not vis:
+        return ",".join(str(g) for g in range(lo, hi))
+    ids = [x.strip() for x in vis.split(",") if x.strip()]
+    if hi > len(ids):
+        raise ValueError(f"need GPUs [{lo},{hi}) but the driver's CUDA_VISIBLE_DEVICES={vis!r} "
+                         f"exposes only {len(ids)}; lower n_gpus_per_node/eval_gpus or widen the list")
+    return ",".join(ids[lo:hi])
+
+
 def _port_band_env(cfg, slot: int) -> dict:
     """Deterministic per-process port band for the random-port pickers inside a verl
     trainer/eval (see DEFAULTS ``port_band_base``; mechanism in fedagent/port_band.py).
@@ -1765,7 +1783,7 @@ def _run_round_lanes(cfg, round_num: int, selected: List[int], model_path: str, 
             cmd, env = _persistent_cmd_env(cfg, plan, pp, model_path, critic_model_path,
                                            round_num, env_base, n_gpus=per,
                                            worker_eval=(l == lane_ids[0]), lane=l)
-            gpus = ",".join(str(g) for g in range(l * per, (l + 1) * per))
+            gpus = _phys_gpu_ids(l * per, (l + 1) * per)   # honors the driver's CUDA_VISIBLE_DEVICES
             env["CUDA_VISIBLE_DEVICES"] = gpus
             rtmp = f"/tmp/ray_fedlane{l}_{_RUN_TAG}"
             os.makedirs(rtmp, exist_ok=True)
@@ -2181,8 +2199,8 @@ def run(cfg) -> dict:
             "(verl _validate, no second engine -> no cold-start, no OOM); orchestrator finals model_T.")
     if do_eval and eval_mode == "parallel":
         n_train, n_eval = int(cfg.n_gpus_per_node), int(cfg.get("eval_gpus", cfg.n_gpus_per_node))
-        eval_gpu_ids = ",".join(str(g) for g in range(n_train, n_train + n_eval))
-        env_base["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in range(n_train))  # pin TRAINING
+        eval_gpu_ids = _phys_gpu_ids(n_train, n_train + n_eval)
+        env_base["CUDA_VISIBLE_DEVICES"] = _phys_gpu_ids(0, n_train)  # pin TRAINING
         log(f"eval_mode=parallel: train on GPU(s) [0,{n_train}), eval CONCURRENT on GPU(s) {eval_gpu_ids} "
             f"(needs a {n_train + n_eval}-GPU node). eval is read-only -> bit-equivalent to serial eval, "
             f"but off the critical path.")
@@ -2190,7 +2208,7 @@ def run(cfg) -> dict:
         # pin BOTH training and eval to the same GPUs so eval genuinely COEXISTS with the worker (not
         # silently lands on free cards); eval's reduced KV pool (eval_gpu_mem_util) fits the VRAM the
         # worker leaves. This is the no-spare-GPU (saturated) cross_round answer.
-        env_base["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in range(int(cfg.n_gpus_per_node)))
+        env_base["CUDA_VISIBLE_DEVICES"] = _phys_gpu_ids(0, int(cfg.n_gpus_per_node))
         log(f"eval_mode=shared: eval coexists on the SAME GPU(s) [0,{cfg.n_gpus_per_node}) as training "
             f"at gpu_memory_utilization={cfg.eval_gpu_mem_util} (fits the VRAM the cross_round worker "
             f"leaves free; eval stays serial but pays no extra GPUs).")

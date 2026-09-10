@@ -8,6 +8,16 @@ mechanism to understand *why* each was wrong and how it was fixed.
 
 ---
 
+## 2026-09-10: co-hosted single-GPU drivers all trained on physical GPU 0 — `run_fed`'s CUDA_VISIBLE_DEVICES pins were literal ids, not relative to the driver's own visible set
+
+**Symptom.** Four `--n-gpus 1` cells launched on one 4-GPU node with `CUDA_VISIBLE_DEVICES=0..3`
+(one per driver) all allocated on the same card. **Cause.** the cross_round lane pin
+(`gpus = "0"` for lane 0) and the eval `parallel`/`shared` pins wrote literal indices, which the
+child interprets against the physical device list, discarding the parent's restriction.
+**Fix.** `_phys_gpu_ids(lo, hi)` maps every pin through the driver's `CUDA_VISIBLE_DEVICES` when
+set (unset => legacy literal ids, byte-identical). Slurm is no substitute here: `srun --overlap
+--gres=gpu:1` steps are all handed the same GPU (tested, 4 steps -> one UUID).
+
 ## 2026-08-19: every shipped ALFWorld port band sat INSIDE the kernel ephemeral range — a service port can be squatted mid-run, and a 70-round run died at round 13
 
 - **Files:** `tools/gen_paper_configs.py` (`_init_ports` — all four bands relocated, 352 configs

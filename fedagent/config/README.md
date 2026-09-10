@@ -20,7 +20,8 @@ config/
 │   │   └── scaled/                    #   the 15 scaled WebShop arms (homog, task, pref, …, ppo)
 │   └── alfworld/                      #   smoke.yaml + paper.yaml (env-het, 8cl x 70rd)
 ├── paper/                     # generated matrix (194): uniform/ env_heterogeneity/ task_heterogeneity/ decentralized/
-└── paper_accelerated/         # the same 194 cells + the A/B-equivalent acceleration stack (gen_paper_configs.py --accel)
+├── paper_accelerated/         # the same 194 cells + the A/B-equivalent acceleration stack (gen_paper_configs.py --accel)
+└── paper_accelerated_1gpu/    # the accelerated cells pinned to ONE H100 (gen_paper_configs.py --accel --n-gpus 1; docs/gpu_recipes.md)
 ```
 
 See the top-level [`../README.md`](../README.md) for the project overview,
@@ -223,6 +224,7 @@ paper/
 python tools/gen_paper_configs.py                # all 176 -> fedagent/config/paper
 python tools/gen_paper_configs.py --group-size 2 # cheap smoke (lower G)
 python tools/gen_paper_configs.py --accel        # the 176 accelerated twins -> paper_accelerated/
+python tools/gen_paper_configs.py --accel --n-gpus 1   # single-H100 twins -> paper_accelerated_1gpu/
 ```
 
 Every generated config runs directly with `python -m fedagent.fed.run_fed --config <path>`.
