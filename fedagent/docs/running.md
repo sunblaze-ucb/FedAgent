@@ -352,13 +352,18 @@ python -m fedagent.fed.run_fed \
 
 # Centralized baseline (total_clients=1)
 python -m fedagent.fed.run_fed \
-  --config fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/centralized/grpo/fed_webshop_grpo_total-1_cl-per-rd-1_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
+  --config fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/centralized/grpo/fed_webshop_grpo_total-1_cl-per-rd-1_rd-1_ep-per-cl-210_min-goals-per-cl-100_p-uniform.yaml
 ```
 
 ## Resume
 
 Re-running the same `--output-dir` **continues at the round after the last completed one**
 (default `resume: true`; pass `--fresh` or set `resume: false` to start over at round 1).
+The scan is keyed on the directory's `round_<k>/` dirs (descending), not on `total_rounds`,
+and a resume whose `total_rounds` is *below* the highest round on disk is **refused** rather
+than treated as a fresh run (2026-09-10; before that a `--rounds 2` smoke pointed at a finished
+70-round dir archived every completed round and retrained from the base model). Raise
+`--rounds`, use a fresh `--output-dir`, or pass `--fresh` to archive the prior rounds on purpose.
 Completion is detected from the artifacts themselves: `round_k/aggregated/hf` (plus
 `critic_hf` for PPO, a round with an actor but no merged critic counts as incomplete) is
 written only after a successful all-clients round + FedAvg + merge and survives checkpoint

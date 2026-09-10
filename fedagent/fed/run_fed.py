@@ -486,6 +486,37 @@ def resolve_start_critic(cfg, base_model: str):
     return base_model, "fresh-value-head"
 
 
+def _disk_rounds(cfg) -> List[int]:
+    """Round numbers that have a ``round_<k>/`` dir under output_dir, DESCENDING, whatever their
+    state (complete, partial, eval-only). ``round_0`` (the base-model eval dir) is excluded."""
+    out = Path(cfg.output_dir)
+    ks = set()
+    if out.is_dir():
+        for d in out.glob("round_*"):
+            tail = d.name[len("round_"):]
+            if tail.isdigit() and int(tail) > 0:
+                ks.add(int(tail))
+    return sorted(ks, reverse=True)
+
+
+def refuse_resume_below_disk(cfg) -> int:
+    """RESUME-path schedule sanity: the highest ``round_<k>/`` on disk (complete OR partial) must
+    not exceed this run's total_rounds. Returns that round (0 if the dir holds none); raises
+    ValueError otherwise. "Resume" cannot mean anything coherent below the rounds a directory
+    already holds, and the pre-2026-09-10 behavior there -- the total_rounds-bounded scan found
+    nothing, quarantine_stale_rounds(0) archived every completed round, training restarted from
+    the base model -- was destruction, not resume. ``--fresh`` keeps its documented
+    archive-everything semantics; this guard is resume-only (docs/bugfixes.md 2026-09-10)."""
+    top = max(_disk_rounds(cfg), default=0)
+    if top > int(cfg.total_rounds):
+        raise ValueError(
+            f"RESUME REFUSED: {cfg.output_dir} holds round artifacts up to round_{top} but this run "
+            f"asks for total_rounds={cfg.total_rounds}. Raise --rounds/total_rounds to at least "
+            f"{top}, point --output-dir at a fresh directory, or pass --fresh to knowingly archive "
+            "the prior rounds (they are moved to _stale_rounds/, not deleted).")
+    return top
+
+
 def find_resume_round(cfg, is_ppo: bool):
     """Highest completed round k in output_dir, as (k, actor_hf, critic_hf) -- or (0, None, None).
 
@@ -497,8 +528,16 @@ def find_resume_round(cfg, is_ppo: bool):
     (base_seed + r - 1) and the env data seed (base_seed + r*100 + client) are threaded by the
     ROUND NUMBER, not by orchestrator state, so the continued run reproduces the exact schedule
     an uninterrupted run would have had. (Under hf_export=final no per-round hf exists, so the
-    scan finds nothing and the run starts fresh -- resume is an every_round-export feature.)"""
-    for k in range(int(cfg.total_rounds), 0, -1):
+    scan finds nothing and the run starts fresh -- resume is an every_round-export feature.)
+
+    The scan is keyed on the DISK (every round_<k>/ dir, descending), not on
+    ``range(total_rounds, 0, -1)`` (pre-2026-09-10): a run launched with a SMALLER total_rounds
+    than the directory holds -- a ``--rounds 2`` smoke pointed at a finished 70-round dir --
+    used to inspect rounds 2 and 1 only (both long pruned by a mirror's keep-window), report
+    "nothing to resume", and let quarantine_stale_rounds(0) archive every completed round.
+    refuse_resume_below_disk() now rejects that schedule up front; the scan itself no longer
+    depends on total_rounds at all."""
+    for k in _disk_rounds(cfg):
         agg = Path(cfg.output_dir) / f"round_{k}" / "aggregated"
         actor_hf = agg / "hf"
         if not _valid_hf_dir(actor_hf):
@@ -1728,6 +1767,13 @@ def _persistent_cmd_env(cfg, plan: List[dict], plan_path: Path, model_path: str,
         env.pop("ALFWORLD_SERVICE_URL", None)
     if cfg.get("fedprox_mu", 0) and cfg.fedprox_mu > 0:
         env["FEDPROX_MU"] = str(cfg.fedprox_mu)  # per-client anchor reset handled by reload_client_model
+    # The worker reads this as its round counter (persistent_task_runner.py: FEDAGENT_XROUND_START_ROUND,
+    # default "1"). Until 2026-09-10 only the callers' cross-round branches set it, so the PER-ROUND
+    # persistent path (persistent=true, cross_round=false) spawned every round's fresh process as
+    # "round 1": the worker-mode global eval kept overwriting round_0 and every client-end circle was
+    # filed under round_1. Set here, where round_num is a parameter, so all three spawn sites agree
+    # (the cross-round callers re-set the same value; harmless).
+    env["FEDAGENT_XROUND_START_ROUND"] = str(round_num)
     return cmd, env
 
 
@@ -2354,6 +2400,7 @@ def run(cfg) -> dict:
         if vs:
             val_services.extend(vs)   # replica-aware: start_val_service returns a LIST of handles
 
+    loop_completed = False   # set True only when the round loop ran to its end (2026-09-10)
     try:
         # The per-launch weight-transfer IPC isolation is a 2-line verl patch away from being
         # a no-op, and unpatched it fails SILENTLY (see verl_honors_job_id_override).
@@ -2384,6 +2431,7 @@ def run(cfg) -> dict:
         # last completed one (see find_resume_round for why this is faithful). --fresh disables.
         start_round = 1
         if cfg.get("resume", True):
+            refuse_resume_below_disk(cfg)   # a schedule below the disk's rounds is an error, not a fresh run
             _k, _actor_hf, _critic_hf = find_resume_round(cfg, is_ppo)
             if _k > 0:
                 current_model = str(_actor_hf)
@@ -2616,6 +2664,7 @@ def run(cfg) -> dict:
             # so the next round's training (on the train GPUs) overlaps it.
             if do_eval:
                 run_eval(current_model, r)
+        loop_completed = True   # every scheduled round ran: model_T below is the genuine final model
     finally:
         # drain a still-in-flight parallel eval (e.g. the final round's, which has no next round to
         # overlap) so its metrics land in val_history before we summarize.
@@ -2628,7 +2677,14 @@ def run(cfg) -> dict:
         # via an eval-only plan (round T+1's "starting model" is the final aggregate; the worker
         # dumps round_T/eval/val_samples and skips fit). Saves the whole cold final-eval subprocess.
         hot_final_done = False
-        if (final_eval_mode == "worker" and do_eval and eval_mode == "worker"
+        if do_eval and not loop_completed:
+            # 2026-09-10: this block used to run unconditionally, so a run that died in round r
+            # scored its round r-1 aggregate and recorded it as "round T" (summary + round_T/eval
+            # dumps) -- a fabricated final point that a resume then carried forward.
+            log(f"[warn] the round loop did NOT complete: skipping the 'round {cfg.total_rounds}' "
+                f"final eval (current_model={current_model} is the last aggregate of a partial "
+                "run, not model_T). Per-round points already on disk are kept.")
+        if (loop_completed and final_eval_mode == "worker" and do_eval and eval_mode == "worker"
                 and xstate.get("proc") is not None and xstate["proc"].alive()):
             try:
                 T = int(cfg.total_rounds)
@@ -2656,7 +2712,7 @@ def run(cfg) -> dict:
                 if mk:
                     val_history.append({"round": k, "model": "base" if k == 0 else "aggregated", **mk})
                     log(f"worker-eval round {k}: success={mk['success_rate']} reward={mk['reward_mean']}")
-            if not hot_final_done:
+            if not hot_final_done and loop_completed:
                 mfin = eval_global(cfg, current_model, int(cfg.total_rounds), env_base, val_url)
                 if mfin:
                     val_history.append({"round": int(cfg.total_rounds), "model": "aggregated", **mfin})
@@ -2693,6 +2749,7 @@ def run(cfg) -> dict:
         "partition_strategy": cfg.partition_strategy or "none",
         "base_model": base_model,
         **({"resumed_from_round": start_round - 1} if start_round > 1 else {}),
+        "loop_completed": loop_completed,   # False => the run died mid-loop; final_model is NOT model_T
         "final_model": current_model,
         # critic_init records HOW the value model entered this run (resume | auto-sibling |
         # explicit | fresh-value-head) so a warm-started PPO run's provenance -- in

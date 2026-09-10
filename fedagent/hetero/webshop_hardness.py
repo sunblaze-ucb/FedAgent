@@ -36,7 +36,7 @@ import hashlib
 import os
 
 import numpy as np
-from omegaconf import OmegaConf
+from types import SimpleNamespace
 
 from fedagent.hetero._beta_sizing import assign_with_overlap, default_r, generate_client_sizes
 from fedagent.hetero.webshop_catalog_split import (
@@ -50,7 +50,11 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
 # Stand-in for the source module's `path_cfg = OmegaConf.load("config/paths.yaml")`.
 # Only `.project_root` is read, and only on the unused default-path branch. We build
 # it directly (config/paths.yaml is absent here) so the verbatim body imports cleanly.
-path_cfg = OmegaConf.create({"project_root": _PROJECT_ROOT})
+# Deliberately NOT omegaconf: this module is imported by the WebShop env service, which runs
+# in the minimal service env (fastapi/uvicorn/httpx/numpy); a service env without omegaconf
+# died at startup on the top-level import (DSP campaign, 2026-08-26). SimpleNamespace gives
+# the same `.project_root` attribute with zero dependencies.
+path_cfg = SimpleNamespace(project_root=_PROJECT_ROOT)
 
 
 def hardness_partition(

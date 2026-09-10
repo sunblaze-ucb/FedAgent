@@ -93,14 +93,30 @@ ENVS = ("webshop", "alfworld")
 ALGOS = ("grpo", "ppo")
 
 # uniform settings -> federation overrides. 3-seed replication varies base_seed (the original held
-# data_sharding.seed=42 and varied shuffle_seed default/21/84); centralized/local use T=70xE=3 (=210 epochs WITH per-round goal
-# re-draw) rather than the original rd-1/ep-210, because the verl-0.8 runner draws goal variety
-# from ROUNDS (FEDAGENT_BASE_SEED threads the round) -- 1 round would repeat the same goals.
+# data_sharding.seed=42 and varied shuffle_seed default/21/84). Per-setting `t`/`e` override the
+# module-level T/E; everything else inherits T=70 x E=3.
+#
+# centralized runs the original rd-1/ep-210 again (2026-09-10; docs/bugfixes.md). It had been
+# emitted as T=70 x E=3 on the theory that "the runner draws goal variety from ROUNDS
+# (FEDAGENT_BASE_SEED threads the round), so 1 round would repeat the same goals". That stopped
+# being true when per-epoch resampling landed: AgenticDataset seeds each epoch slot separately
+# (`base_seed*100_000 + e*n_envs + i`, tests/test_agentic_dataset_epochs.py), so E=210 inside one
+# round yields 210 distinct goal draws, exactly like 70 rounds of 3. What 70 rounds DID silently
+# change is the optimizer: every round rebuilds the engine from the aggregated weights with a fresh
+# Adam and a fresh LR schedule (aggregate_fedavg_fsdp.py on the legacy path, persistent_patch.py
+# on the cross_round path) -- and FedAvg over ONE client is the identity, so at E=3 (= 3 optimizer
+# steps: n_envs == train_batch_size => 1 step per epoch) the baseline reset Adam every 3 steps, 70
+# times. rd-1/ep-210 is ONE client-run with one continuous optimizer over all 210 steps (same step
+# count). Accepted cost: the per-round red line collapses to 2 points (the driver evals the global
+# model once per round). `local_client*` keeps T=70 x E=3 -- it is the per-client arm OF the
+# federated protocol, so its reset cadence must match `main`.
 UNIFORM_SETTINGS = {
     "main":          dict(total=N, m=M, seed=42),
     "main_seed1":    dict(total=N, m=M, seed=21),
     "main_seed2":    dict(total=N, m=M, seed=84),
-    "centralized":   dict(total=1, m=1, seed=42),                       # FedAvg of 1 client == continued centralized training
+    # one client-run, one optimizer: FedAvg of 1 client IS continued centralized training only if
+    # the run is not chopped into rounds (each round would reset Adam + the LR schedule).
+    "centralized":   dict(total=1, m=1, seed=42, t=1, e=210),
     "local_client1": dict(total=N, m=1, seed=42, local_client_id=21),  # paper "Local Agent Training" (uniform_single)
     "local_client2": dict(total=N, m=1, seed=42, local_client_id=42),
     "local_client3": dict(total=N, m=1, seed=42, local_client_id=84),
@@ -459,13 +475,14 @@ def emit_uniform(out):
     for (mdir, mid), (sname, s), algo, env in itertools.product(
             MODELS, UNIFORM_SETTINGS.items(), ALGOS, ENVS):
         total, m, seed = s["total"], s["m"], s["seed"]
+        t, e = int(s.get("t", T)), int(s.get("e", E))   # per-setting protocol override (centralized: 1 x 210)
         lid = s.get("local_client_id")
         d = out / "uniform" / mdir / sname / algo
         d.mkdir(parents=True, exist_ok=True)
-        fn = fed_filename(env, algo, total, m, T, E, MIN_GOALS, "uniform")
+        fn = fed_filename(env, algo, total, m, t, e, MIN_GOALS, "uniform")
         text = build_config(
             f"UNIFORM {sname} | {algo.upper()} | {env} | {mdir}",
-            env_kind=env, algo=algo, model=mid, total=total, m=m, t=T, e=E, seed=seed,
+            env_kind=env, algo=algo, model=mid, total=total, m=m, t=t, e=e, seed=seed,
             min_goals=MIN_GOALS, partition="", extra={}, family="uniform",
             out_tag=f"uniform/{mdir}/{sname}/{algo}/{fn}", local_client_id=lid)
         (d / f"{fn}.yaml").write_text(text)

@@ -68,6 +68,19 @@ duplicated here.
 
 ---
 
+## 2026-09-10: the `centralized` baseline becomes one client-run again (`rd-1 / ep-210`)
+
+The generator emits `centralized` as `total_rounds: 1, epochs_per_round: 210` (the original
+FedAgent protocol) instead of `70 x 3`. Same 210 optimizer steps, one continuous Adam trajectory
+and LR schedule instead of 70 three-step restarts; the per-round red line has 2 points (round 0
+and round 1). Shipped assets: the 16 `centralized` cells per tree are renamed
+`…_rd-70_ep-per-cl-3_…` → `…_rd-1_ep-per-cl-210_…` in `paper/`, `paper_accelerated/` and
+`paper_accelerated_1gpu/`; `main`, `main_seed*`, `local_client*`, env-het, task-het and
+decentralized cells are byte-identical to before. **Runs that predate it:** none exist on this
+cluster; any `centralized` output produced elsewhere under the `rd-70` form is a different
+optimization and must not be pooled with the new one. Mechanism and evidence:
+[bugfixes.md, 2026-09-10 §5](./bugfixes.md).
+
 ## 2026-07-27: hardness shards change — the `F_i` fill becomes one independent draw per client
 
 - **Commit:** `6954940`. **Mechanism, impact and verification:**

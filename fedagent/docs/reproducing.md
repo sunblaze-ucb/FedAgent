@@ -115,7 +115,7 @@ python -m fedagent.fed.run_fed --config \
 
 # Baselines (same family, different mode):
 python -m fedagent.fed.run_fed --config \
-  fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/centralized/grpo/fed_webshop_grpo_total-1_cl-per-rd-1_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
+  fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/centralized/grpo/fed_webshop_grpo_total-1_cl-per-rd-1_rd-1_ep-per-cl-210_min-goals-per-cl-100_p-uniform.yaml
 python -m fedagent.fed.run_fed --config \
   fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/local_client1/grpo/fed_webshop_grpo_total-100_cl-per-rd-1_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
 ```
@@ -211,7 +211,7 @@ Each leaf holds exactly two configs, one per benchmark (`fed_webshop_*.yaml`,
 | Table row | Config subdir | Federation shape (filename) | Mode selected by |
 |---|---|---|---|
 | **FedAgent** | `main/`, `main_seed1/`, `main_seed2/` | `total-100_cl-per-rd-2_rd-70_ep-per-cl-3` | `total_clients: 100` (FedAvg) |
-| **Centralized** | `centralized/` | `total-1_cl-per-rd-1_rd-70_ep-per-cl-3` | `total_clients: 1` |
+| **Centralized** | `centralized/` | `total-1_cl-per-rd-1_rd-1_ep-per-cl-210` | `total_clients: 1` (one client-run, one continuous optimizer; 2026-09-10) |
 | **Local Agent** | `local_client{1,2,3}/` | `total-100_cl-per-rd-1_rd-70_ep-per-cl-3` | `local_client_id ≥ 0` |
 
 All three rows hold the **total optimization budget fixed at T·E = 70·3 = 210
@@ -245,7 +245,7 @@ python -m fedagent.fed.run_fed --config \
 
 # Centralized baseline, WebShop-GRPO:
 python -m fedagent.fed.run_fed --config \
-  fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/centralized/grpo/fed_webshop_grpo_total-1_cl-per-rd-1_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
+  fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/centralized/grpo/fed_webshop_grpo_total-1_cl-per-rd-1_rd-1_ep-per-cl-210_min-goals-per-cl-100_p-uniform.yaml
 
 # Local Agent baseline (client 21), WebShop-GRPO:
 python -m fedagent.fed.run_fed --config \

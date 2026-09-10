@@ -364,13 +364,25 @@ class PersistentFedTaskRunner(TaskRunner):
         # the update_weights precondition (rollout asleep) holds. _validate() leaves it AWAKE, so
         # re-sleep in finally to restore the state fit()'s own update_weights (1387) assumes.
         cm = getattr(t, "checkpoint_manager", None)
+        _t0 = time.perf_counter()
         if cm is not None:
             cm.update_weights(t.global_steps)
+        _t1 = time.perf_counter()
         try:
             t._validate()
         finally:
+            _t2 = time.perf_counter()
             if cm is not None:
                 cm.sleep_replicas()
             t.val_dataloader = saved_dl
             with open_dict(t.config):
                 t.config.trainer.validation_data_dir = saved_dump
+            # Worker-mode eval is the only phase of a round with no timing anywhere: verl's
+            # timing_s/* covers fit() only, and the orchestrator sees just the result line. With
+            # client_end_eval=true a round runs THREE of these, so "can the non-step time be cut"
+            # is unanswerable without this number. Printed in the finally so a failed _validate()
+            # still reports what it spent. Split at the weight sync because the two halves have
+            # different fixes: sync cost is a topology question, generation cost an episode-count one.
+            print(f"[persistent] {_what}-eval round {eval_round}{_who} took "
+                  f"{_t2 - _t0:.1f}s (weight sync {_t1 - _t0:.1f}s, generate {_t2 - _t1:.1f}s)",
+                  flush=True)

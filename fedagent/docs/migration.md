@@ -155,7 +155,7 @@ fp32-aggregated weights at every round boundary — fixed 2026-07-23: `merge_fp3
 on) keeps the aggregated FSDP→HF merge in fp32 ([`bugfixes.md`](bugfixes.md) "bf16 merge
 truncation"); `hf_export: final` skips the hop entirely.
 
-**Baseline dynamics (the renamed rd-70_ep-3 centralized/local configs):** each round is a
+**Baseline dynamics (the renamed rd-70_ep-3 local configs; `centralized` returned to rd-1/ep-210 on 2026-09-10, see bugfixes.md):** each round is a
 fresh subprocess started from the merged HF weights (`save_contents=[model]`,
 `resume_mode=disable`), so the T=70×E=3 baselines inherit the federated arms' per-round
 semantics: Adam moments re-initialize every 3 epochs, the `use_kl_loss` reference re-anchors

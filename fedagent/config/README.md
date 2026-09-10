@@ -214,9 +214,12 @@ paper/
   (Qwen2.5-1.5B), matching the paper.
 - ALFWorld appears only where it has an analogue (uniform, task-het, decentralized); the
   env-het arms perturb the WebShop catalog + search engine and have no ALFWorld counterpart.
-- One deliberate divergence from the original filenames: `centralized`/`local_client*` encode
-  `rd-70_ep-3` (not the original `rd-1_ep-210`); the verl-0.8 runner draws goal variety from
-  *rounds*, so 210 local epochs are spread over 70 rounds to re-draw goals each round.
+- One deliberate divergence from the original filenames: `local_client*` encode `rd-70_ep-3`
+  (not the original `rd-1_ep-210`) -- they are the per-client arm of the federated protocol, so
+  their per-round optimizer reset must match `main`. `centralized` runs the original
+  `rd-1_ep-210` again (2026-09-10): FedAvg over one client is the identity, so the 70-round
+  form only reset Adam every 3 optimizer steps (`../docs/bugfixes.md`); per-epoch goal
+  resampling already gives 210 distinct draws inside one round.
 
 **Regenerate** the whole matrix with one command:
 

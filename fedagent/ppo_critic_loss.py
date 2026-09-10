@@ -16,9 +16,16 @@ Stock verl 0.8's critic loss deviates from the paper fork in two compounding way
    bare (fork core_algos.py:542) and divides each micro loss by the gradient-accumulation
    count instead (fork dp_critic.py:243).
 
-Net: at the paper recipe (critic mini 16/gpu, micro 4/gpu -> M=4, dp=4) the migrated critic's
-pre-clip gradient is 0.5*M = 2x the fork's objective, and the scale drifts with micro size,
-DP world size and rollout.n. PPO-only (GRPO builds no critic); actor unaffected.
+Net: at the executed WebShop reference recipe (global critic mini 64, divided across dp=4 to
+16 rows/rank, micro 2/rank -> M=8) the migrated critic's pre-clip gradient is
+0.5*M = 4x the fork's objective.  (The executed ALFWorld reference used micro 4, hence M=4
+and 2x; an earlier revision of this note assumed micro 4 for both.)  The scale also drifts
+with micro size, DP world size and rollout.n. PPO-only (GRPO builds no critic); actor
+unaffected. NOTE (2026-09-10): stock verl 0.8 DROPS critic.ppo_micro_batch_size_per_gpu /
+use_dynamic_bsz on its CriticConfig->TrainingWorkerConfig conversion (ray_trainer.py:806-823
+forwards only the two max-token keys), so the critic engine token-packs micro-batches
+dynamically and `legacy_exact` below is exact only up to that packing -- see
+docs/bugfixes.md 2026-09-10 for the evidence and why it is deliberately NOT changed here.
 
 Fix: wrap ``verl.workers.utils.losses.value_loss`` and rescale its (0.5 x local-token-mean)
 output per micro so the engine's Σ-backward + FSDP DP-mean reproduces a chosen contract:

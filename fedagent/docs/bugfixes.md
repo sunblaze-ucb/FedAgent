@@ -18,6 +18,114 @@ child interprets against the physical device list, discarding the parent's restr
 set (unset => legacy literal ids, byte-identical). Slurm is no substitute here: `srun --overlap
 --gres=gpu:1` steps are all handed the same GPU (tested, 4 steps -> one UUID).
 
+## 2026-09-10: five infrastructure defects ported from the DSP campaign tree after verification against this tree and the cluster's own runs — total_rounds-bounded resume scan, fabricated "round T" final eval after a crash, per-round persistent worker stuck at round 1, host-side storage never hard-released, `centralized` chopped into 70 Adam resets
+
+Provenance. The Bloomberg DSP campaign copy of this repo (`fedagent_dsp/FedAgent`, separate
+history since 2026-08-28) accumulated ~30 code commits chasing a PPO performance gap that its
+own final data attributes to environment (search backend, platform), not to the objective.
+Its objective-changing changes (`ref_anchor: base`, fixed critic micro-batches, legacy actor
+loss reduction, seeded value head, `stable_v1` generation seeds, the objective-marker /
+round-manifest resume protocol) are deliberately **not** ported: this tree's recipe is the one
+whose numbers are normal (uniform PPO/WebShop/Lucene last-10 success 0.659 on 4xH100), and on
+DSP's own seed-42 2x2 the base-anchor arm finished *below* the rolling-anchor arm (0.344 vs
+0.484 at r69). What is ported below is the subset that changes no number a federated arm
+computes and that was verified here by reading the code and, where possible, this cluster's
+logs. Baseline before the port: `pytest tests/` 150 passed / 3 skipped; after: see
+`tests/test_resume_scan_and_round_plumbing.py`.
+
+### 1. `find_resume_round` scanned `range(total_rounds, 0, -1)`, so a smaller schedule pointed at a populated dir "found nothing" and quarantined every completed round
+
+- **Files:** `fed/run_fed.py` (`_disk_rounds`, `refuse_resume_below_disk`, `find_resume_round`,
+  the resume site in `run()`), `docs/running.md#resume`.
+- **Mechanism.** A `--rounds 2` smoke (or any config with a smaller `total_rounds`) launched
+  into a finished 70-round output dir inspected `round_2` and `round_1` only — both long
+  pruned by a mirror's keep-window — reported "nothing to resume", and
+  `quarantine_stale_rounds(cfg, 0)` then moved *every* `round_*` dir to `_stale_rounds/`
+  before retraining from the base model. Not data loss (rename, not delete), but a full
+  retrain masquerading as a resume. DSP review round 5 hit exactly this on a 2-round smoke
+  against a 70-round tag.
+- **Fix.** The scan is keyed on the disk (`round_*` dirs, descending, `round_0` excluded);
+  the resume site first calls `refuse_resume_below_disk`, which raises when the highest round
+  on disk (complete or partial) exceeds `total_rounds` and names the three outs (raise
+  `--rounds`, fresh `--output-dir`, `--fresh`). `--fresh` semantics are unchanged.
+
+### 2. the `finally` block scored a partial run's last aggregate and recorded it as round T
+
+- **Files:** `fed/run_fed.py` (`loop_completed` flag around the round loop; both final-eval
+  paths and the summary gate on it; `federated_summary.json` gains `loop_completed`).
+- **Mechanism.** The hot final eval and the subprocess `eval_global(..., total_rounds, ...)`
+  ran unconditionally in `finally`. A run that died in round r therefore evaluated its round
+  r−1 aggregate, labelled it `round: T` in `val_history`, and dumped it to
+  `round_T/eval/val_samples` — a fabricated final point that `seed_prior_histories` carried
+  into any later resume and that every per-round reader treated as the real round T.
+- **Fix.** `loop_completed` is set only when the `for r in range(start_round, T+1)` loop runs
+  to its end; a run that exits the loop early logs a warning and skips the final eval. Rounds
+  already on disk are unaffected. (The "all rounds already complete" resume case has an empty
+  loop and still evaluates model_T.)
+
+### 3. `persistent: true` without `cross_round` ran every round as round 1
+
+- **Files:** `fed/run_fed.py` (`_persistent_cmd_env`).
+- **Mechanism.** `FEDAGENT_XROUND_START_ROUND` — the worker's round counter
+  (`persistent_task_runner.py`, default `"1"`) — was set only inside the callers' cross-round
+  branches. The per-round persistent path relaunched a fresh process every round with the
+  default, so the worker-mode global eval overwrote `round_0` and every client-end circle was
+  filed under `round_1`. DSP's per-round 2x2 arms died on the downstream integrity guards this
+  produces. No shipped config in this tree takes that path (all 388 accelerated cells are
+  `cross_round: true`), so it was latent here.
+- **Fix.** Set unconditionally in `_persistent_cmd_env`, where `round_num` is a parameter; the
+  cross-round callers re-set the same value.
+
+### 4. `_hard_release_fsdp_storages` skipped every host-resident storage and never walked the optimizer
+
+- **Files:** `fed/persistent_patch.py` (`_hard_release_fsdp_storages`, `_reset_engine`,
+  `_mem_debug_dump`).
+- **Mechanism.** The 2026-08-18 hard release filtered `t.is_cuda`. Under
+  `actor.fsdp_config.optimizer_offload` / `critic.fsdp.optimizer_offload` / `param_offload`
+  (every shipped PPO cell offloads both optimizers; `ref` offloads its params) the retired
+  engine's largest storages are on the host — FSDP's `flat_param_to(cpu)` shards and the Adam
+  moments (`~11.5 GiB` per 1.5B engine in fp32) — and the optimizer state was not walked at
+  all (`eng.optimizer = None` and trust gc). On this cluster the single-GPU cells log
+  `reload hard-release: freed 0.00 GiB` for the offloaded ref engine, and the 4xH100 uniform
+  Lucene PPO run's job RSS grew ~90 GB over rounds 7→61 while system used memory stayed flat
+  (~194 GB of 976 GB) — gc coped, so nothing died here. DSP's 400 GB container did not: host
+  cgroup OOM at round 53 with 47 GB of GPU memory free.
+- **Fix.** Free storages on both devices (`seen` keyed by device + pointer), walk
+  `optimizer.state` before the optimizer is dropped, `malloc_trim(0)` after `empty_cache()` so
+  glibc returns the freed arenas (RSS is what a cgroup kills on), and report device + host
+  bytes; the mem-debug dump lists host tensors too. Kill switch unchanged
+  (`FEDAGENT_DISABLE_HARD_RELEASE=1`).
+
+### 5. the `centralized` baseline was emitted as 70 rounds × 3 epochs, i.e. 70 Adam resets
+
+- **Files:** `tools/gen_paper_configs.py` (`UNIFORM_SETTINGS["centralized"]` gains `t=1,
+  e=210`; `emit_uniform` honours per-setting `t`/`e`) and the 48 regenerated cells
+  (`{paper,paper_accelerated,paper_accelerated_1gpu}/uniform/*/centralized/{grpo,ppo}/*`,
+  renamed `rd-70_ep-per-cl-3` → `rd-1_ep-per-cl-210`); docs updated
+  (`config/README.md`, `configuration.md`, `migration.md`, `reproducing.md`, `running.md`).
+- **Mechanism.** Every federated round rebuilds the engine with a fresh Adam and LR schedule —
+  correct for FedAvg, but FedAvg over one client is the identity, so for `centralized` the 70
+  rounds bought nothing and reset the optimizer every 3 optimizer steps (`n_envs ==
+  train_batch_size` ⇒ 1 step per epoch). The generator's stated reason (goal variety from
+  rounds) expired when per-epoch resampling landed: `AgenticDataset` seeds each epoch slot
+  separately, so E=210 in one round draws 210 distinct goal batches. Step count is unchanged
+  (210). No `centralized` run had been produced on this cluster, so nothing is contaminated.
+- **Accepted cost.** The per-round red line collapses to 2 points (round 0 and round 1); the
+  DSP tree's `client_val_freq` (in-job validation every N optimizer steps) is *not* ported —
+  it needs the val-spec seeding and service-URL precedence changes and is a feature, not a
+  fix. `local_client1-3` deliberately keep T=70 × E=3.
+- **Older runs.** A `centralized` result produced before this date trained with 70 Adam resets
+  and is not comparable to one made after it. Re-run rather than mix.
+
+Also folded in, zero behavior change: `hetero/webshop_hardness.py` no longer imports
+`omegaconf` (the WebShop service env need not carry it; `SimpleNamespace` gives the same
+`.project_root`), the critic-loss note now states the executed reference geometry (WebShop
+micro 2/rank at dp=4 ⇒ M=8 ⇒ 4×; ALFWorld micro 4 ⇒ 2×) and records that stock verl 0.8 drops
+the critic micro keys on the engine conversion (kept as-is here, on purpose), and the
+persistent worker prints how long each worker/client-end eval took (weight sync vs generate).
+
+---
+
 ## 2026-08-19: every shipped ALFWorld port band sat INSIDE the kernel ephemeral range — a service port can be squatted mid-run, and a 70-round run died at round 13
 
 - **Files:** `tools/gen_paper_configs.py` (`_init_ports` — all four bands relocated, 352 configs

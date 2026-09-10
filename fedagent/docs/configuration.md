@@ -244,10 +244,13 @@ arms perturb the WebShop catalog + search engine and have no ALFWorld analogue).
 
 So **3-seed replication** = `base_seed` 42 / 21 / 84 across `main`, `main_seed1`,
 `main_seed2`; the **Local** baselines pin clients `21`, `42`, `84`. One deliberate
-divergence from the original filenames: `centralized` / `local_client*` encode
-`rd-70_ep-3` (not the original `rd-1_ep-210`) because the verl-0.8 runner draws goal
-variety from *rounds*, so the 210 local epochs are spread over 70 rounds. Regenerate the
-whole tree with `tools/gen_paper_configs.py`.
+divergence from the original filenames: `local_client*` encode `rd-70_ep-3` (not the
+original `rd-1_ep-210`) -- they are the per-client arm *of* the federated protocol, so their
+per-round optimizer reset must match `main`. `centralized` runs the original `rd-1_ep-210`
+again since 2026-09-10: one client-run with one continuous Adam trajectory over all 210 steps
+(the `rd-70_ep-3` form reset Adam every 3 optimizer steps, 70 times -- `docs/bugfixes.md`);
+its per-round red line therefore has 2 points. Regenerate the whole tree with
+`tools/gen_paper_configs.py`.
 
 ---
 

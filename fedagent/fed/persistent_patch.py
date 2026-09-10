@@ -89,7 +89,10 @@ def _apply_persistent_patch() -> bool:
             n, chains = 0, 0
             for o in gc.get_objects():
                 try:
-                    if not (isinstance(o, torch.Tensor) and o.is_cuda):
+                    # Host tensors count too: under *_offload the retired engine's biggest
+                    # storages are CPU-resident, and filtering them out here is why the host-side
+                    # leak (2026-09-10 entry) was invisible to the very tool built to find leaks.
+                    if not isinstance(o, torch.Tensor):
                         continue
                     if o.numel() * o.element_size() < 32 * 2**20:
                         continue
@@ -98,9 +101,9 @@ def _apply_persistent_patch() -> bool:
                         sto = o.untyped_storage().size() / 2**30
                     except Exception:
                         sto = float("nan")
-                    print(f"[mem-debug]   live {type(o).__name__} {tuple(o.shape)} {o.dtype} "
-                          f"{o.numel() * o.element_size() / 2**30:.3f} GiB (storage {sto:.3f})",
-                          flush=True)
+                    print(f"[mem-debug]   live {type(o).__name__} [{o.device}] {tuple(o.shape)} "
+                          f"{o.dtype} {o.numel() * o.element_size() / 2**30:.3f} GiB "
+                          f"(storage {sto:.3f})", flush=True)
                     if chains < 6:   # full 2-hop referrer chain for the first few only
                         chains += 1
                         for r1 in [r for r in gc.get_referrers(o)
@@ -111,7 +114,8 @@ def _apply_persistent_patch() -> bool:
                                 print(f"[mem-debug]        <- {_describe(r2, r1)}", flush=True)
                 except Exception:
                     continue
-            print(f"[mem-debug] {tag}: {n} python-reachable CUDA tensors >=32MB", flush=True)
+            print(f"[mem-debug] {tag}: {n} python-reachable tensors >=32MB (device AND host)",
+                  flush=True)
             d = os.environ.get("FEDAGENT_MEM_DEBUG_DIR", "/tmp")
             os.makedirs(d, exist_ok=True)
             p = os.path.join(d, f"snap_{tag}_{os.getpid()}_{int(time.time())}.pickle")
@@ -120,9 +124,11 @@ def _apply_persistent_patch() -> bool:
         except Exception as e:
             print(f"[mem-debug] dump failed (non-fatal): {e}", flush=True)
 
-    def _hard_release_fsdp_storages(module):
-        """Free the CUDA storages of a RETIRED engine's parameters/grads/FSDP shard copies
-        directly, instead of trusting refcounts+gc to do it.
+    def _hard_release_fsdp_storages(module, optimizer=None):
+        """Free the storages of a RETIRED engine's parameters/grads/FSDP shard copies -- and, when
+        given, its optimizer state -- directly, instead of trusting refcounts+gc to do it.
+        Covers BOTH devices: under *_offload the retired engine's biggest storages are on the host.
+        Returns (device_bytes, host_bytes).
 
         Why: on world_size=1 PyTorch degrades FULL_SHARD to NO_SHARD, and there the fp32
         flat params of a released engine outlive _reset_engine's gc.collect() -- FSDP-internal
@@ -133,28 +139,45 @@ def _apply_persistent_patch() -> bool:
         per reload, compounding into the round-4 vLLM wake_up OOM (docs/bugfixes.md 2026-08-18).
         The retired module is never touched again -- initialize() builds a brand-new tree -- so
         freeing storages out from under any zombie holder is safe, and is exactly how FSDP
-        itself retires _mp_shard (torch.distributed.utils._free_storage). Returns bytes freed.
+        itself retires _mp_shard (torch.distributed.utils._free_storage).
         Kill switch for A/B repro: FEDAGENT_DISABLE_HARD_RELEASE=1."""
         import torch
 
-        freed = 0
+        freed = 0        # device (CUDA) bytes
+        freed_host = 0   # host (CPU) bytes -- see the device note in _free
         seen = set()
 
         def _free(t):
-            nonlocal freed
-            if not isinstance(t, torch.Tensor) or not t.is_cuda:
+            nonlocal freed, freed_host
+            if not isinstance(t, torch.Tensor):
                 return
+            # NOT `or not t.is_cuda` (the pre-2026-09-10 filter). Under actor/critic
+            # param_offload / optimizer_offload the retired engine's LARGEST storages live on the
+            # HOST: verl offloads with `handle.flat_param_to(cpu)` then
+            # `flat_param._local_shard = flat_param.data` (fsdp_utils.py), and the optimizer's Adam
+            # moments with `state[key] = value.to("cpu")`. With the CUDA-only filter this function
+            # reported "freed 0.00 GiB" on every offloaded engine (the ref engine on this cluster's
+            # single-GPU cells; every critic on the DSP campaign, whose 400 GB container died of a
+            # HOST cgroup OOM at round 53 with 47 GB of GPU memory free), leaving exactly the
+            # refcount+gc path this docstring says is unreliable.
             try:
                 st = t.untyped_storage()
             except Exception:
                 return
             n = st.size()
-            if n == 0 or st.data_ptr() in seen:
+            # key by device too: host and device pointers occupy unrelated address spaces, so a
+            # bare data_ptr() could alias a CPU storage onto a CUDA one and skip a real free.
+            dev = t.device
+            key = (dev.type, dev.index, st.data_ptr())
+            if n == 0 or key in seen:
                 return
-            seen.add(st.data_ptr())
+            seen.add(key)
             try:
                 st.resize_(0)
-                freed += n
+                if dev.type == "cuda":
+                    freed += n
+                else:
+                    freed_host += n
             except Exception:
                 pass
 
@@ -176,7 +199,22 @@ def _apply_persistent_patch() -> bool:
                 _free(p)
             for b in sub.buffers(recurse=False):
                 _free(b)
-        return freed
+
+        # The OPTIMIZER was never walked -- _reset_engine only did `eng.optimizer = None` and
+        # trusted refcount+gc, the same thing this function exists because it cannot trust. Adam
+        # carries two moments per parameter, so it is the single biggest retired allocation:
+        # ~11.5 GiB per engine for a 1.5B model in fp32, and with optimizer_offload=true it is on
+        # the HOST. PPO retires two of them per client-run (actor + critic); GRPO one.
+        if optimizer is not None:
+            try:
+                for pstate in getattr(optimizer, "state", {}).values():
+                    if not isinstance(pstate, dict):
+                        continue
+                    for v in pstate.values():
+                        _free(v)
+            except Exception as _e:
+                print(f"[persistent-patch] optimizer walk failed (non-fatal): {_e!r}", flush=True)
+        return freed, freed_host
 
     def _reset_engine(eng, model_local_path):
         import gc
@@ -190,10 +228,16 @@ def _apply_persistent_patch() -> bool:
         mod = getattr(eng, "module", None)
         if mod is not None and not _os.environ.get("FEDAGENT_DISABLE_HARD_RELEASE"):
             try:
-                freed = _hard_release_fsdp_storages(mod)
-                if freed:
-                    print(f"[persistent-patch] reload hard-release: freed {freed / 2**30:.2f} GiB "
-                          f"of retired {eng.__class__.__name__} param storage", flush=True)
+                # Pass the optimizer BEFORE it is dropped below -- its Adam moments are the
+                # largest retired allocation and, under *_offload, they are on the host.
+                dev_b, host_b = _hard_release_fsdp_storages(mod, getattr(eng, "optimizer", None))
+                if dev_b or host_b:
+                    # host_b is the regression canary: it was structurally 0 before 2026-09-10 (the
+                    # CUDA-only filter in _free); 0.00 on an OFFLOADED engine means the host
+                    # release is broken again.
+                    print(f"[persistent-patch] reload hard-release: freed "
+                          f"{dev_b / 2**30:.2f} GiB device + {host_b / 2**30:.2f} GiB host "
+                          f"of retired {eng.__class__.__name__} storage", flush=True)
             except Exception as _e:
                 print(f"[persistent-patch] hard-release failed (non-fatal): {_e!r}", flush=True)
         # Cross-round leak fix: initialize() (_build_model_optimizer, transformer_impl.py:427-429)
@@ -217,6 +261,15 @@ def _apply_persistent_patch() -> bool:
                 setattr(eng, _attr, None)
         gc.collect()
         torch.cuda.empty_cache()
+        # empty_cache() drains the DEVICE caching allocator only. The host storages freed above go
+        # back to glibc, which keeps large arenas rather than returning them -- so RSS (what a
+        # cgroup actually kills on) can stay flat while the process holds nothing. malloc_trim
+        # hands the free arenas back. No-op where unavailable; never fatal.
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
         if _os.environ.get("FEDAGENT_MEM_DEBUG"):
             _mem_debug_dump(f"reset_{eng.__class__.__name__}")
         eng.initialize()  # _build_model_optimizer: new module(new weights)+optimizer+scheduler
