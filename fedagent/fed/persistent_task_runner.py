@@ -133,6 +133,10 @@ class PersistentFedTaskRunner(TaskRunner):
             train_sampler=train_sampler,
         )
         self.trainer.init_workers()  # ONCE: Ray + FSDP + vLLM + kernels (binds reload_client_model)
+        print("[model-role] initial actor_init="
+              f"{config.actor_rollout_ref.model.path}; ref="
+              f"{os.environ.get('FEDAGENT_REF_MODEL_PATH') or config.actor_rollout_ref.model.path}; "
+              f"critic={plan[0].get('critic_path') or '(none)'}", flush=True)
 
         # --- eval_mode=worker setup (docs §7.4): build a val dataloader from the UNPERTURBED
         # val_env_spec so THIS hot trainer can eval the merged model itself each round -- no second

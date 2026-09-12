@@ -70,6 +70,27 @@ if _mu > 0:
                 "patch could not be armed -- refusing to run silently as FedAvg."
             )
 
+# Explicit KL-reference role (fedagent/ref_anchor.py, ported 2026-09-12 from the DSP tree). Upstream
+# verl 0.8 has ONE model path for actor + ref; the federated loop moves the FedAvg'd weights through
+# that key, so by default the reference policy follows each round's aggregate (ref_anchor=round,
+# the deliberate rolling-reference algorithm). run_fed exports FEDAGENT_REF_MODEL_PATH only under
+# ref_anchor=base; then the ref is pinned to that fixed model for the whole run. Same deferral and
+# fail-closed rationale as FedProx: a requested role split must never silently collapse.
+if os.environ.get("FEDAGENT_REF_MODEL_PATH") and importlib.util.find_spec("verl") is not None:
+    try:
+        from fedagent.ref_anchor import install_deferred_patch as _install_ref_anchor
+
+        _ok = _install_ref_anchor()
+    except Exception:
+        traceback.print_exc()   # root cause, printed while the exception is live (see _die)
+        _ok = False
+    if not _ok:
+        _die(
+            "sitecustomize: FEDAGENT_REF_MODEL_PATH is set and verl is present, but the "
+            "explicit KL-reference adapter could not be armed -- refusing to run with a "
+            "reference policy different from ref_model_path."
+        )
+
 # Lever #4 (docs/acceleration.md): persistent-trainer worker patch. Same deferral rationale as
 # FedProx (attach to the worker class on verl's first engine_workers import, AFTER Ray sets
 # per-rank CUDA_VISIBLE_DEVICES). Gated on FEDAGENT_PERSISTENT=1 (set only by persistent_main),

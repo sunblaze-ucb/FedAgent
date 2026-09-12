@@ -304,13 +304,30 @@ def _apply_persistent_patch() -> bool:
         all run -- rebuilds module/optimizer/scheduler), then the aggregated FSDP shards from
         shard_dir overwrite the weights in place (model-only). Net weights == the HF-merge path,
         without the merger."""
+        import os as _os
+        _fixed_ref_requested = _os.environ.get("FEDAGENT_REF_MODEL_PATH")
+        _ref_engine = getattr(getattr(self, "ref", None), "engine", None)
+        _fixed_ref_before = (getattr(getattr(_ref_engine, "model_config", None), "local_path", None)
+                             if _fixed_ref_requested else None)
         _reset_engine(self.actor.engine, model_local_path)
         if shard_dir:
             _load_model_shards(self.actor.engine, shard_dir)
-        if getattr(self, "ref", None) is not None:
+        # Explicit KL role (fedagent/ref_anchor.py). When FEDAGENT_REF_MODEL_PATH is set the reference
+        # is fixed for the whole run (ref_anchor=base) and must NOT follow the round's aggregate here.
+        # Unset (ref_anchor=round, the default) keeps the rolling-reference behaviour byte-identical.
+        # On a RESUMED chunk the process launches with model.path = the resume round's aggregate, so
+        # this guard alone would freeze the ref THERE; ref_anchor's init_model hook re-points it to the
+        # base -- the two pieces are co-required and ref_anchor asserts its own swap.
+        if getattr(self, "ref", None) is not None and not _fixed_ref_requested:
             _reset_engine(self.ref.engine, model_local_path)  # ref forward_only: weights only
             if shard_dir:
                 _load_model_shards(self.ref.engine, shard_dir)
+        if _fixed_ref_before is not None:
+            assert self.ref.engine.model_config.local_path == _fixed_ref_before, (
+                "[model-role] fixed ref moved during actor reload: "
+                f"{_fixed_ref_before!r} -> {self.ref.engine.model_config.local_path!r}")
+        print(f"[model-role] actor_init={shard_dir or model_local_path}; "
+              f"ref={_fixed_ref_requested or (shard_dir or model_local_path)}", flush=True)
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def reload_critic_model(self, model_local_path: str, shard_dir: str = None):

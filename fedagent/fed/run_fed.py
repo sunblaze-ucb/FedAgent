@@ -73,6 +73,18 @@ _RUN_TAG = uuid.uuid4().hex[:8]
 
 DEFAULTS = {
     "model_path": "",                       # "" => auto-discover Qwen2.5-0.5B-Instruct
+    # --- KL reference anchor (fedagent/ref_anchor.py; ported 2026-09-12 from the DSP tree) ---
+    # verl 0.8 builds actor AND ref from the one actor_rollout_ref.model.path, and the federated
+    # loop carries the FedAvg'd weights through that key, so the reference policy FOLLOWS each
+    # round's aggregate: the actor optimizes J - kl_coef*KL(pi || pi_{r-1}), a per-round proximal
+    # term. "round" (DEFAULT here) keeps exactly that behaviour -- every run to date used it.
+    # "base" pins the ref to ref_model_path (or model_path when empty) for the WHOLE run:
+    # J - kl_coef*KL(pi || pi_base), one fixed trust region across all T rounds. !! Changing this
+    # changes the OBJECTIVE; never pool numbers across the boundary. The DSP campaign made "base"
+    # its default on 2026-08-30 and measured it as a regression on 1xH100 WebShop PPO
+    # (docs/bugfixes.md 2026-09-10); it is provided here for a controlled A/B, not as a fix.
+    "ref_anchor": "round",
+    "ref_model_path": "",                   # base only: explicit fixed HF snapshot; "" => model_path
     "critic_model_path": "",                # PPO only: the value model the FIRST trained round starts
                                             #   from. "" => auto: the aggregated critic sitting next to
                                             #   an aggregated seed actor (warm start), else the actor
@@ -1496,6 +1508,22 @@ def select_clients(round_num: int, total: int, per_round: int, base_seed: int,
     return sorted(rng.sample(range(total), per_round))
 
 
+def resolve_ref_model_path(cfg, start_model_path: Optional[str] = None) -> str:
+    """Resolve the KL-reference role independently of the actor's (round-varying) init path.
+    ref_anchor=base -> one fixed path for the run (ref_model_path, else the actor's base);
+    ref_anchor=round -> "" (the deliberate rolling reference; a fixed path is a contradiction)."""
+    anchor = str(cfg.get("ref_anchor", "round") or "round").lower()
+    if anchor not in ("base", "round"):
+        raise ValueError(f"ref_anchor must be base|round, got {anchor!r}")
+    explicit = str(cfg.get("ref_model_path", "") or "").strip()
+    if anchor == "round":
+        if explicit:
+            raise ValueError("ref_anchor=round conflicts with ref_model_path: round mode follows each "
+                             "round's actor initialization and therefore has no fixed reference path")
+        return ""
+    return explicit or str(start_model_path or cfg.model_path or discover_model())
+
+
 def _phys_gpu_ids(lo: int, hi: int) -> str:
     """GPU ids [lo, hi) for a CUDA_VISIBLE_DEVICES pin, mapped through the DRIVER's own
     CUDA_VISIBLE_DEVICES when one is set. Every pin below used to write literal ids
@@ -1616,6 +1644,11 @@ def run_client(cfg, round_num: int, client_id: int, model_path: str,
     # without touching the runtime_env, so GPU isolation is preserved.
     env = dict(env_base)
     env.update(_port_band_env(cfg, band_slot))   # quiet port band for vLLM/verl port draws
+    _ref_pin = resolve_ref_model_path(cfg)       # KL role (fedagent/ref_anchor.py), see DEFAULTS
+    if _ref_pin:
+        env["FEDAGENT_REF_MODEL_PATH"] = _ref_pin
+    else:
+        env.pop("FEDAGENT_REF_MODEL_PATH", None)
     # distinct, reproducible env instances per client (AgenticDataset reads this);
     # round-invariant so a client's task distribution is stable across rounds.
     # Round-threaded data seed: like the ORIGINAL fed sampler, seed per (round, client) so each
@@ -1728,6 +1761,14 @@ def _persistent_cmd_env(cfg, plan: List[dict], plan_path: Path, model_path: str,
     _lt = f"-l{lane}" if lane is not None else ""
     env.update(_port_band_env(cfg, lane or 0))   # quiet port band for vLLM/verl port draws (per lane)
     env["FEDAGENT_PERSISTENT"] = "1"             # sitecustomize -> arm the reload patch on workers
+    _ref_pin = resolve_ref_model_path(cfg)
+    if _ref_pin:
+        # ref_anchor=base: pinned for the WHOLE persistent job -- init_model puts the ref on this
+        # fixed path once (ref_anchor.py), reload_client_model then leaves it alone.
+        env["FEDAGENT_REF_MODEL_PATH"] = _ref_pin
+    else:
+        # ref_anchor=round: strip any inherited pin (one leaked var here would pin the whole job).
+        env.pop("FEDAGENT_REF_MODEL_PATH", None)
     env["VERL_RAY_JOB_ID"] = f"{_RUN_TAG}-persist{_lt}-r{round_num}"   # disjoint weight-xfer
     # socket. The round is IN the id because the non-cross_round persistent path relaunches a
     # NEW process every round: one shared id meant a crashed round left a stale /tmp socket that
@@ -2233,6 +2274,11 @@ def run(cfg) -> dict:
     if is_ppo:
         log("adv_estimator=gae -> PPO: federating the critic (value model) alongside the actor "
             "each round (round-1 critic = base model)")
+
+    _anchor = str(cfg.get("ref_anchor", "round") or "round").lower()
+    _ref_pin_log = resolve_ref_model_path(cfg)       # validates the pair; raises on a bad combination
+    log(f"ref_anchor={_anchor}: KL reference " + (f"FIXED for the whole run at {_ref_pin_log}"
+        if _ref_pin_log else "follows each round's aggregated model (rolling reference; the behaviour of every run before 2026-09-12)"))
 
     # eval/training GPU-sharing mode (docs §7.7). Resolve the GPU partition + how cross_round+eval coexist.
     eval_mode = str(cfg.get("eval_mode", "inline")).lower()
@@ -2748,6 +2794,8 @@ def run(cfg) -> dict:
         **({"local_client_id": lid} if mode == "local" else {}),
         "partition_strategy": cfg.partition_strategy or "none",
         "base_model": base_model,
+        "ref_anchor": str(cfg.get("ref_anchor", "round") or "round").lower(),
+        "ref_model_path": resolve_ref_model_path(cfg) or None,   # None <=> rolling reference
         **({"resumed_from_round": start_round - 1} if start_round > 1 else {}),
         "loop_completed": loop_completed,   # False => the run died mid-loop; final_model is NOT model_T
         "final_model": current_model,
