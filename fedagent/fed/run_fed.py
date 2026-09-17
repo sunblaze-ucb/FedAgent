@@ -2930,7 +2930,15 @@ def run(cfg) -> dict:
 def load_cfg(args) -> "OmegaConf":
     cfg = OmegaConf.create(dict(DEFAULTS))
     if args.config:
-        cfg = OmegaConf.merge(cfg, OmegaConf.load(args.config))
+        _yaml = OmegaConf.load(args.config)
+        # Every runner key lives in DEFAULTS; OmegaConf.merge accepts anything, so a misspelt or
+        # stale key (`holdout_file` for `alfworld_holdout_file`, `ref_anchor_base`, ...) would
+        # otherwise keep the default silently and the run would look configured when it is not.
+        _unknown = sorted(k for k in _yaml.keys() if k not in DEFAULTS)
+        if _unknown:
+            log(f"[warn] {args.config}: key(s) not read by the runner: {_unknown} -- every runner "
+                "key is listed in DEFAULTS (docs/configuration.md); a misspelt key keeps its default")
+        cfg = OmegaConf.merge(cfg, _yaml)
     if args.model_path is not None:
         cfg.model_path = args.model_path
     if getattr(args, "critic_path", None) is not None:

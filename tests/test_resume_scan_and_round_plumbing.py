@@ -77,3 +77,21 @@ def test_persistent_cmd_env_carries_the_round_number(tmp_path, round_num):
                                             round_num, {}, n_gpus=1, worker_eval=False)
     assert env["FEDAGENT_XROUND_START_ROUND"] == str(round_num)
     assert env["FEDAGENT_PERSISTENT"] == "1"
+
+
+def test_load_cfg_warns_on_keys_the_runner_does_not_read(tmp_path, capsys):
+    """A key outside DEFAULTS (e.g. the dev doc's `holdout_file` for `alfworld_holdout_file`) is
+    merged by OmegaConf but read by nothing; load_cfg names it instead of staying silent."""
+    import argparse
+    cfg_path = tmp_path / "c.yaml"
+    cfg_path.write_text("total_rounds: 3\nholdout_file: data/x.json\nref_anchor_base: true\n")
+    args = argparse.Namespace(config=str(cfg_path), model_path=None, critic_path=None, output_dir=None,
+                              rounds=None, clients=None, n_gpus=None, base_seed=None, port_base=None,
+                              fedprox_mu=None, local_client_id=None, fresh=False)
+    cfg = run_fed.load_cfg(args)
+    out = capsys.readouterr().out
+    assert cfg.total_rounds == 3
+    assert "holdout_file" in out and "ref_anchor_base" in out and "[warn]" in out
+    cfg_path.write_text("total_rounds: 4\n")
+    assert run_fed.load_cfg(args).total_rounds == 4
+    assert "[warn]" not in capsys.readouterr().out
