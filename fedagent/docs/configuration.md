@@ -159,7 +159,8 @@ overlay replaced parquet preprocessing with on-the-fly env enumeration.
 ## Filename decoder: the `paper/` tree
 
 `config/paper/` holds the full paper-scale runs in a family tree that **mirrors the
-original FedAgent** `config/` (176 configs). Every leaf is a flat runner config whose name
+original FedAgent** `config/` (the paper's 176 configs; **194 cells** per tree since the 2026-08-23
+ALFWorld env-het extension). Every leaf is a flat runner config whose name
 encodes its protocol:
 
 ```
@@ -200,10 +201,14 @@ decentralized ablations vary exactly one of these tokens.
 | `p-bm25_reweighting_N-<n>` | **`bm25_reweight`** | `variant_n` | env, BM25 Reweighting |
 | `p-lookalike_injection_N-<n>` | **`lookalike`** | `variant_n` | env, Lookalike Injection |
 | `p-rank_wrapper_N-<n>` | `rank_wrapper` | `variant_n` | env, Rank Wrapper |
+| `p-task_disjoint_div-<d>_keep-<r>` | `task_disjoint` | `env_div`, `keep_ratio` | env-het **control** (WebShop): the same goal slices as `catalog_split`, full catalog |
+| `p-scene_disjoint_div-<d>_spc-<n>` | `scene_disjoint` | `env_div`, `alfworld_scenes_per_client` | env (ALFWorld), Scene Disjoint — the Catalog-Split analogue |
+| `p-obs_variant_N-<n>` / `p-dyn_variant_N-<n>` / `p-goal_variant_N-<n>` | `obs_variant` / `dyn_variant` / `goal_variant` | `variant_n` | env (ALFWorld), kernel variants: observation grammar / PDDL action pre-effects / hidden success predicate |
 
-The ALFWorld env-het analogue (not in the filename grammar above; used in the hand-written
-`examples/alfworld/paper.yaml`) is `partition_strategy: env_disjoint`, disjoint per-client game
-shards. Its WebShop task-only sibling is `task_disjoint` (disjoint goals, full catalog).
+The ALFWorld rows exist since 2026-08-23 ([`dev_doc/alfworld_env_heterogeneity.md`](./dev_doc/alfworld_env_heterogeneity.md)
+for the constructions). The older `partition_strategy: env_disjoint` (disjoint per-client game
+shards; the hand-written `examples/alfworld/paper.yaml`) remains code-supported but has no paper
+cell — `scene_disjoint` supersedes it.
 
 ### Sweep endpoints
 
@@ -216,7 +221,9 @@ filenames:
 | Coverage | `std-256` | `std-1` | high `size_std` (Beta concentration) => near-uniform; low => skewed |
 | Hardness | `success_std-256` | `success_std-1` | same Beta-dispersion convention |
 | Catalog Split | `div-0.0` | `div-1.0` | swept at fixed `keep-0.7` |
-| env-variants | `N-2` | `N-8` | variant-pool size `variant_n` |
+| env-variants (WebShop) | `N-2` | `N-8` | variant-pool size `variant_n` |
+| Scene Disjoint (ALFWorld) | `div-0.0` | `div-1.0` | swept at fixed `spc-8` |
+| kernel variants (ALFWorld) | `N-2` | `N-4` | `obs` / `dyn` / `goal_variant` pools |
 
 ### Directory families
 
@@ -230,8 +237,10 @@ filenames:
 **Backbones** (one `uniform/<Model>/` subdir each): `Qwen2.5-1.5B-Instruct`,
 `Qwen2.5-3B-Instruct`, `Qwen2.5-7B-Instruct`, `Llama-3.2-3B-Instruct`. The
 `env_heterogeneity`, `task_heterogeneity`, and `decentralized` trees are generated for the
-1.5B backbone only. `env_heterogeneity` is **webshop-only** (the catalog/BM25/lookalike/rank
-arms perturb the WebShop catalog + search engine and have no ALFWorld analogue).
+1.5B backbone only. `env_heterogeneity` covers **both benchmarks** since 2026-08-23: the WebShop
+arms perturb the catalog + search engine, the ALFWorld arms (`scene_disjoint`, `obs_variant`,
+`dyn_variant`, `goal_variant`) perturb the scene shard, the observation grammar, the PDDL action
+kernel and the hidden success predicate ([`dev_doc/`](./dev_doc/README.md)).
 
 ### Uniform settings
 
@@ -268,6 +277,8 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `model_path` | str | `""` | Base HF model dir for round 1; `""` => auto-discover a local Qwen2.5-0.5B-Instruct snapshot. |
+| `ref_anchor` | str | `base` | The **KL-reference role** ([`../ref_anchor.py`](../ref_anchor.py)). `base` (default since 2026-09-16): the reference policy is pinned to `ref_model_path` (else the actor base) for the **whole run**, `J − kl_coef·KL(π‖π_base)`, the paper stack's objective. `round`: the reference follows each round's aggregate, `KL(π‖π_{r−1})`, a per-round proximal term — the behaviour of every verl-0.8 run before 2026-09-16. **Different objectives:** never pool numbers across them; a resume that would change it is refused (`allow_objective_change`). Logged at startup, recorded in `federated_summary.json`. |
+| `ref_model_path` | str | `""` | `base` only: an explicit fixed HF snapshot for the reference; `""` resolves to `model_path` (after CLI overrides). Must stay empty under `round`. |
 | `output_dir` | path | `outputs/fedagent_fed_tinyguess` | Run root: per-round client/aggregated checkpoints, logs, `federated_summary.json`. |
 | `env_spec` | path | `config/envs/tiny_guess.yaml` | Env spec -> `data.{train,val}_files` for every client. |
 | `custom_cls_path` | path | `data/agentic_dataset.py` | Path to `AgenticDataset` (-> `data.custom_cls.path`). |
@@ -276,6 +287,7 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | `clients_per_round` | int | `2` | Clients selected per round M (deterministic seeded sampling when `M < N`; seed = `base_seed + round - 1`). |
 | `total_rounds` | int | `2` | Communication rounds T. |
 | `epochs_per_round` | int | `1` | Local epochs E per client per round (-> `trainer.total_epochs`). |
+| `epoch_resample` | bool | `True` | Draw a **fresh goal batch every local epoch** (the original sampler): clients run `trainer.total_epochs=1` over `FEDAGENT_DATA_EPOCHS=E` rows, same optimizer-step count. `false` = replay the same `n_envs` goals each epoch (only to reproduce pre-2026-07-22 runs). |
 | `base_seed` | int | `42` | Master seed; per-(round,client) env seed = `base_seed + round*100 + client` (also drives client selection). |
 | `n_gpus_per_node` | int | `2` | FSDP world size per client run (== aggregator `nproc`). |
 | `total_training_steps` | int | `1` | Per-client-round step cap (smokes); `<=0` => emit `null` so verl runs full E epochs (`len(dataloader)*total_epochs`). Emitted explicitly so a stale base value never leaks into paper runs. |
@@ -286,6 +298,8 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | `cleanup_checkpoints` | bool | `True` | Delete consumed FSDP shards after each merge (keep HF + logs); disk hygiene. |
 | `keep_client_hf_rounds` | int | `2` | Rolling window of per-**client** `hf`/`critic_hf` merges kept on disk: round *r* prunes `round_(r-K)/client_*/{hf,critic_hf}`. Aggregated merges are NEVER pruned (resume + final eval read them). `<= 0` restores keep-everything (~3 GB × clients × rounds — a 70-round 5-client run is ~1 TB). |
 | `adv_estimator` | str | `grpo` | `grpo` (no critic) or `gae` (PPO: FedAvg actor **and** critic). |
+| `critic_model_path` | str | `""` | PPO only: the value model the **first trained round** starts from; `""` = auto (the aggregated critic beside an aggregated seed actor, else the actor backbone with a fresh value head). CLI `--critic-path`; see [running.md § Warm-starting](./running.md#warm-starting-from-another-run). |
+| `critic_loss_mode` | str | `legacy_exact` | PPO value-loss contract ([bugfixes.md 2026-07-22](./bugfixes.md)): `legacy_exact` restores the fork's coefficient-1.0 objective through the `ppo_critic_loss` overlay; `global_token_paper_coef` = micro/DP-invariant global token mean; `upstream_standard` = stock verl 0.8 (per-micro-normalized, +0.5). |
 
 ### Env services
 
@@ -295,6 +309,9 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 | `webshop_run_service` | path | `envs/webshop/service/run_service.sh` | Launcher for a WebShop service. |
 | `webshop_base_port` | int | `8080` | Client `c`'s replica `j` -> `webshop_base_port + c*replicas + j` (K=1 → `+ c`). |
 | `webshop_pool_size` | int | `8` | Env pool per WebShop service (must be `>= gen_batch`). |
+| `service_port_autoshift` | bool | `True` | Preflight the whole env-service port block at startup and relocate it (into the reserved `[61000, 65536)` pool) when it overlaps the kernel ephemeral range or is already occupied; `false` keeps the literal ports and only warns ([bugfixes.md 2026-08-19](./bugfixes.md)). |
+| `port_band_base` | int | `26000` | Deterministic per-process port bands for the random-port pickers inside each verl trainer/eval (vLLM `get_open_port` + verl master port): process slot `s` gets `[base + s·stride, +stride)` via `FEDAGENT_PORT_BAND`, below the ephemeral range. `0` = stock random ports. The single-H100 tree cycles 5000/8400/11800/15200 so four co-hosted cells never collide. |
+| `port_band_stride` | int | `100` | Ports per process band (≥ ~8 needed per trainer). |
 | `search_return_n` | int | `50` | `WEBSHOP_SEARCH_RETURN_N`: BM25 top-K. Default `50` (the engine/original value); the 16 env-het paper configs pin `200` so post-retrieval catalog filtering does not drop targets. |
 | `val_search_return_n` | int | `50` | SRN of the shared UNPERTURBED **val** service — a separate knob since 2026-07-28. The executed env-het runs forwarded the run's own `search_return_n` (=200) to validation, so those arms validated on top-200 pages vs the baselines' top-50 (disclosed in the paper). The pinned default keeps future arms comparable; set `200` to reproduce the executed env-het protocol. |
 | `alfworld_run_service` | path | `envs/alfworld/service/run_service.sh` | Launcher for an ALFWorld service. |
@@ -308,14 +325,16 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `partition_strategy` | str | `""` | `""` (IID) \| `catalog_split`/`task_disjoint` (WebShop env/task) \| `env_disjoint` (ALFWorld env) \| `preference`/`coverage`/`hardness` (task) \| `bm25_field_subset`/`bm25_reweight`/`lookalike`/`rank_wrapper` (WebShop env variants). |
-| `env_div` | float | `0.7` | env-het strength: **catalog_split** (WebShop) *and* **env_disjoint** (ALFWorld; forwarded since 2026-07-28 — before that env_disjoint silently ran the code default 0.7 whatever the config said). |
+| `partition_strategy` | str | `""` | `""` (IID) \| WebShop env: `catalog_split` (+ `task_disjoint`, its full-catalog control) and the transition variants `bm25_field_subset`/`bm25_reweight`/`lookalike`/`rank_wrapper` \| ALFWorld env: `scene_disjoint` (+ the older `env_disjoint`) and the kernel variants `obs_variant`/`dyn_variant`/`goal_variant` ([dev_doc](./dev_doc/alfworld_env_heterogeneity.md)) \| task, both envs: `preference`/`coverage`/`hardness`. |
+| `env_div` | float | `0.7` | env-het strength: **catalog_split** (WebShop), **scene_disjoint** and **env_disjoint** (ALFWorld; forwarded since 2026-07-28 — before that env_disjoint silently ran the code default 0.7 whatever the config said). |
 | `keep_ratio` | float | `0.7` | catalog-split distractor density. |
 | `alfworld_fallback` | str | `skip` | **env_disjoint** single-scene specs: `skip` (drop the spec) \| `shared` (all clients get it) \| `trial-only` (trial-axis top-k). Forwarded since 2026-07-28 (previously stuck at the code default `skip`). |
+| `alfworld_scenes_per_client` | int | `8` | **scene_disjoint**: FloorPlans per client shard, stratified over the 4 room types. Filename token `spc-<n>`. |
+| `alfworld_holdout_file` | path | `""` | **scene_disjoint**: OOD scene holdout list (e.g. `data/env_heterogeneity/holdout_alfworld_v1.json`), resolved against the repo root like `trajectories_file`. |
 | `omega` | float | `0.5` | **preference** (task-het) Dirichlet spread ω, larger ω = more skew. |
 | `size_std` | float | `1.0` | **coverage** (task-het) Beta dispersion ξ. |
 | `success_std` | float | `1.0` | **hardness** (task-het) Beta dispersion ξ′. |
-| `variant_n` | int | `0` | env-variant arms (bm25/lookalike/rank): # variants in the pool (`0` => fn default 2/4). Filename token `N-<n>`. |
+| `variant_n` | int | `0` | env-variant arms, WebShop (bm25/lookalike/rank) **and** ALFWorld (obs/dyn/goal_variant): # variants in the pool (`0` => the arm's default). Filename token `N-<n>`. |
 | `trajectories_file` | path | `""` | hardness: **required** `task_id`->success-labels file (generate via `tools/gen_hardness_trajectories.py`). |
 | `min_goals_per_client` | int | `100` | Minimum goals per client's shard. Filename token `min-goals-per-cl-<G>`. |
 
@@ -375,8 +394,10 @@ runtime behavior: `running.md`).
 | `rollout_mode` | str | `windowed` | `windowed` (paper-faithful per-turn window, `WindowedAgentLoopManager`) \| `concat` (stock 1-sample/episode). |
 | `windowed_history_length` | int | `2` | `FEDAGENT_HISTORY_LENGTH` for windowed (paper = 2); concat uses 0. |
 | `resume` | bool | `True` | Rerun with the same `--output-dir` ⇒ continue after the last completed round (`--fresh` disables; see running.md § Resume). |
+| `allow_objective_change` | bool | `False` | Resume guard (2026-09-16): `run_fed` writes `run_objective.json` (`ref_anchor`, `ref_model_path`, `adv_estimator`) into `output_dir` at launch and **refuses** a resume whose `ref_anchor`/`adv_estimator` differ from it; a directory without a record counts as a rolling-reference run (every pre-2026-09-16 run). `true` proceeds, logs the switch and records the round it happened. |
 | `cleanup_checkpoints` | bool | `True` | Delete consumed FSDP shards after each merge (disk hygiene; keeps logs + HF). |
 | `keep_client_hf_rounds` | int | `2` | Rolling window of per-client `hf`/`critic_hf` merges (round *r* prunes round *r−K*'s); aggregated merges never pruned; `<= 0` keeps all. |
+| `merge_fp32` | bool | `True` | Keep the **aggregated** FSDP→HF merge in fp32 (stock verl's merger truncates to bf16 at every round boundary — [bugfixes.md](./bugfixes.md) "bf16 merge truncation"); ~2× disk on `aggregated/hf` only, client-eval merges stay bf16. `false` = stock bf16. |
 | `persistent` / `cross_round` | bool | `False` | Lever #4: one trainer/vLLM per round / for the whole run (biggest single-node win). |
 | `eval_mode` | str | `inline` | `inline` \| `parallel` (spare GPUs) \| `shared` \| `worker` (hot-engine eval; needs persistent/cross_round). |
 | `eval_gpus` | int | `2` | `eval_mode: parallel`: how many trailing GPUs the async eval takes. |

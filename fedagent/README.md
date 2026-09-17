@@ -41,6 +41,8 @@ fedagent/
 ├── data/                AgenticDataset: verl custom_cls emitting env-spec rows   → data/README.md
 ├── config/              Hydra config, agent registry, env specs, paper matrix    → config/README.md
 ├── fedprox.py           client-side FedProx proximal term (see sitecustomize.py)
+├── ref_anchor.py        explicit KL-reference role: base (default) | round, armed via sitecustomize.py
+├── ppo_critic_loss.py   PPO value-loss overlay (critic_loss_mode), armed via sitecustomize.py
 ├── main_ppo_fed.py      the per-client verl entry (stock run_ppo + FedAgent hooks)
 ├── EXPERIMENTS.md       running experiment log + migration-fidelity record
 └── docs/                full documentation suite   → docs/README.md
@@ -54,7 +56,9 @@ Each subfolder has its own `README.md` (linked above). For end-to-end guides see
 - **Algorithms**: **GRPO** (default; `adv_estimator=grpo`, group size **G=8** via
   `rollout.n=8`) and **PPO** (`adv_estimator=gae`, which federates the value model
   alongside the actor each round; rollout is **ungrouped**, `rollout.n=1` — GAE's
-  baseline is the critic).
+  baseline is the critic). Both train against an explicit **KL reference policy**
+  (`ref_anchor`: `base` = pinned to the base model for the whole run, the default since
+  2026-09-16; `round` = rolling with each round's aggregate, every earlier run).
 - **Federation**: FedAvg over FSDP-sharded checkpoints, with optional client-side
   **FedProx** (proximal term, enabled by `fedprox_mu>0`). Configurable protocol:
   clients `N`, clients/round `M`, local epochs `E`, rounds `T`, tasks/client.
@@ -62,10 +66,12 @@ Each subfolder has its own `README.md` (linked above). For end-to-end guides see
   `local` (`local_client_id>=0`: one pinned client, no federation).
 - **Environments**: `tinyguess` (in-process smoke), **WebShop** and **ALFWorld**
   (remote HTTP env services, one per client).
-- **Two-level heterogeneity**: environment-level (`catalog_split`, `task_disjoint`)
-  and task-level (`preference`/`omega`, `coverage`/`size_std`, `hardness`/`success_std`),
-  plus WebShop env-variant arms (`bm25_field_subset`, `bm25_reweight`, `lookalike`,
-  `rank_wrapper`). See [`docs/heterogeneity.md`](docs/heterogeneity.md).
+- **Two-level heterogeneity**: environment-level on WebShop (`catalog_split` and the
+  transition-variant arms `bm25_field_subset`, `bm25_reweight`, `lookalike`, `rank_wrapper`;
+  `task_disjoint` is its full-catalog control) and on ALFWorld (`scene_disjoint` and the
+  kernel-variant arms `obs_variant`, `dyn_variant`, `goal_variant`), and task-level on both
+  (`preference`/`omega`, `coverage`/`size_std`, `hardness`/`success_std`). See
+  [`docs/heterogeneity.md`](docs/heterogeneity.md).
 - **Evaluation**: a shared **unperturbed** validation service scores the aggregated
   global model every `test_freq` rounds (plus the base model at round 0).
 - **Backbones**: any HuggingFace causal-LM id (paper: Qwen2.5-1.5B/3B/7B-Instruct,
@@ -104,7 +110,9 @@ Every config key is documented in [`fed/README.md`](fed/README.md) (built from t
 | [`docs/running.md`](docs/running.md) | Running `run_fed.py`: modes, GPUs, baselines, FedProx, eval, worked examples. |
 | [`docs/configuration.md`](docs/configuration.md) | Config-file decoder and the federated-runner key reference. |
 | [`docs/heterogeneity.md`](docs/heterogeneity.md) | The two-level taxonomy and how to construct/select each arm. |
-| [`docs/reproducing.md`](docs/reproducing.md) | The paper config matrix (176 configs) mapped to commands. |
+| [`docs/reproducing.md`](docs/reproducing.md) | The paper config matrix (194 cells) mapped to commands; measured compute on 4 GPUs vs 1. |
+| [`docs/gpu_recipes.md`](docs/gpu_recipes.md) | Which GPU count for what: the 4-GPU paper recipe and the measured single-H100 recipe. |
+| [`docs/revision.md`](docs/revision.md) | Ledger of deliberate default/protocol changes and what older runs inherit (e.g. `ref_anchor`). |
 | [`docs/installation.md`](docs/installation.md) | The conda envs (orchestrator + WebShop + ALFWorld), data, and models. |
 | [`docs/migration.md`](docs/migration.md) | What changed from the verl-agent-0.3.1 fork to stock verl 0.8, and the equivalence checks. |
 

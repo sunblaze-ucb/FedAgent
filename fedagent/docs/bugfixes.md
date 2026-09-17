@@ -28,7 +28,11 @@ loss reduction, seeded value head, `stable_v1` generation seeds, the objective-m
 round-manifest resume protocol) are deliberately **not** ported: this tree's recipe is the one
 whose numbers are normal (uniform PPO/WebShop/Lucene last-10 success 0.659 on 4xH100), and on
 DSP's own seed-42 2x2 the base-anchor arm finished *below* the rolling-anchor arm (0.344 vs
-0.484 at r69). What is ported below is the subset that changes no number a federated arm
+0.484 at r69). *(Update 2026-09-16: `ref_anchor` was subsequently ported as an explicit knob on
+2026-09-12 with `round` as default, and `base` became the default on 2026-09-16 after this
+cluster's own single-H100 A/B — see [revision.md](./revision.md). The DSP verdict above is quoted
+as it stood; its sign is metric-dependent and second order next to backend and GPU count.)* What is
+ported below is the subset that changes no number a federated arm
 computes and that was verified here by reading the code and, where possible, this cluster's
 logs. Baseline before the port: `pytest tests/` 150 passed / 3 skipped; after: see
 `tests/test_resume_scan_and_round_plumbing.py`.

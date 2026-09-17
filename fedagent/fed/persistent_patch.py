@@ -314,7 +314,8 @@ def _apply_persistent_patch() -> bool:
             _load_model_shards(self.actor.engine, shard_dir)
         # Explicit KL role (fedagent/ref_anchor.py). When FEDAGENT_REF_MODEL_PATH is set the reference
         # is fixed for the whole run (ref_anchor=base) and must NOT follow the round's aggregate here.
-        # Unset (ref_anchor=round, the default) keeps the rolling-reference behaviour byte-identical.
+        # Unset (ref_anchor=round; the default until 2026-09-16) keeps the rolling-reference behaviour
+        # byte-identical.
         # On a RESUMED chunk the process launches with model.path = the resume round's aggregate, so
         # this guard alone would freeze the ref THERE; ref_anchor's init_model hook re-points it to the
         # base -- the two pieces are co-required and ref_anchor asserts its own swap.

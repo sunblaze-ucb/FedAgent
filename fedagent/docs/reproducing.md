@@ -33,8 +33,10 @@ see [the fidelity note](#scientific-equivalence-not-bit-identical).
 - **Conda env `fedagent-verl08`** (py3.12, stock verl 0.8). Activate it first;
   `run_fed` sets `PYTHONPATH` to the repo root so `fedagent` and the root
   `sitecustomize.py` (FedProx) are importable in every subprocess it spawns.
-- **A 4-GPU node.** The `paper/` configs pin `n_gpus_per_node: 4` (FSDP world
-  size 4); `--n-gpus` overrides it.
+- **A 4-GPU node, or one H100 per cell.** The `paper/` and `paper_accelerated/` configs
+  pin `n_gpus_per_node: 4` (FSDP world size 4); `--n-gpus` overrides it, and
+  `paper_accelerated_1gpu/` is the same science pinned to one H100 (about ×2 the
+  per-round time at half the GPU-hours for 1.5B; [gpu_recipes.md](./gpu_recipes.md)).
 - **The env service env.** WebShop and ALFWorld arms talk to one remote HTTP
   service per client; `run_fed` **launches the services itself**, but their conda
   env / data must be installed and on PATH. `tinyguess` runs in-process.
@@ -143,7 +145,9 @@ the global model on the shared unperturbed val set.
 
 ## The experiment matrix
 
-176 configs total under `config/paper/`, mirroring the original paper structure.
+194 configs total under `config/paper/` (the paper's 176 plus the 2026-08-23 env-het
+extension: 14 ALFWorld cells and 4 WebShop `task_disjoint` controls), mirroring the
+original paper structure.
 The **main table is the 4-backbone uniform sweep across WebShop + ALFWorld**; the
 heterogeneity and decentralized families are run on a single backbone
 (Qwen2.5-1.5B-Instruct).
@@ -275,15 +279,16 @@ python -m fedagent.fed.run_fed --config \
 
 ## 2. Environment-level heterogeneity: the worst-case-non-robust study
 
-**Backs:** the WebShop env-variant figure (GRPO and PPO side by side).
+**Backs:** the env-variant figure (GRPO and PPO side by side), on **both benchmarks**
+since 2026-08-23.
 Environment-level heterogeneity enters through the **transition kernel / catalog**,
 the policy only senses it through successor states, *not* from the prompt, so
 the federated objective is **worst-case non-robust** to it (the paper's negative
 result). The task partition is held **uniform** across every env-level run, so any
-divergence is attributable to the transition perturbation alone. **WebShop only**
-(ALFWorld has no catalog/search to perturb), Qwen2.5-1.5B only. WebShop's
-search/transition pipeline factors into four stages, and the five strategies
-perturb across them.
+divergence is attributable to the transition perturbation alone. Qwen2.5-1.5B only.
+WebShop's search/transition pipeline factors into four stages, and the five strategies
+perturb across them; ALFWorld perturbs the scene shard, the observation grammar, the
+PDDL action kernel and the hidden success predicate (table further down).
 
 | Strategy (dir) | Pipeline stage | Knob | Sweep points (GRPO) | PPO sibling |
 |---|---|---|---|---|
@@ -293,7 +298,10 @@ perturb across them.
 | `lookalike_injection/` | content + matching | `variant_n` | `N ∈ {2, 4}` | `N 4` only |
 | `rank_wrapper/` | rendering | `variant_n` | `N 4` | `N 4` |
 
-That is 11 GRPO + 5 PPO = **16** configs. Note the asymmetry: the GRPO
+That is 11 GRPO + 5 PPO = **16** WebShop configs, plus the 4 `task_disjoint/` GRPO
+controls (the same goal slices with the full catalog, at the matched `div` points) —
+20 WebShop cells; the ALFWorld side below adds 10 GRPO + 4 PPO = **14**, 34 env-het
+cells in all. Note the asymmetry: the GRPO
 directories sweep multiple points, but every `*_ppo` directory holds only the
 **single most-divergent point** used for the GRPO-vs-PPO contrast, do not expect
 a full PPO sweep. The directory/filename token (e.g. `bm25_reweighting`,
@@ -301,7 +309,19 @@ a full PPO sweep. The directory/filename token (e.g. `bm25_reweighting`,
 actually consumes is the short strategy id (`bm25_reweight`, `bm25_field_subset`,
 `lookalike`, `rank_wrapper`, `catalog_split`).
 
-These arms set `search_return_n: 200` (the paper's BM25 top-K) because perturbing
+| ALFWorld strategy (dir) | Channel | Knob | Sweep points (GRPO) | PPO sibling |
+|---|---|---|---|---|
+| `scene_disjoint/` | content (which FloorPlans a client trains in) | `env_div`, `alfworld_scenes_per_client` | `div ∈ {0.0, 0.3, 0.7, 1.0}`, `spc 8` | `div 1.0` only |
+| `obs_variant/` | rendering (observation-grammar rewrites) | `variant_n` | `N ∈ {2, 4}` | `N 4` only |
+| `dyn_variant/` | dynamics (PDDL action pre/effect rewrites) | `variant_n` | `N ∈ {2, 4}` | `N 4` only |
+| `goal_variant/` | hidden reward (success-predicate rewrites) | `variant_n` | `N ∈ {2, 4}` | `N 4` only |
+
+Every ALFWorld variant pool is verified planner-level solvable
+(`tools/env_heterogeneity/verify_alfworld_kernel_variants.py`); construction, hiddenness
+grading and the verification layers are in
+[`dev_doc/alfworld_env_heterogeneity.md`](./dev_doc/alfworld_env_heterogeneity.md).
+
+The WebShop arms set `search_return_n: 200` (the paper's BM25 top-K) because perturbing
 the catalog/search would otherwise drop targets out of reach; the uniform, task-
 het, decentralized, and baseline WebShop runs use the engine default `50`, which
 is what matches the original non-het numbers.
@@ -332,9 +352,9 @@ python -m fedagent.fed.run_fed --config \
 
 ### Notes
 
-- **Validation is always on the UNPERTURBED WebShop environment** (`val_env_spec`
-  forces perturbation kwargs off), so the metric isolates post-aggregation
-  generalization, not per-client overfitting.
+- **Validation is always on the UNPERTURBED environment** (the WebShop catalog / the
+  ALFWorld `valid_seen` games; `val_env_spec` forces perturbation kwargs off), so the
+  metric isolates post-aggregation generalization, not per-client overfitting.
 - To reproduce a figure point, run **both** the GRPO config and its `*_ppo`
   sibling, 3 seeds each.
 - See [`./heterogeneity.md`](./heterogeneity.md#arm---knob---paper-config-map) for the per-stage
@@ -534,6 +554,19 @@ twins** (`config/paper_accelerated/`, same science) cut wall-clock by roughly
 To shrink cost while developing, drop the group size
 (`gen_paper_configs.py --group-size 2` regenerates a cheap-smoke matrix) or run on
 fewer GPUs with `--n-gpus`; see [`./running.md`](./running.md).
+
+**Measured on this stack** (accelerated recipe, Qwen2.5-1.5B, seed 42, September 2026;
+[`./gpu_recipes.md`](./gpu_recipes.md) has the per-round breakdown and caveats):
+
+| Cell | 4 × H100 (`paper_accelerated/`) | 1 × H100 (`paper_accelerated_1gpu/`) |
+|---|---|---|
+| WebShop GRPO | steady round 402 s (training steps only); ≈9.4 h / 70 rounds | 17.4 min/round, 19.9 h, **19.9 GPU·h** |
+| WebShop PPO | **10.6 min/round** (median, measured over 70 rounds), ≈13 h, **≈50 GPU·h** | 21.1 min/round, 24.5 h, **24.5 GPU·h** |
+| ALFWorld GRPO | steady round 762 s (training steps only); ≈16.7 h / 70 rounds | 39.8 min/round, 44.7 h, **44.7 GPU·h** |
+| ALFWorld PPO | — | 54.9 min/round, 46.5 h for 54 rounds (≈60 h / 70) |
+
+One H100 is about ×2 slower per round than four at 1.5B, so a cell costs roughly half the
+GPU-hours, and four cells run side by side on one 4-GPU node.
 
 ---
 

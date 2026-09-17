@@ -81,6 +81,14 @@ These were verified during migration audits and fixed where they diverged (see
   filter-groups path (`rollout_loop.py:414`, block `:447-482`) — the formula is real but the executed
   *value* was 1; that verdict is withdrawn. Pre-fix PPO configs really did 8× the paper's
   rollout volume (512/step).
+- **KL reference = the base model, for the whole run** (`ref_anchor: base`, the default since
+  2026-09-16). The 0.3.1 stack left `model.path` at the base HF id and moved the FedAvg weights
+  through `resume_from_path`, so its ref worker never moved. Stock verl 0.8 builds actor and ref
+  from the one `model.path`, which the round loop points at each round's aggregate, so the migrated
+  runs re-anchored the KL term every round (`ref_anchor: round`: every run before 2026-09-16, a
+  per-round proximal term). [`ref_anchor.py`](../ref_anchor.py) restores the fixed anchor; the
+  rolling variant stays selectable. Different objectives — do not pool
+  ([revision.md](./revision.md#2026-09-16-the-kl-reference-is-pinned-to-the-base-model-by-default-ref_anchor-base)).
 - **Sparse reward + invalid-action penalty**: `{0,10}` with a `0.1 × n_invalid` penalty
   (the penalty moved from the trainer actor to the agent-loop; same total per episode).
   Within the episode the placement is **per-turn**: −0.1 lands at the turns whose own action
@@ -106,7 +114,8 @@ These were verified during migration audits and fixed where they diverged (see
 
 ## Fidelity fixes baked into the config generator
 
-`tools/gen_paper_configs.py` (which emits the 176-config paper tree)
+`tools/gen_paper_configs.py` (which emits the paper tree: the 176 paper cells, 194 with the
+2026-08-23 ALFWorld env-het extension)
 applies three fixes surfaced by the WebShop/ALFWorld implementation audits:
 
 1. **WebShop `search_return_n` (BM25 top-K).** The original raised it only on env-het arms
@@ -158,9 +167,10 @@ truncation"); `hf_export: final` skips the hop entirely.
 **Baseline dynamics (the renamed rd-70_ep-3 local configs; `centralized` returned to rd-1/ep-210 on 2026-09-10, see bugfixes.md):** each round is a
 fresh subprocess started from the merged HF weights (`save_contents=[model]`,
 `resume_mode=disable`), so the T=70×E=3 baselines inherit the federated arms' per-round
-semantics: Adam moments re-initialize every 3 epochs, the `use_kl_loss` reference re-anchors
-to each round's starting model (the original 1×210 baselines kept one optimizer and a fixed
-base-model KL anchor). The E epochs within a round used to replay that round's goal draw;
+semantics: Adam moments re-initialize every 3 epochs; the `use_kl_loss` reference is the base
+model under the default `ref_anchor: base` (matching the original's fixed anchor) and re-anchors
+to each round's starting model only under `ref_anchor: round` (the original 1×210 baselines kept
+one optimizer and a fixed base-model KL anchor). The E epochs within a round used to replay that round's goal draw;
 per-epoch resampling (`epoch_resample`, default on since 2026-07-23) restores a fresh draw
 every epoch — 210 distinct draws over T=70×E=3, matching the original's cadence
 ([`bugfixes.md`](bugfixes.md) "per-epoch goal resampling"). Compute- and dynamics-matched to
@@ -172,26 +182,27 @@ per-round goal draws); the original varied `SHUFFLE_SEED` (a reshuffle of the tr
 under fixed selection). Both are valid seed-noise axes over a fixed val split; they are not
 the same randomness source (documented in `gen_paper_configs.py`).
 
-**GPU-pending verification:** PPO (`gae`) critic federation and the decentralized ablations
-are config-parse + code-audited but not yet smoke-run end-to-end; the larger backbones
-(Qwen2.5-3B/7B, Llama-3.2-3B) and the full 70-round budget have not been exercised on this
-stack. The GRPO federated path **is** GPU-verified end-to-end on both envs at the real paper
-configs (WebShop; ALFWorld 2026-07-02/03 incl. the 50-turn budget, no OOM/truncation, see
+**GPU verification (2026-09-16):** the uniform GRPO **and PPO** federated paths are GPU-verified
+over the full 70-round budget at the 1.5B paper configs: WebShop PPO on 4×H100 (2026-09-08..10,
+both search backends) and all four uniform cells on single H100s (2026-09-10..13; ALFWorld PPO at
+54/70). The decentralized ablations, the env/task-het arms at full budget and the larger backbones
+(Qwen2.5-3B/7B, Llama-3.2-3B) remain config-parse + code-audited only. The original GRPO
+verification stands (WebShop; ALFWorld 2026-07-02/03 incl. the 50-turn budget, no OOM/truncation, see
 [acceleration_final_2026-07-03.md](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs/acceleration_final_2026-07-03.md) on the migrate/verl-0.8.0 branch).
 
 ## Verification status
 
-(as of 2026-07-09; the running record is [`../EXPERIMENTS.md`](../EXPERIMENTS.md))
+(as of 2026-09-16; the running record is [`../EXPERIMENTS.md`](../EXPERIMENTS.md))
 
 | Path | Status |
 |---|---|
 | TinyGuess (in-process) | GPU-verified end-to-end |
-| **WebShop GRPO federated** | **GPU-verified: full multi-round loop** (train → FedAvg → merge → next round → eval), incl. the real paper config |
-| **ALFWorld GRPO federated** (service + max_turns=50) | **GPU-verified: 2-round run on the real paper config** (2026-07-02/03); 50-turn budget OK |
-| WebShop PPO (gae critic federation) | config-parses + code-audited; not GPU-smoke-run, use the 2026-07-20 corrected configs (`rollout.n=1`, `ppo_mini_batch_size=64`, critic mini 64) |
-| ALFWorld PPO | config-parses + code-audited; not GPU-smoke-run |
+| **WebShop GRPO federated** | **GPU-verified: full multi-round loop** (train → FedAvg → merge → next round → eval), incl. the real paper config; **70/70 rounds on 1×H100** (2026-09-13: last-10 task 0.802 / success 0.664) |
+| **ALFWorld GRPO federated** (service + max_turns=50) | **GPU-verified: 2-round run on the real paper config** (2026-07-02/03); 50-turn budget OK; **70/70 rounds on 1×H100** (2026-09-13: last-10 success 0.534) |
+| **WebShop PPO** (gae critic federation) | **GPU-verified: 70/70 rounds on 4×H100** (2026-09-10, Lucene backend: last-10 task 0.804 / success 0.659; an in-memory-BM25 twin finished 2026-09-09) **and on 1×H100** (2026-09-13: 0.794 / 0.681 with the rolling anchor; the base-anchor A/B arm 0.780 / 0.609). Uses the 2026-07-20 corrected configs (`rollout.n=1`, `ppo_mini_batch_size=64`, critic mini 64) |
+| ALFWorld PPO | **GPU-verified: 54/70 rounds on 1×H100** (2026-09-13, resumable; best success 0.594 @ r39, regresses after r40 — one seed) |
 | Decentralized ablations | config-parses + code-audited; not GPU-smoke-run |
-| Larger backbones (3B/7B/Llama) / 70-round budget | not exercised on this stack |
+| Larger backbones (3B/7B/Llama) | not exercised on this stack (the 70-round budget itself is now exercised at 1.5B on both envs and both algorithms) |
 
 ## See also
 

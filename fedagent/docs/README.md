@@ -9,11 +9,12 @@ overview in [`../README.md`](../README.md), then:
 | [architecture.md](./architecture.md) | How the overlay works: the federated round loop, the in-framework hooks, the remote env services, FedProx, eval. |
 | [installation.md](./installation.md) | The three conda envs (trainer + WebShop + ALFWorld services), data, and models. |
 | [running.md](./running.md) | Running `run_fed.py`: run modes, GPUs, baselines, FedProx, validation, worked examples. |
-| [gpu_recipes.md](./gpu_recipes.md) | **Best-practice recipes per GPU count (1 / 2 / 4)** and the pre-accelerated paper matrix (`config/paper_accelerated/`). |
+| [gpu_recipes.md](./gpu_recipes.md) | **Best-practice recipes per GPU count (1 / 2 / 4)**, the pre-accelerated paper matrix (`config/paper_accelerated/`) and the measured single-H100 recipe (`config/paper_accelerated_1gpu/`). |
 | [configuration.md](./configuration.md) | The config-file decoder and the full federated-runner key reference. |
 | [features.md](./features.md) | Each capability → its config key → its source file (a navigation map). |
-| [heterogeneity.md](./heterogeneity.md) | The two-level (task vs environment) heterogeneity suite, with the construction math for each arm. |
-| [reproducing.md](./reproducing.md) | The paper's 176-config matrix mapped to run commands; 3-seed replication; baselines. |
+| [heterogeneity.md](./heterogeneity.md) | The two-level (task vs environment) heterogeneity suite, with the construction math for each arm (WebShop and ALFWorld). |
+| [dev_doc/](./dev_doc/README.md) | The ALFWorld environment-heterogeneity working set (2026-08): arm construction + five-layer verification, query/env decoupling, WebShop-vs-ALFWorld comparison. |
+| [reproducing.md](./reproducing.md) | The paper's 194-cell matrix (176 + the ALFWorld env-het extension) mapped to run commands; 3-seed replication; baselines; measured compute. |
 | [extending.md](./extending.md) | Extension points: a new dataset/env, heterogeneity strategy, RL algorithm, or aggregation rule. |
 | [migration.md](./migration.md) | **Migration**, the condensed fidelity record: what changed from the verl-agent-0.3.1 fork, the science-critical alignments, and the verification status. |
 | [revision.md](./revision.md) | **Revisions**: deliberate changes to defaults, protocol, shipped assets and layout, with what each means for older runs and configs. Its twin for defects is [bugfixes.md](./bugfixes.md). |

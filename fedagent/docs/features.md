@@ -49,6 +49,7 @@ rollouts and no critic; PPO adds a value model that is federated alongside the a
 | Algorithm select | `adv_estimator: grpo` (default) or `gae` | `run_fed.py` DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
 | GRPO group size **G** | `actor_rollout_ref.rollout.n=8` | `client_overrides` (paper arms = 8; base default 4) | [`config/fedagent_ppo.yaml`](../config/fedagent_ppo.yaml) |
 | GRPO actor loss | `actor_rollout_ref.actor.use_kl_loss=true`, `kl_loss_coef=0.01`, `kl_loss_type=low_var_kl`, `entropy_coeff=0.001` | base config (inherited by every arm) | [`config/fedagent_ppo.yaml`](../config/fedagent_ppo.yaml) |
+| KL reference role | `ref_anchor: base` (default since 2026-09-16: pinned to the base model for the whole run) or `round` (follows each round's aggregate — every earlier run); `ref_model_path` | `run_fed.py` DEFAULTS | [`ref_anchor.py`](../ref_anchor.py) + [`fed/run_fed.py`](../fed/run_fed.py) (`resolve_ref_model_path`, `check_resume_objective`) |
 | PPO, federate the critic | `adv_estimator: gae` (+ `critic.*` overrides) | DEFAULTS + `client_overrides` | [`fed/run_fed.py`](../fed/run_fed.py) |
 | Per-client trainer entry | `python -m fedagent.main_ppo_fed` (runs verl's stock `run_ppo`) | - | [`main_ppo_fed.py`](../main_ppo_fed.py) |
 | Multi-turn rollout | `actor_rollout_ref.rollout.agent.default_agent_loop: gym_text` | base config + [`config/agent.yaml`](../config/agent.yaml) | [`agent_loops/gym_text_agent_loop.py`](../agent_loops/gym_text_agent_loop.py) |
@@ -109,8 +110,9 @@ and the `gym_text` agent name; the per-client service URL is injected by the dri
 The core research feature: a suite of **client-partition strategies** along two
 structurally distinct axes, selected with `partition_strategy` plus per-strategy
 knobs. The driver forwards them to each client's env service via env vars
-(`PARTITION_STRATEGY`, `OMEGA`, `SIZE_STD`, …); the service dispatches to the matching
-module under [`fedagent/hetero/`](../hetero/).
+(`PARTITION_STRATEGY`, `OMEGA`, `SIZE_STD`, …); the WebShop service dispatches to the matching
+module under [`fedagent/hetero/`](../hetero/), the ALFWorld service to the vendored engine's
+`partition_strategy.py` / `alfworld_kernel_variants.py`.
 
 **Task-level**: clients differ in their *task distribution* (observable through the prompt):
 
@@ -130,6 +132,8 @@ module under [`fedagent/hetero/`](../hetero/).
 | `bm25_reweight` | `variant_n` | [`hetero/webshop_env_variants.py`](../hetero/webshop_env_variants.py) |
 | `lookalike` | `variant_n` | [`hetero/webshop_env_variants.py`](../hetero/webshop_env_variants.py) |
 | `rank_wrapper` | `variant_n` | [`hetero/webshop_env_variants.py`](../hetero/webshop_env_variants.py) |
+| `scene_disjoint` (ALFWorld) | `env_div`, `alfworld_scenes_per_client`, `alfworld_holdout_file` | [`envs/alfworld/engine/…/partition_strategy.py`](../envs/alfworld/engine/agent_system/environments/partition_strategy.py) |
+| `obs_variant` / `dyn_variant` / `goal_variant` (ALFWorld) | `variant_n` | [`envs/alfworld/engine/…/alfworld_kernel_variants.py`](../envs/alfworld/engine/agent_system/environments/alfworld_kernel_variants.py) ([dev_doc](./dev_doc/alfworld_env_heterogeneity.md)) |
 
 `partition_strategy: ""` (or `uniform` for ALFWorld) is the homogeneous / i.i.d.
 baseline. `min_goals_per_client` sets the per-client task count; `base_seed` makes the
@@ -206,7 +210,7 @@ DEFAULTS):
 
 Paper config filenames encode the protocol
 (e.g. `…total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100…`); the decoder
-and the full 176-config matrix are in [reproducing.md](./reproducing.md) and
+and the full 194-cell matrix are in [reproducing.md](./reproducing.md) and
 [configuration.md](./configuration.md). The driver threads a per-(round, client) data
 seed (`FEDAGENT_BASE_SEED = base_seed + round·100 + client_id`) so each client re-draws
 goals from its fixed shard every round.
@@ -214,7 +218,9 @@ goals from its fixed shard every round.
 ## 8. FSDP & scaling
 
 Larger backbones (3B / 7B) train via **FSDP** with optional CPU offload; runs scale
-from one GPU to a full node.
+from one GPU to a full node. At 1.5B every paper cell also runs on **one H100**
+(`config/paper_accelerated_1gpu/`): about ×2 the 4-GPU per-round time at roughly half the
+GPU-hours, four cells per node ([gpu_recipes.md](./gpu_recipes.md)).
 
 **Configure**
 

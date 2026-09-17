@@ -47,6 +47,14 @@ service ([`../envs/webshop/service/`](../envs/webshop/service/)).
 | `bm25_reweight` | **Environment** (variant 3) | `bm25_variant_for_client` | `variant_n` | BM25 **scoring** (`k1`/`b`) reweighting (`bm25_in_memory_config`) |
 | `lookalike` | **Environment** (variant 4) | `lookalike_injection_for_client` | `variant_n` | Adversarial lookalike products (`extra_products`) |
 | `rank_wrapper` | **Environment** (variant 5) | `rank_wrapper_for_client` | `variant_n` | Search-engine **ranking** wrapper (`search_engine_variant`) |
+| `scene_disjoint` (ALFWorld) | **Environment** (Catalog-Split analogue) | engine [`partition_strategy.py`](../envs/alfworld/engine/agent_system/environments/partition_strategy.py) | `env_div`, `alfworld_scenes_per_client`, `alfworld_holdout_file` (`ENV_DIV`, `ALFWORLD_SCENES_PER_CLIENT`, `ALFWORLD_HOLDOUT_FILE`) | Disjoint per-client **FloorPlan** shards, stratified over the 4 room types |
+| `obs_variant` / `dyn_variant` / `goal_variant` (ALFWorld) | **Environment** (kernel variants) | engine [`alfworld_kernel_variants.py`](../envs/alfworld/engine/agent_system/environments/alfworld_kernel_variants.py) | `variant_n` (`VARIANT_N`) | Per-client game-file rewrites: observation grammar / PDDL action pre-effects (dynamics) / the hidden `(:goal)` success predicate |
+
+The ALFWorld rows (2026-08-23) live in the vendored engine rather than in this package because they
+rewrite the game files the TextWorld service loads; the ALFWorld service
+([`../envs/alfworld/service/server.py`](../envs/alfworld/service/server.py)) dispatches on the same
+`PARTITION_STRATEGY` bridge. Construction, hiddenness grading and verification:
+[`../docs/dev_doc/alfworld_env_heterogeneity.md`](../docs/dev_doc/alfworld_env_heterogeneity.md).
 
 **Environment-level** strategies perturb the transition kernel / catalog: the agent
 never observes the change directly, only through successor states. **Task-level**

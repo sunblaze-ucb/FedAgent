@@ -32,7 +32,9 @@ Per-client environment services live in [`../envs/webshop/service/`](../envs/web
 1. **Choose the starting model.** Round 1 trains from the base model
    (`model_path`, or an auto-discovered local Qwen2.5-0.5B-Instruct via
    `discover_model()`). Round `r > 1` trains from round `r-1`'s **merged FedAvg model**
-   (`round_{r-1}/aggregated/hf`).
+   (`round_{r-1}/aggregated/hf`). The **KL reference policy** does not move with it by
+   default: `ref_anchor: base` keeps it at the base model for the whole run
+   ([below](#the-kl-reference-policy-ref_anchor)); `ref_anchor: round` lets it follow.
 2. **Select clients.** `select_clients(r, total_clients, clients_per_round, base_seed)`
    deterministically samples `clients_per_round` of `total_clients`
    (RNG seed `base_seed + r - 1`, so the schedule is reproducible on resume). When
@@ -122,7 +124,7 @@ The mode is derived from the config (no separate flag) in `run()`:
 | Mode | Selected when | Behavior |
 |---|---|---|
 | **federated** | `total_clients > 1` and `local_client_id < 0` (default) | FedAvg across the selected clients each round. |
-| **centralized** | `total_clients == 1` | One model on the pooled data; FedAvg of a single client is the identity, so the loop is just `total_rounds × epochs_per_round` of continued central training (per-round fresh optimizer/KL-anchor, see migration.md § Residual differences). |
+| **centralized** | `total_clients == 1` | One model on the pooled data; FedAvg of a single client is the identity, so the loop is just `total_rounds × epochs_per_round` of continued central training (the paper cells run it as one client-run, `rd-1 / ep-210`, since 2026-09-10; the KL anchor is the base model under the default `ref_anchor: base`, see migration.md). |
 | **local** | `local_client_id = k >= 0` | The paper's *Local Agent Training*: pin client `k` (its slice of the `total_clients`-way partition) every round and train it alone, no federation. |
 
 `participating_client_ids` / `select_clients` honor `local_client_id` by pinning that one
@@ -149,21 +151,53 @@ client (and only its env service is launched).
 
 ---
 
+## The KL reference policy (`ref_anchor`)
+
+Both algorithms train with `use_kl_loss=true` (`kl_loss_coef=0.01`, `low_var_kl`), i.e. against a
+**reference policy**. Stock verl 0.8 builds the actor *and* the reference from the one
+`actor_rollout_ref.model.path`, and the round loop moves the merged weights through that key, so
+without intervention the reference silently becomes "this round's starting model" — a per-round
+proximal term, not a fixed trust region. [`../ref_anchor.py`](../ref_anchor.py) makes the role
+explicit:
+
+| `ref_anchor` | Reference | Objective | Used by |
+|---|---|---|---|
+| `base` (**default since 2026-09-16**) | `ref_model_path`, else the actor base, for the whole run | `J − 0.01·KL(π ‖ π_base)` | the paper's verl-agent-0.3.1 stack; every run launched after the flip |
+| `round` | round `r−1`'s aggregated model | `J − 0.01·KL(π ‖ π_{r−1})` | every verl-0.8 run before 2026-09-16 |
+
+`run_fed` resolves the role (`resolve_ref_model_path`) and bridges it to every client/worker process
+as `FEDAGENT_REF_MODEL_PATH`; the repo-root `sitecustomize.py` arms the fail-closed hook that
+re-points the reference engine at that path after verl's `init_model`, and the persistent path skips
+its per-round ref reset while the pin is set (the two are co-required; `ref_anchor.py` asserts the
+swap). The startup log prints `ref_anchor=...`, the worker prints `[model-role] ... ref=...`,
+`federated_summary.json` records `ref_anchor` + `ref_model_path`, and `run_objective.json` guards
+resumes (`allow_objective_change` below). `actor/kl_loss` is the visible signature: it climbs over
+rounds under `base` (displacement from a fixed anchor, 0.015 → 0.12 over 70 WebShop PPO rounds) and
+stays flat at ~0.005 under `round`. The two are different objectives — never pool their numbers
+([docs/revision.md](../docs/revision.md)).
+
+---
+
 ## Config-key reference (the `DEFAULTS` dict)
 
 Every key below comes from `DEFAULTS` in `run_fed.py`; a YAML file is merged over these and
-CLI flags override the result.
+CLI flags override the result. The same reference with types and the paper filename grammar is
+[`../docs/configuration.md`](../docs/configuration.md#federated-runner-key-reference).
 
 ### Core loop
 
 | Key | Default | Meaning |
 |---|---|---|
 | `model_path` | `""` | Base HF model for round 1; `""` auto-discovers a local Qwen2.5-0.5B-Instruct. |
-| `output_dir` | `outputs/fedagent_fed_tinyguess` | Root for all rounds, logs, and the summary. |
+| `ref_anchor` | `base` | KL-reference role ([above](#the-kl-reference-policy-ref_anchor)): `base` = pinned to the base model for the whole run (default since 2026-09-16); `round` = follows each round's aggregate (every earlier run). Different objectives. |
+| `ref_model_path` | `""` | `base` only: an explicit fixed HF snapshot for the reference; `""` => `model_path`. Must stay empty under `round`. |
+| `critic_model_path` | `""` | PPO only: the value model the first trained round starts from; `""` = auto (the aggregated critic beside an aggregated seed actor, else a fresh value head on the actor backbone). CLI `--critic-path`. |
+| `output_dir` | `outputs/fedagent_fed_tinyguess` | Root for all rounds, logs, `run_objective.json` and the summary. |
 | `total_clients` | `2` | Number of clients `N` in the federation. |
 | `clients_per_round` | `2` | Clients `M` sampled per round (all if `>= total_clients`). |
 | `total_rounds` | `2` | Number of federated rounds `T`. |
 | `epochs_per_round` | `1` | Local epochs `E` per client per round (`trainer.total_epochs`). |
+| `epoch_resample` | `True` | Fresh goal draw every local epoch (clients run `total_epochs=1` over `FEDAGENT_DATA_EPOCHS=E` rows); `false` replays the same goals each epoch (pre-2026-07-22 runs only). |
 | `base_seed` | `42` | Seed base for client selection and the round-threaded data seed. |
 | `n_gpus_per_node` | `2` | GPUs per client training run (`trainer.n_gpus_per_node`; also FedAvg world size). |
 | `total_training_steps` | `1` | Per-client-round step cap (smoke); `<= 0` emits `null` so verl runs the full `E` epochs. |
@@ -172,7 +206,14 @@ CLI flags override the result.
 | `wait_between_clients` | `5` | Seconds to pause between sequential clients (let Ray/GPU release). |
 | `client_overrides` | `[]` | Extra `key=value` Hydra overrides appended to every client run (rollout shape, batch sizes, …). |
 | `adv_estimator` | `grpo` | `grpo` (no critic) or `gae` (PPO: federate the critic too). |
+| `critic_loss_mode` | `legacy_exact` | PPO value-loss contract: the fork's coefficient-1.0 objective via the `ppo_critic_loss.py` overlay \| `global_token_paper_coef` \| `upstream_standard` (stock verl 0.8). |
+| `rollout_mode` | `windowed` | `windowed` (paper-faithful per-turn window) \| `concat` (stock, one sample per episode). |
+| `windowed_history_length` | `2` | `FEDAGENT_HISTORY_LENGTH` for windowed (paper = 2). |
 | `cleanup_checkpoints` | `True` | Delete consumed FSDP shards after each merge (keep HF + logs). |
+| `keep_client_hf_rounds` | `2` | Rolling window of per-client `hf`/`critic_hf` merges kept on disk; aggregated merges are never pruned; `<= 0` keeps all. |
+| `merge_fp32` | `True` | Keep the aggregated FSDP→HF merge in fp32 (stock verl's merger truncates to bf16 at every round boundary). |
+| `resume` | `True` | Rerun with the same `output_dir` => continue after the last completed round; `--fresh` disables. |
+| `allow_objective_change` | `False` | Resume guard: refuse a resume whose `ref_anchor`/`adv_estimator` differ from the directory's `run_objective.json` (no record => rolling reference); `true` switches on purpose (logged + recorded). |
 | `custom_cls_path` | `data/agentic_dataset.py` | `data.custom_cls.path` (the dataset adapter). |
 | `agent_config_path` | `config/agent.yaml` | Agent-loop config (`...rollout.agent.agent_loop_config_path`). |
 | `env_spec` | `config/envs/tiny_guess.yaml` | Train/val data spec passed as `data.train_files`/`data.val_files`. |
@@ -183,27 +224,42 @@ CLI flags override the result.
 |---|---|---|
 | `env_kind` | `tinyguess` | `tinyguess` (in-process), `webshop`, or `alfworld` (remote per-client services). |
 | `service_health_timeout` | `900` | Seconds to wait for each service `/health`. |
+| `service_port_autoshift` | `True` | Preflight the env-service port block and relocate it when it overlaps the kernel ephemeral range or is occupied; `false` = literal ports, warn only. |
+| `port_band_base` | `26000` | Per-process port bands for the random-port pickers inside each verl trainer/eval (`FEDAGENT_PORT_BAND`); `0` = stock random ports. |
+| `port_band_stride` | `100` | Ports per process band. |
 | `webshop_run_service` | `envs/webshop/service/run_service.sh` | Launcher for a WebShop service. |
-| `webshop_base_port` | `8080` | Client `c`'s WebShop service listens on `webshop_base_port + c`. |
+| `webshop_base_port` | `8080` | Client `c`'s replica `j` listens on `webshop_base_port + c*replicas + j` (K=1 → `+ c`). |
 | `webshop_pool_size` | `8` | Env pool per WebShop service (must be `>= gen_batch`). |
-| `search_return_n` | `200` | `WEBSHOP_SEARCH_RETURN_N`: BM25 top-K (paper=200). |
+| `webshop_replicas` | `1` | Service processes per client (WebShop: measured a wash at paper scale). |
+| `search_return_n` | `50` | `WEBSHOP_SEARCH_RETURN_N`: BM25 top-K. `50` = the engine/original default every non-het baseline uses; the env-het paper cells pin `200`. |
+| `val_search_return_n` | `50` | Top-K of the shared unperturbed **val** service (decoupled from the run's `search_return_n` since 2026-07-28; `200` reproduces the executed env-het protocol). |
 | `alfworld_run_service` | `envs/alfworld/service/run_service.sh` | Launcher for an ALFWorld service. |
-| `alfworld_base_port` | `8200` | Client `c`'s ALFWorld service listens on `alfworld_base_port + c`. |
-| `alfworld_pool_size` | `4` | TextWorld env pool per ALFWorld service (must be `>= gen_batch`). |
+| `alfworld_base_port` | `8200` | Client `c`'s replica `j` listens on `alfworld_base_port + c*replicas + j`. |
+| `alfworld_pool_size` | `4` | TextWorld env pool per client, split across its replicas (total must be `>= gen_batch`). |
+| `alfworld_replicas` | `1` | Service processes per client: shards the TextWorld process lock (ALFWorld's big lever; the accelerated cells use 8). |
 | `alfworld_train_eval` | `train` | ALFWorld game split: `train` / `eval_in_distribution` / `eval_out_of_distribution`. |
 | `alfworld_task_types` | `""` | `""` = all 6 task types; else comma-sep IDs for the eval breakdown. |
+| `alfworld_game_manifest` | `""` | Authoritative game list: `""` = the shipped `data/alfworld_games/<split>.json`; `none` = walk `$ALFWORLD_DATA`; else a path. |
+| `alfworld_manifest_strict` | `True` | A manifest-listed game missing on disk aborts the service (`false` warns and drops it, which renumbers every index). |
+| `alfworld_manifest_cache` / `alfworld_manifest_dir` | `False` / `""` | Optional per-machine speed cache for the directory walk (self-validating; redundant under the shipped manifest). |
+| `service_scope` | `round` | `run` keeps per-client env-service fleets warm across rounds (LRU-capped by `service_cache_clients`). |
+| `service_cache_clients` | `4` | Warm fleets kept alive under `service_scope: run`. |
+| `prewarm_next_round_services` | `False` | Launch round r+1's services during round r (ignored under `service_scope: run`). |
 
 ### Heterogeneity
 
 | Key | Default | Meaning |
 |---|---|---|
-| `partition_strategy` | `""` | `""` / `catalog_split`,`task_disjoint` (env) / `preference`,`coverage`,`hardness` (task) / `bm25_field_subset`,`bm25_reweight`,`lookalike`,`rank_wrapper` (env variants). |
-| `env_div` | `0.7` | Catalog-split heterogeneity strength. |
+| `partition_strategy` | `""` | `""` (IID) / WebShop env: `catalog_split` (+ `task_disjoint` control), `bm25_field_subset`, `bm25_reweight`, `lookalike`, `rank_wrapper` / ALFWorld env: `scene_disjoint` (+ legacy `env_disjoint`), `obs_variant`, `dyn_variant`, `goal_variant` / task, both envs: `preference`, `coverage`, `hardness`. |
+| `env_div` | `0.7` | Env-het strength: `catalog_split` (WebShop), `scene_disjoint` / `env_disjoint` (ALFWorld). |
 | `keep_ratio` | `0.7` | Catalog-split distractor density. |
+| `alfworld_fallback` | `skip` | `env_disjoint` single-scene specs: `skip` \| `shared` \| `trial-only`. |
+| `alfworld_scenes_per_client` | `8` | `scene_disjoint`: FloorPlans per client shard (stratified over the 4 room types). |
+| `alfworld_holdout_file` | `""` | `scene_disjoint`: OOD scene holdout list (repo-root relative, e.g. `data/env_heterogeneity/holdout_alfworld_v1.json`). |
 | `omega` | `0.5` | Preference (task-het) Dirichlet spread. |
 | `size_std` | `1.0` | Coverage (task-het) Beta dispersion (ξ). |
 | `success_std` | `1.0` | Hardness (task-het) Beta dispersion (ξ′). |
-| `variant_n` | `0` | Env-variant arm count (bm25/lookalike/rank); `0` uses the function default. |
+| `variant_n` | `0` | Env-variant pool size: WebShop bm25/lookalike/rank **and** ALFWorld obs/dyn/goal_variant; `0` uses the arm's default. |
 | `trajectories_file` | `""` | Hardness: required `task_id`→success-label file. |
 | `min_goals_per_client` | `100` | Minimum goals/games assigned to each client. |
 
@@ -223,10 +279,25 @@ CLI flags override the result.
 | `val_env_spec` | `""` | `""` disables eval; else the UNPERTURBED val env-spec to score the global model. |
 | `test_freq` | `5` | **Inert**: the aggregated model is evaled every round regardless (kept for legacy config name-parity). |
 | `val_before_train` | `True` | Also eval the base model before round 1 (the round-0 point). |
+| `client_end_eval` | `False` | Also eval each selected client's post-training model per round (the figures' per-client circles; +M evals/round; every paper cell ships `true`). |
 | `val_temperature` | `0.4` | Val sampling temperature. |
+| `eval_mode` | `inline` | `inline` (blocking subprocess) \| `parallel` (spare GPUs) \| `shared` (same GPUs, reduced vLLM memory) \| `worker` (the hot persistent engine; needs `persistent`/`cross_round`). |
+| `eval_gpus` / `eval_gpu_mem_util` | `2` / `0.3` | `parallel`: trailing GPUs the eval takes; `shared`: the eval vLLM's memory fraction. |
+| `final_eval_mode` | `subprocess` | `worker` scores the final model on the hot engine (needs `cross_round` + `eval_mode: worker`). |
 | `webshop_val_port` | `8090` | Shared unperturbed WebShop val service port. |
 | `alfworld_val_port` | `8290` | Shared unperturbed ALFWorld val service port. |
-| `alfworld_val_split` | `eval_in_distribution` | ALFWorld val game split. |
+| `alfworld_val_split` | `eval_in_distribution` | ALFWorld val game split (the 140-game `valid_seen` set). |
+| `alfworld_val_seed_is_index` | `True` | Val rows are `games[0:n_envs]`, each exactly once; `false` restores the legacy with-replacement draw (a different val set, not curve-comparable). |
+
+### Lifecycle & acceleration
+
+| Key | Default | Meaning |
+|---|---|---|
+| `persistent` | `False` | Lever #4: one trainer+vLLM process per round (init_workers once, fit per client). |
+| `cross_round` | `False` | One persistent process for the **whole run** (implies `persistent`); the dominant acceleration win, every `paper_accelerated*` cell sets it. |
+| `hf_export` | `every_round` | `final` skips the per-round FSDP→HF merge (faster; forfeits round-level resume). |
+| `parallel_clients` | `1` | `P > 1` trains a round's clients concurrently on `1/P` GPU slices (numerically identical; a multi-node-style lever, a wash at 1.5B on one node). |
+| `one_step_off` | `False` | verl `one_step_off_policy`: **off-policy**, subprocess path only, never for paper numbers. |
 
 ### FedProx
 
@@ -260,6 +331,8 @@ every process on `PYTHONPATH` (the client **and** its Ray workers) and, gated on
 | `--port-base` | `webshop_base_port` (concurrent runs). |
 | `--fedprox-mu` | `fedprox_mu` (`> 0` enables FedProx). |
 | `--local-client-id` | `local_client_id` (local baseline). |
+| `--critic-path` | `critic_model_path` (PPO: the value model the first trained round starts from). |
+| `--fresh` | `resume = False`: ignore completed rounds in `--output-dir` and start at round 1. |
 
 `load_cfg` also resolves package-relative paths (e.g. `config/envs/webshop_15.yaml`)
 against the `fedagent/` package dir, so configs can use short paths.
@@ -292,8 +365,9 @@ python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/
 ```
 
 Outputs land under `output_dir`: `round_<r>/client_<c>/{checkpoints,training.log,json_logs}`,
-`round_<r>/aggregated/{checkpoints,hf,*.log}`, the per-service logs, and
-`federated_summary.json`. See [`../EXPERIMENTS.md`](../EXPERIMENTS.md) for the curated
+`round_<r>/aggregated/{checkpoints,hf,*.log}`, the per-service logs, `run_objective.json`
+(the objective the directory was trained under) and `federated_summary.json`. See
+[`../EXPERIMENTS.md`](../EXPERIMENTS.md) for the curated
 config matrix.
 
 ---

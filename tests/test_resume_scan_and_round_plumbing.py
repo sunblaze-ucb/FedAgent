@@ -71,7 +71,7 @@ def test_resume_refuses_a_schedule_below_the_disk(tmp_path):
 
 @pytest.mark.parametrize("round_num", [1, 2, 70])
 def test_persistent_cmd_env_carries_the_round_number(tmp_path, round_num):
-    cfg = _cfg(tmp_path, env_kind="tinyguess")
+    cfg = _cfg(tmp_path, env_kind="tinyguess", model_path="/base")   # base: the default ref pin resolves to it
     plan = [{"out_dir": str(tmp_path / "c0")}]
     _cmd, env = run_fed._persistent_cmd_env(cfg, plan, tmp_path / "plan.json", "/base", None,
                                             round_num, {}, n_gpus=1, worker_eval=False)

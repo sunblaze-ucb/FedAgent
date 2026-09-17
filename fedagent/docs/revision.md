@@ -65,8 +65,55 @@ duplicated here.
 | `service_port_autoshift` | `True` | 2026-08-19 | — | NEW: `run_fed` preflights the whole env-service block and relocates it (into the reserved `[61000, 65536)` pool) when it overlaps the ephemeral range or is occupied; `false` keeps the literal ports and only warns. This is what protects pre-2026-08-19 configs |
 | cross_round reload teardown | hard storage release, default **ON** (`FEDAGENT_DISABLE_HARD_RELEASE=1` reverts) | 2026-08-18 | — | [bugfix](./bugfixes.md): ws=1/NO_SHARD flat-param leak (~1.33 GiB/client-fit at 0.5B); one `hard-release: freed N GiB` log line per client reload is the visible signature; numerics untouched (retired weights only) |
 | memory forensics | `FEDAGENT_MEM_DEBUG=1` (+ `FEDAGENT_MEM_DEBUG_DIR=<dir>`) | 2026-08-18 | — | NEW env-gated instrumentation: at every engine reset, dump post-release *current* allocated, a ≥32 MB CUDA-tensor gc-walk with referrer chains and metadata-vs-storage sizes, and a full allocator snapshot (`_record_memory_history` armed per worker). Off by default = zero overhead; the 2026-08-18 leak hunt is the reference use |
+| `env_heterogeneity/` layout | `{grpo,ppo}/{webshop,alfworld}/<arm>/`, **194 cells per tree** | 2026-08-23 | `00fed1d` | NEW ALFWorld env-het arms (`scene_disjoint`, `obs_variant`, `dyn_variant`, `goal_variant`) + the WebShop `task_disjoint` controls (176 → 194); WebShop cells byte-identical, only their paths moved ([dev_doc](./dev_doc/README.md)) |
+| `paper_accelerated_1gpu/` | 194 single-H100 twins (`gen_paper_configs.py --accel --n-gpus 1`) | 2026-09-10 | `ab4ecc3` | NEW shipped asset: same science as the accelerated cells; only `n_gpus_per_node: 1`, vLLM 0.5/0.4, GRPO optimizer offload, a cycling `port_band_base`. Measured ≈×2 the 4-GPU per-round time at 1.5B ([gpu_recipes.md](./gpu_recipes.md)) |
+| `run_fed` GPU pins | mapped through the driver's `CUDA_VISIBLE_DEVICES` | 2026-09-10 | `ab4ecc3` | [bugfix](./bugfixes.md): literal ids put every co-hosted single-GPU cell on physical GPU 0; unset ⇒ legacy literal ids |
+| `centralized` cells | `rd-1 / ep-210` (48 cells renamed across the three trees) | 2026-09-10 | `767b008` | [bugfix](./bugfixes.md) §5; entry below |
+| `ref_anchor` | **`base`** (KL reference pinned to the base model for the whole run) | 2026-09-16 | — | NEW default; the knob landed 2026-09-12 (`2b1c535`) as `round`. **Every verl-0.8 run before this date trained under `round`** (the rolling reference = a per-round proximal term); put `ref_anchor: round` in the config to continue or replicate one. Different objectives — never pool. Entry below |
+| `allow_objective_change` | `False` | 2026-09-16 | — | NEW resume guard: `run_fed` writes `run_objective.json` (`ref_anchor`, `ref_model_path`, `adv_estimator`) at launch and refuses a resume whose `ref_anchor`/`adv_estimator` differ from it (no record ⇒ rolling reference); `true` switches on purpose, logged and recorded |
 
 ---
+
+## 2026-09-16: the KL reference is pinned to the base model by default (`ref_anchor: base`)
+
+- **Commits:** `2b1c535` (the knob, ported 2026-09-12 from the DSP campaign tree with `round` as
+  its default) and this change (default `base`, the resume guard, docs).
+- **Files:** `fed/run_fed.py` (`DEFAULTS`, `resolve_ref_model_path`, `check_resume_objective` →
+  `run_objective.json`), `ref_anchor.py`, `sitecustomize.py`, `fed/persistent_patch.py`,
+  `tests/test_ref_anchor.py`.
+
+**What changed.** verl 0.8 builds the actor and the reference policy from the single
+`actor_rollout_ref.model.path`, and the round loop moves the FedAvg'd weights through that key, so
+on this stack the `use_kl_loss` reference had silently become "this round's starting model": the
+actor optimized `J − 0.01·KL(π‖π_{r−1})`, a per-round proximal term. The verl-agent-0.3.1 stack the
+paper ran on never moved its reference (it carried the FedAvg weights through `resume_from_path`
+and its ref worker stayed on the base HF id), so its objective was `J − 0.01·KL(π‖π_base)`. The role
+is now explicit: `ref_anchor: base` (default) pins the reference to `ref_model_path` / `model_path`
+for the whole run through the `FEDAGENT_REF_MODEL_PATH` import hook (`ref_anchor.py`, fail-closed
+via `sitecustomize.py`; the persistent path skips its per-round ref reset while the pin is set);
+`ref_anchor: round` keeps the rolling reference byte-for-byte.
+
+**Why now.** The single-H100 WebShop PPO A/B on this cluster (seed 42, 2026-09-12/13, everything
+else identical): under `round` the policy's entropy collapses 1.0 → 0.10, the held-out curve has a
+deep trough in rounds 19–34, and the KL term stays flat at ~0.005 (a reference that follows the
+policy constrains nothing); under `base` entropy holds at 1.07–1.24, KL accumulates 0.015 → 0.118,
+there is no trough, and the FedAvg step gains in every window. Endpoints tie on task score (last-10
+0.780 vs 0.794) with success 0.609 vs 0.681 (n=64, ~1 sd) — one seed each, so the flip rests on the
+objective's provenance and its dynamics, not on a headline number. The DSP campaign's own 1×H100 A/B
+(in-memory BM25, per-round lifecycle) had the base arm ahead in rounds 11–30 and behind on success at
+61–70, the same metric-dependent sign; both of its arms sit far below the 4-GPU reference, i.e. the
+anchor is second order next to backend and GPU count ([bugfixes.md 2026-09-10](./bugfixes.md)).
+
+**Existing runs.** Every verl-0.8 run before 2026-09-16 — the devbox references, the 4×H100 WebShop
+PPO Lucene/BM25 runs, the four single-H100 cells — trained under `round`; their
+`federated_summary.json` either lacks `ref_anchor` or says `round`. They are a different objective
+from anything launched after the flip: **do not pool or overlay them as the same arm**, and to
+continue one, put `ref_anchor: round` in its config. The guard makes the mistake loud: `run_fed` now
+writes `run_objective.json` into every output directory at launch and refuses a resume whose
+`ref_anchor` or `adv_estimator` differs from the record (a directory without one counts as `round`),
+naming the outs; `allow_objective_change: true` switches on purpose and records the round it happened.
+Visible signature in any log: `ref_anchor=base: KL reference FIXED for the whole run at <path>` at
+startup, `[model-role] ... ref=<base>` from the worker, and an `actor/kl_loss` that rises over rounds.
 
 ## 2026-09-10: the `centralized` baseline becomes one client-run again (`rd-1 / ep-210`)
 

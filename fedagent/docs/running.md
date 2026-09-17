@@ -111,6 +111,14 @@ Set by `adv_estimator` in the config (no flag):
 python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/scaled/ppo.yaml
 ```
 
+**The KL reference (both algorithms).** `use_kl_loss` needs a reference policy, and `ref_anchor`
+says which: `base` (default since 2026-09-16) pins it to the base model (`ref_model_path`, else
+`model_path`) for the whole run; `round` lets it follow each round's merged model, the behaviour of
+every earlier verl-0.8 run. The startup log prints the choice (`ref_anchor=base: KL reference FIXED
+for the whole run at ...`), `federated_summary.json` records it, and a resume that would change it
+is refused ([Resume](#resume)). The two are different objectives, so do not pool their curves.
+Mechanics: [`fed/README.md`](../fed/README.md#the-kl-reference-policy-ref_anchor).
+
 ## Hardware recipe
 
 `n_gpus_per_node` (or `--n-gpus`) is the **FSDP world size** used for both training and
@@ -123,7 +131,7 @@ verl's stock FSDP rollout under this world size.
 
 | `n_gpus_per_node` | Typical use | Notes |
 |---|---|---|
-| `1` | single-GPU debug / wiring check | use a small backbone (0.5B) + small config; lower `rollout.n`, batch, pool; expect offload (below). Not paper-scale. |
+| `1` | debug, **and the measured single-H100 paper recipe** (`config/paper_accelerated_1gpu/`) | at 1.5B every paper cell fits one 80 GB H100 (peak 50 GiB GRPO / 64 GiB PPO) at about ×2 the 4-GPU per-round time, i.e. roughly half the GPU-hours; four cells co-host a 4-GPU node. Numbers and caveats: [gpu_recipes.md](./gpu_recipes.md#the-single-h100-tree-configpaper_accelerated_1gpu). For ad-hoc debug use a small backbone (0.5B) + small config. |
 | `2` | the smoke default (`DEFAULTS`) | TinyGuess / WebShop smokes on a 2-GPU slice |
 | `4` | **the paper recipe** | Qwen2.5-1.5B @ 15 turns; GRPO and PPO both validated here |
 
@@ -385,6 +393,15 @@ summary alone. Under `hf_export: final` there are no per-round HF dirs, so the s
 finds nothing and the run starts fresh; resume is an `every_round`-export feature. Consumed
 FSDP shards are deleted after each merge to keep peak disk to ~one round (toggle with
 `cleanup_checkpoints`; an 8-round run otherwise grew to 367 GB).
+
+**Objective guard (2026-09-16).** At launch `run_fed` writes `run_objective.json` (`ref_anchor`,
+`ref_model_path`, `adv_estimator`) into the output dir. A resume whose `ref_anchor` or
+`adv_estimator` differs from that record is **refused**, naming the three outs: put the recorded
+value in the config (`ref_anchor: round` for any directory from before the flip), use a fresh
+`--output-dir` / `--fresh` for the new objective, or set `allow_objective_change: true` to switch on
+purpose (logged, and the round of the switch is recorded). A directory with no record is treated as
+a rolling-reference run, which every run before 2026-09-16 was; a finished run's
+`federated_summary.json` is consulted the same way.
 
 ## Warm-starting from another run
 

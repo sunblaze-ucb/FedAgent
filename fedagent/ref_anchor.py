@@ -48,7 +48,10 @@ ref would freeze THERE -- the wrong anchor a third way).
 
 The user-facing config is ``ref_model_path`` + ``ref_anchor``. run_fed resolves those roles and
 bridges the fixed path through ``FEDAGENT_REF_MODEL_PATH`` because upstream verl 0.8 has no
-separate ref path. Unset => deliberate rolling/stock behaviour. Fail-closed via sitecustomize:
+separate ref path. Unset => deliberate rolling/stock behaviour. Since 2026-09-16 run_fed defaults to
+``ref_anchor: base`` (docs/revision.md), so every default launch sets the var; ``ref_anchor: round``
+leaves it unset and reproduces the rolling reference every earlier run trained under. Fail-closed via
+sitecustomize:
 if requested and not armable, the process dies rather than train against the wrong objective.
 The companion guard lives in
 persistent_patch.reload_client_model, which must NOT re-point the ref each round when this is

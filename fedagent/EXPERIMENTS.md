@@ -45,6 +45,9 @@ result, status, artifacts.
 | Pt | **Heterogeneity suite ported + wired** (workflow) | Coverage/Hardness, env Variants 2–5, ALFWorld svc | 8/8 fns byte-identical; all branches verified | ✅ |
 | ALF | **ALFWorld service smoke** (CPU, standalone) | verl-agent-alfworld, pool 1, 3553 train games | /health→/create→/reset(38 acts)→/step OK | ✅ |
 | ALFf | ALFWorld **federated plumbing** wired in run_fed | env_kind=alfworld, per-client svc, registry | config valid; GPU run pending | ✅(code) |
+| **U4-ppo** | **WebShop PPO uniform, 70 rounds, 4×H100** (in-memory BM25 + Lucene twins) | 1.5B, `paper_accelerated`, seed 42, one allocation | Lucene: last-10 task 0.804 / success 0.659 @ 10.6 min/round | ✅ 2026-09-10 |
+| **G1-sweep** | **Single-H100 uniform sweep**: WebShop/ALFWorld × GRPO/PPO, four cells on one node | 1.5B, `paper_accelerated_1gpu`, seed 42, 3 allocations | WS-GRPO 0.802/0.664 · WS-PPO 0.794/0.681 · ALF-GRPO 0.534 · ALF-PPO 0.336 (54/70) | ✅ 2026-09-13 (ALF-PPO ▶) |
+| **G1-anchor** | **KL-reference A/B**: `ref_anchor: base` vs `round`, 1×H100 WebShop PPO | as G1-sweep, on the first freed GPU | base: no entropy collapse, no trough; 0.780/0.609 vs round 0.794/0.681 | ✅ 2026-09-13 → default flipped 2026-09-16 |
 
 Legend update: ⚠ = crashed/partial.
 
@@ -754,3 +757,39 @@ accel hardness-rerun configs): PPO `rollout.n=1`, `actor.ppo_mini_batch_size=64`
 different recipe — never resume or mix them. Full evidence chain: `docs/bugfixes.md`
 (2026-07-20). Paper-text erratum flagged: `main.tex:1327` ("PPO uses the same group size")
 describes the never-executed config.
+
+## 4×H100 WebShop PPO references and the single-H100 sweep (2026-09-08 → 09-16)
+
+**Setup.** FedAgent `94733d9` → `2b1c535`, verl 0.8, vLLM 0.11, Qwen2.5-1.5B-Instruct, the
+accelerated uniform cells (N=100, M=2, E=3, T=70, seed 42, `cross_round`, worker eval, a 64-episode
+val every round + client-end circles), `ref_anchor: round` throughout (the default at the time).
+Two 4×H100 WebShop PPO runs first, on one allocation, differing only in the search backend
+(in-memory `rank_bm25` via `WEBSHOP_BM25_VARIANT_JSON` vs the engine-default pyserini/Lucene
+index): ~10–11 min/round, both 70/70. The Lucene twin (last-10 task 0.804 / success 0.659, median
+10.6 min/round) is the backend-matched reference for everything below.
+
+**Single-H100 sweep (`paper_accelerated_1gpu/`, four cells on one node, 2026-09-10 → 09-13).**
+Needed the `_phys_gpu_ids` fix first: all four drivers had landed on physical GPU 0, and
+`srun --overlap --gres=gpu:1` steps are handed the same card too. Per-round medians 17.4 / 21.1 /
+39.8 / 54.9 min (WS-GRPO / WS-PPO / ALF-GRPO / ALF-PPO), 25–33 % of each round outside the training
+steps; the WS-PPO cell is ×2.0 the 4-GPU twin's per-round time for ×4 fewer GPUs (24.5 vs ≈50 GPU·h).
+Results: WS-GRPO 70/70, last-10 task 0.802 / success 0.664 (best 0.901 @ r65; at or above the devbox
+4-GPU GRPO reference in 6 of 7 decades); WS-PPO 70/70, 0.794 / 0.681, with a deep trough in r19–34
+(84 % zero-score episodes while train reward rises, entropy 1.0 → 0.10) that recovers to the 4-GPU
+endpoint; ALF-GRPO 70/70, success last-10 0.534 (r70 0.594); ALF-PPO 54/70 (last-10 0.336, best
+0.594 @ r39, then a real regression: train reward 3.5 → 2.8, response length 180 → 94; resumable,
+one allocation short). On one GPU ALFWorld is compute-bound (gen 15–16 %, `update_actor` + `ref`
+55–72 % of the step); GPU memory peaks at 64 GiB (PPO, checkpoint/reload) / 50 GiB (GRPO); 164.6 of
+the 48 h allocation's 192 GPU·h went to this test.
+
+**KL-reference A/B (2026-09-12 → 09-13).** The first freed GPU ran the WS-PPO cell again with
+`ref_anchor: base`, everything else identical. `base`: KL accumulates 0.015 → 0.118, entropy stays
+1.07–1.24, no trough, the FedAvg step gains in every window, train reward lower (5.6 vs 7.3: less
+train/eval divergence); last-10 0.780 / 0.609 vs the rolling cell's 0.794 / 0.681 (one seed each,
+n=64). `base` is the paper stack's objective; `round` was a side effect of moving the FedAvg weights
+through `model.path`. **`ref_anchor: base` is the default since 2026-09-16**, with a resume guard
+(`run_objective.json`) so older directories cannot silently switch ([docs/revision.md](docs/revision.md)).
+
+**Artifacts.** Raw eval dumps, cumulative metrics, tables and figures are packaged outside this repo
+(the `fedagent_test` package: `results/tables/{headline,round_durations,timing_breakdown,eval_windows}.csv`,
+figures 1–6, `ANALYSIS.md`; the `ppo_1gpu_collapse_plan_20260912` package for the trough diagnosis).

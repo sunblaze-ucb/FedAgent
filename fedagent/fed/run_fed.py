@@ -73,18 +73,26 @@ _RUN_TAG = uuid.uuid4().hex[:8]
 
 DEFAULTS = {
     "model_path": "",                       # "" => auto-discover Qwen2.5-0.5B-Instruct
-    # --- KL reference anchor (fedagent/ref_anchor.py; ported 2026-09-12 from the DSP tree) ---
+    # --- KL reference anchor (fedagent/ref_anchor.py; knob ported 2026-09-12 from the DSP tree,
+    # default flipped to "base" on 2026-09-16 -- docs/revision.md) ---
     # verl 0.8 builds actor AND ref from the one actor_rollout_ref.model.path, and the federated
-    # loop carries the FedAvg'd weights through that key, so the reference policy FOLLOWS each
-    # round's aggregate: the actor optimizes J - kl_coef*KL(pi || pi_{r-1}), a per-round proximal
-    # term. "round" (DEFAULT here) keeps exactly that behaviour -- every run to date used it.
-    # "base" pins the ref to ref_model_path (or model_path when empty) for the WHOLE run:
-    # J - kl_coef*KL(pi || pi_base), one fixed trust region across all T rounds. !! Changing this
-    # changes the OBJECTIVE; never pool numbers across the boundary. The DSP campaign made "base"
-    # its default on 2026-08-30 and measured it as a regression on 1xH100 WebShop PPO
-    # (docs/bugfixes.md 2026-09-10); it is provided here for a controlled A/B, not as a fix.
-    "ref_anchor": "round",
+    # loop carries the FedAvg'd weights through that key, so LEFT ALONE the reference policy
+    # FOLLOWS each round's aggregate: the actor optimizes J - kl_coef*KL(pi || pi_{r-1}), a
+    # per-round proximal term ("round"). "base" (DEFAULT) pins the ref to ref_model_path (or
+    # model_path when empty) for the WHOLE run: J - kl_coef*KL(pi || pi_base), one fixed trust
+    # region across all T rounds -- the objective of the verl-agent-0.3.1 paper stack, whose ref
+    # was built from the base HF id and never moved. !! The two are different OBJECTIVES; never
+    # pool numbers across the boundary. Every verl-0.8 run before 2026-09-16 trained under "round"
+    # (set it explicitly to continue or replicate one); a RESUME whose anchor differs from the
+    # directory's run_objective.json is refused (check_resume_objective) unless
+    # allow_objective_change is set. Evidence for the flip: the 1xH100 WebShop PPO A/B (seed 42,
+    # 2026-09-13) -- base keeps entropy ~1.1-1.2 all run with no r19-34 trough; last-10 task
+    # 0.780 vs 0.794, success 0.609 vs 0.681 (one seed each, n=64); docs/gpu_recipes.md.
+    "ref_anchor": "base",
     "ref_model_path": "",                   # base only: explicit fixed HF snapshot; "" => model_path
+    "allow_objective_change": False,        # RESUME only: proceed (loudly) when ref_anchor /
+                                            #   adv_estimator differ from the directory's
+                                            #   run_objective.json; False => refuse, naming the outs
     "critic_model_path": "",                # PPO only: the value model the FIRST trained round starts
                                             #   from. "" => auto: the aggregated critic sitting next to
                                             #   an aggregated seed actor (warm start), else the actor
@@ -636,6 +644,89 @@ def seed_prior_histories(cfg, start_round: int):
     val.sort(key=lambda v: int(v["round"]))
     circles.sort(key=lambda c: (int(c["round"]), int(c["client"])))
     return val, circles, rounds_hist
+
+
+OBJECTIVE_RECORD = "run_objective.json"
+
+
+def objective_record(cfg, base_model: str = "") -> dict:
+    """The objective-defining runner knobs of THIS launch, as written to
+    ``<output_dir>/run_objective.json`` by check_resume_objective."""
+    return {
+        "ref_anchor": str(cfg.get("ref_anchor", "base") or "base").lower(),
+        "ref_model_path": resolve_ref_model_path(cfg, base_model) or None,   # None <=> rolling reference
+        "adv_estimator": "gae" if str(cfg.get("adv_estimator", "grpo")).lower() == "gae" else "grpo",
+    }
+
+
+def prior_objective(out: Path):
+    """What the rounds already in ``out`` were trained under: the record if there is one, else
+    a finished run's federated_summary.json, else the inference that the directory predates
+    the knob. The inference is safe: the rolling reference was the ONLY behaviour before the
+    knob landed (2026-09-12) and stayed the default until 2026-09-16, and a run from that
+    window that set ``ref_anchor: base`` also wrote it into its summary. Returns
+    (record, source)."""
+    f = out / OBJECTIVE_RECORD
+    if f.is_file():
+        try:
+            return json.loads(f.read_text()), OBJECTIVE_RECORD
+        except Exception as e:
+            log(f"[warn] RESUME: unreadable {OBJECTIVE_RECORD} ({e}); falling back to the summary")
+    s = out / "federated_summary.json"
+    if s.is_file():
+        try:
+            d = json.loads(s.read_text())
+        except Exception:
+            d = {}
+        if "ref_anchor" in d:
+            return ({"ref_anchor": str(d["ref_anchor"]).lower(), "ref_model_path": d.get("ref_model_path"),
+                     "adv_estimator": d.get("adv_estimator")}, "federated_summary.json")
+        return ({"ref_anchor": "round", "ref_model_path": None, "adv_estimator": d.get("adv_estimator")},
+                "federated_summary.json written before the ref_anchor knob existed (=> rolling reference)")
+    return ({"ref_anchor": "round", "ref_model_path": None, "adv_estimator": None},
+            f"no {OBJECTIVE_RECORD} (the directory predates the record; every such run used the rolling reference)")
+
+
+def check_resume_objective(cfg, start_round: int, base_model: str = "") -> dict:
+    """RESUME guard for the objective. ``ref_anchor`` and ``adv_estimator`` define what the actor
+    optimizes; a resumed chunk that changed them silently would leave one output directory holding
+    two experiments that no curve can tell apart -- exactly the trap the 2026-09-16 default flip
+    (round -> base) sets for every older directory. A fresh launch (start_round 1) just writes the
+    record; a resume compares against prior_objective() and REFUSES on a mismatch unless
+    ``allow_objective_change`` is set, in which case the change is logged and recorded. Returns
+    the record written."""
+    out = Path(cfg.output_dir)
+    rec = objective_record(cfg, base_model)
+    if start_round > 1:
+        prior, src = prior_objective(out)
+        diffs = [k for k in ("ref_anchor", "adv_estimator")
+                 if prior.get(k) not in (None, "") and str(prior[k]).lower() != rec[k]]
+        if diffs:
+            desc = "; ".join(f"{k}: {prior[k]!r} (directory) vs {rec[k]!r} (this launch)" for k in diffs)
+            if not cfg.get("allow_objective_change", False):
+                raise ValueError(
+                    f"RESUME REFUSED: this launch's objective differs from the one rounds 1..{start_round - 1} "
+                    f"in {out} were trained under -- {desc} (source: {src}). Continuing would put two "
+                    "objectives in one run directory. Outs: set the directory's values in the config "
+                    f"(e.g. `ref_anchor: {prior.get('ref_anchor')}`) to continue that run unchanged; start "
+                    "a fresh --output-dir (or pass --fresh) for the new objective; or set "
+                    "`allow_objective_change: true` to switch mid-run on purpose (recorded in "
+                    f"{OBJECTIVE_RECORD}).")
+            log(f"[warn] RESUME: objective CHANGED at round {start_round} on purpose "
+                f"(allow_objective_change) -- {desc}; source: {src}")
+            rec = {**rec, "objective_changed_at_round": start_round, "previous": prior}
+        else:
+            if prior.get("ref_model_path") and rec["ref_model_path"] and \
+                    str(prior["ref_model_path"]) != str(rec["ref_model_path"]):
+                log(f"[warn] RESUME: ref_model_path differs from the record ({prior['ref_model_path']} -> "
+                    f"{rec['ref_model_path']}); same anchor, so only the path moved -- make sure it is "
+                    "the same weights")
+            if "previous" in prior:            # keep an earlier deliberate switch on the record
+                rec = {**rec, "objective_changed_at_round": prior.get("objective_changed_at_round"),
+                       "previous": prior["previous"]}
+    out.mkdir(parents=True, exist_ok=True)
+    (out / OBJECTIVE_RECORD).write_text(json.dumps({**rec, "written_at_round": start_round}, indent=2))
+    return rec
 
 
 def world_size_of(actor_dir: Path) -> int:
@@ -1510,9 +1601,10 @@ def select_clients(round_num: int, total: int, per_round: int, base_seed: int,
 
 def resolve_ref_model_path(cfg, start_model_path: Optional[str] = None) -> str:
     """Resolve the KL-reference role independently of the actor's (round-varying) init path.
-    ref_anchor=base -> one fixed path for the run (ref_model_path, else the actor's base);
-    ref_anchor=round -> "" (the deliberate rolling reference; a fixed path is a contradiction)."""
-    anchor = str(cfg.get("ref_anchor", "round") or "round").lower()
+    ref_anchor=base (default since 2026-09-16) -> one fixed path for the run (ref_model_path,
+    else the actor's base); ref_anchor=round -> "" (the deliberate rolling reference; a fixed
+    path is a contradiction)."""
+    anchor = str(cfg.get("ref_anchor", "base") or "base").lower()
     if anchor not in ("base", "round"):
         raise ValueError(f"ref_anchor must be base|round, got {anchor!r}")
     explicit = str(cfg.get("ref_model_path", "") or "").strip()
@@ -2275,10 +2367,11 @@ def run(cfg) -> dict:
         log("adv_estimator=gae -> PPO: federating the critic (value model) alongside the actor "
             "each round (round-1 critic = base model)")
 
-    _anchor = str(cfg.get("ref_anchor", "round") or "round").lower()
+    _anchor = str(cfg.get("ref_anchor", "base") or "base").lower()
     _ref_pin_log = resolve_ref_model_path(cfg)       # validates the pair; raises on a bad combination
     log(f"ref_anchor={_anchor}: KL reference " + (f"FIXED for the whole run at {_ref_pin_log}"
-        if _ref_pin_log else "follows each round's aggregated model (rolling reference; the behaviour of every run before 2026-09-12)"))
+        if _ref_pin_log else "follows each round's aggregated model (rolling reference: the behaviour "
+                             "of every verl-0.8 run before 2026-09-16, when base became the default)"))
 
     # eval/training GPU-sharing mode (docs §7.7). Resolve the GPU partition + how cross_round+eval coexist.
     eval_mode = str(cfg.get("eval_mode", "inline")).lower()
@@ -2517,6 +2610,11 @@ def run(cfg) -> dict:
                     log(f"RESUME: carried {len(_ph)} round record(s) into the summary; worker "
                         f"teardown re-derives val points/circles from the on-disk dumps "
                         f"(resumed_from_round={_k})")
+
+        # Objective guard (the 2026-09-16 default flip round -> base): refuse to continue a directory
+        # under a different ref_anchor / adv_estimator, and record this launch's objective for later
+        # resumes (<output_dir>/run_objective.json).
+        check_resume_objective(cfg, start_round, base_model)
 
         # PPO critic provenance, stated out loud exactly once (the reset this guards against
         # used to be silent: the run logged a critic path that happened to be the ACTOR's and
@@ -2794,7 +2892,7 @@ def run(cfg) -> dict:
         **({"local_client_id": lid} if mode == "local" else {}),
         "partition_strategy": cfg.partition_strategy or "none",
         "base_model": base_model,
-        "ref_anchor": str(cfg.get("ref_anchor", "round") or "round").lower(),
+        "ref_anchor": str(cfg.get("ref_anchor", "base") or "base").lower(),
         "ref_model_path": resolve_ref_model_path(cfg) or None,   # None <=> rolling reference
         **({"resumed_from_round": start_round - 1} if start_round > 1 else {}),
         "loop_completed": loop_completed,   # False => the run died mid-loop; final_model is NOT model_T

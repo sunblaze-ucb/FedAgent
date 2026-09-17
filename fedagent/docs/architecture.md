@@ -15,7 +15,7 @@ extension points, **no patched verl tree**:
 | `data.custom_cls` | [`data/agentic_dataset.py`](../data/README.md), emits env-spec rows instead of static text |
 | agent-loop registry (`agent.yaml`) | [`agent_loops/`](../agent_loops/README.md), `GymTextAgentLoop`, multi-turn rollout |
 | Hydra `searchpath` | [`config/fedagent_ppo.yaml`](../config/README.md), layered on verl's stock `ppo_trainer` |
-| interpreter startup (`sitecustomize.py`) | FedProx proximal term, gated on `FEDPROX_MU` |
+| interpreter startup (`sitecustomize.py`) | FedProx proximal term (`FEDPROX_MU`), the explicit KL-reference pin (`FEDAGENT_REF_MODEL_PATH`, set by default since 2026-09-16), the persistent-trainer reload patch (`FEDAGENT_PERSISTENT`), the PPO critic-loss overlay (`FEDAGENT_CRITIC_LOSS_MODE`) |
 | process boundary (HTTP) | [`envs/webshop/service/`](../envs/webshop/service/README.md), [`envs/alfworld/service/`](../envs/alfworld/service/README.md), remote envs |
 
 The benefit: verl 0.8's trainer, FSDP engine, async agent-loop rollout, and model merger are
@@ -104,6 +104,8 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 |---|---|
 | `main_ppo_fed.py` | The client entry: `python -m fedagent.main_ppo_fed`. Loads `config/fedagent_ppo.yaml` and runs verl's **stock** `run_ppo`; imports the agent-loop module so its `@register` fires. The verl-0.8 replacement for verl-agent's forked `verl/trainer/main_ppo_fed.py`. |
 | `fedprox.py` | The FedProx proximal term as a one-method monkeypatch of `FSDPEngine.optimizer_step` (snapshot global weights `w_t` on first step, add `mu*(w - w_t)` thereafter). Enabled via `FEDPROX_MU`; no verl fork. |
+| `ref_anchor.py` | The explicit **KL-reference role**. verl builds actor and ref from one `model.path`; this import hook re-points the ref engine at the base model after `init_model` when `FEDAGENT_REF_MODEL_PATH` is set (`ref_anchor: base`, the default since 2026-09-16), so the KL term is a fixed trust region rather than a per-round proximal term. Fail-closed via `sitecustomize.py`; the persistent path's per-round ref reset is skipped while the pin is set. |
+| `ppo_critic_loss.py` | The PPO value-loss overlay (`critic_loss_mode`, default `legacy_exact`): restores the fork's coefficient-1.0 objective on top of stock verl 0.8's per-micro-normalized loss. |
 | `EXPERIMENTS.md` | The running experiment log. |
 | `README.md` | Package overview ([up one level](../README.md)). |
 
@@ -112,7 +114,7 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 | Path | Role |
 |---|---|
 | `envs/{webshop,alfworld}/engine/` | The **vendored WebShop/ALFWorld engines** (+ original `partition_strategy.py`, `*_projection` action parsers). `sys.path`-injected by the env services so the environment MDP is the *same code* the original FedAgent used, now carrying **no verl-agent dependency**. The trainer itself is **stock verl 0.8**. |
-| `sitecustomize.py` (repo root) | Auto-imported by CPython at interpreter startup in every process on `PYTHONPATH` (client + Ray workers). Gated on `FEDPROX_MU`, it applies `fedprox.py`'s patch, deliberately **not** a Ray `runtime_env` hook (that clobbered per-worker `CUDA_VISIBLE_DEVICES`). |
+| `sitecustomize.py` (repo root) | Auto-imported by CPython at interpreter startup in every process on `PYTHONPATH` (client + Ray workers). Gated on `FEDPROX_MU` / `FEDAGENT_REF_MODEL_PATH` / `FEDAGENT_PERSISTENT` / `FEDAGENT_CRITIC_LOSS_MODE`, it arms the matching overlay patch (`fedprox.py`, `ref_anchor.py`, `fed/persistent_patch.py`, `ppo_critic_loss.py`) as a deferred import hook, fail-closed — deliberately **not** a Ray `runtime_env` hook (that clobbered per-worker `CUDA_VISIBLE_DEVICES`). |
 | `fedagent/fed/aggregate_fedavg_fsdp.py` | The FedAvg core. Run under `torchrun --nproc_per_node=world_size`: each rank averages its own FSDP shard in place across clients and re-saves, byte-structurally identical to a verl checkpoint so the next round loads it unchanged. Shelled out to by `run_fed.py`'s `fedavg`. |
 
 ## The federated round loop
@@ -146,7 +148,10 @@ base model ─┐
 ```
 
 `model_1 = base model`; `model_r = round_{r-1}/aggregated/hf` for `r > 1`. PPO
-(`adv_estimator=gae`) federates the **critic** the same way, in parallel with the actor.
+(`adv_estimator=gae`) federates the **critic** the same way, in parallel with the actor. The
+**reference policy** does not move with `model_r` by default: `ref_anchor: base` keeps it at the
+base model for the whole run (`ref_anchor.py`); `ref_anchor: round` re-anchors it to `model_r`
+every round (the behaviour of every run before 2026-09-16).
 
 The relevant functions in `run_fed.py`: `run` (driver), `select_clients`, `run_client`,
 `fedavg`, `merge_to_hf`, `cleanup_round_checkpoints`, `eval_global`.
@@ -237,9 +242,14 @@ top level of `fedagent/`, not under `envs/`.
 
 `run_fed.py` passes the `partition_strategy` + its knobs to each client's service as env vars
 (`PARTITION_STRATEGY`, `OMEGA`, `SIZE_STD`, `SUCCESS_STD`, `ENV_DIV`, `KEEP_RATIO`,
-`VARIANT_N`, `CLIENT_ID`, `CLIENT_NUM`, …). The service calls [`hetero/`](../hetero/README.md)
-to build *that client's* data shard from the real shuffled `server.goals`. Two levels:
-environment (catalog) and task (goal distribution). See [heterogeneity.md](./heterogeneity.md).
+`VARIANT_N`, `CLIENT_ID`, `CLIENT_NUM`, …, plus `ALFWORLD_SCENES_PER_CLIENT`,
+`ALFWORLD_HOLDOUT_FILE`, `ALFWORLD_FALLBACK` for ALFWorld). The WebShop service calls
+[`hetero/`](../hetero/README.md) to build *that client's* data shard from the real shuffled
+`server.goals`; the ALFWorld service dispatches to the vendored engine's
+[`partition_strategy.py`](../envs/alfworld/engine/agent_system/environments/partition_strategy.py) (`scene_disjoint`) and
+[`alfworld_kernel_variants.py`](../envs/alfworld/engine/agent_system/environments/alfworld_kernel_variants.py) (`obs`/`dyn`/`goal_variant`).
+Two levels: environment (catalog / scene / transition kernel) and task (goal distribution).
+See [heterogeneity.md](./heterogeneity.md).
 
 ## FedProx
 

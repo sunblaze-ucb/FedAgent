@@ -224,9 +224,9 @@ paper/
 **Regenerate** the whole matrix with one command:
 
 ```bash
-python tools/gen_paper_configs.py                # all 176 -> fedagent/config/paper
+python tools/gen_paper_configs.py                # all 194 -> fedagent/config/paper
 python tools/gen_paper_configs.py --group-size 2 # cheap smoke (lower G)
-python tools/gen_paper_configs.py --accel        # the 176 accelerated twins -> paper_accelerated/
+python tools/gen_paper_configs.py --accel        # the 194 accelerated twins -> paper_accelerated/
 python tools/gen_paper_configs.py --accel --n-gpus 1   # single-H100 twins -> paper_accelerated_1gpu/
 ```
 

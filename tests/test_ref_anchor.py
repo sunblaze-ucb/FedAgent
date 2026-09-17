@@ -119,3 +119,95 @@ def test_wrapper_preserves_verl_register_metadata(monkeypatch):
     assert hasattr(im, MAGIC_ATTR), (
         "wrapped init_model lost the @register metadata -- it would never be bound to the "
         "worker group and init_workers() would fail")
+
+
+# --- the 2026-09-16 default flip (round -> base) and its resume guard --------------------------
+
+def _run_fed_cfg(out, **kw):
+    """A run_fed config over DEFAULTS (offline: run_fed is imported for its pure helpers)."""
+    from omegaconf import OmegaConf
+    from fedagent.fed import run_fed
+    cfg = OmegaConf.create(dict(run_fed.DEFAULTS))
+    cfg.output_dir = str(out)
+    cfg.model_path = "/models/base"
+    for k, v in kw.items():
+        cfg[k] = v
+    return run_fed, cfg
+
+
+def test_default_anchor_is_base_and_resolves_to_the_actor_base(tmp_path):
+    import pytest
+    run_fed, cfg = _run_fed_cfg(tmp_path)
+    assert run_fed.DEFAULTS["ref_anchor"] == "base"
+    assert run_fed.resolve_ref_model_path(cfg) == "/models/base"          # "" => the actor base
+    assert run_fed.resolve_ref_model_path(cfg, "/snap/base") == "/snap/base"
+    cfg.ref_model_path = "/models/explicit"
+    assert run_fed.resolve_ref_model_path(cfg) == "/models/explicit"
+    cfg.ref_model_path = ""
+    cfg.ref_anchor = "round"
+    assert run_fed.resolve_ref_model_path(cfg) == ""                       # rolling: no fixed path
+    cfg.ref_model_path = "/models/explicit"
+    with pytest.raises(ValueError, match="conflicts"):
+        run_fed.resolve_ref_model_path(cfg)
+    cfg.ref_model_path, cfg.ref_anchor = "", "sideways"
+    with pytest.raises(ValueError, match="base|round"):
+        run_fed.resolve_ref_model_path(cfg)
+
+
+def test_persistent_env_pins_the_reference_by_default(tmp_path):
+    run_fed, cfg = _run_fed_cfg(tmp_path, env_kind="tinyguess")
+    plan = [{"out_dir": str(tmp_path / "c0")}]
+    args = (plan, tmp_path / "plan.json", "/run/round_3/aggregated/hf", None, 4)
+    _cmd, env = run_fed._persistent_cmd_env(cfg, *args, {}, n_gpus=1, worker_eval=False)
+    assert env["FEDAGENT_REF_MODEL_PATH"] == "/models/base", "default launch must pin the ref to the base"
+    cfg.ref_anchor = "round"
+    _cmd, env = run_fed._persistent_cmd_env(cfg, *args, {"FEDAGENT_REF_MODEL_PATH": "/leaked"},
+                                            n_gpus=1, worker_eval=False)
+    assert "FEDAGENT_REF_MODEL_PATH" not in env, "round must strip an inherited pin"
+
+
+def test_resume_objective_guard(tmp_path):
+    import json
+    import pytest
+    out = tmp_path / "run"
+    (out / "round_3" / "aggregated" / "hf").mkdir(parents=True)
+    run_fed, cfg = _run_fed_cfg(out)                     # ref_anchor: base (the new default)
+    # a directory that predates the record trained with the rolling reference => refused
+    with pytest.raises(ValueError, match="RESUME REFUSED.*ref_anchor"):
+        run_fed.check_resume_objective(cfg, start_round=4, base_model="/models/base")
+    assert not (out / run_fed.OBJECTIVE_RECORD).exists(), "a refusal must not write a record"
+    # continuing it unchanged works and writes the record
+    cfg.ref_anchor = "round"
+    rec = run_fed.check_resume_objective(cfg, 4, "/models/base")
+    assert rec == {"ref_anchor": "round", "ref_model_path": None, "adv_estimator": "grpo"}
+    on_disk = json.loads((out / run_fed.OBJECTIVE_RECORD).read_text())
+    assert on_disk["ref_anchor"] == "round" and on_disk["written_at_round"] == 4
+    # flipping the anchor on the next resume is refused; allow_objective_change lets it through, recorded
+    cfg.ref_anchor = "base"
+    with pytest.raises(ValueError, match="'round' \\(directory\\) vs 'base'"):
+        run_fed.check_resume_objective(cfg, 5, "/models/base")
+    cfg.allow_objective_change = True
+    rec = run_fed.check_resume_objective(cfg, 5, "/models/base")
+    assert rec["ref_anchor"] == "base" and rec["objective_changed_at_round"] == 5
+    assert rec["previous"]["ref_anchor"] == "round"
+    # a later resume under the same (new) objective keeps the switch on the record
+    cfg.allow_objective_change = False
+    rec = run_fed.check_resume_objective(cfg, 6, "/models/base")
+    assert rec["ref_anchor"] == "base" and rec["previous"]["ref_anchor"] == "round"
+    # a fresh launch never refuses: it (re)writes the record for whatever it runs
+    cfg.ref_anchor = "round"
+    assert run_fed.check_resume_objective(cfg, 1, "/models/base")["ref_anchor"] == "round"
+    # a FINISHED pre-knob run (summary without the key) => rolling reference => refused under base
+    old = tmp_path / "old"
+    old.mkdir()
+    (old / "federated_summary.json").write_text(json.dumps({"adv_estimator": "grpo"}))
+    run_fed, cfg2 = _run_fed_cfg(old)
+    with pytest.raises(ValueError, match="RESUME REFUSED"):
+        run_fed.check_resume_objective(cfg2, 71, "/models/base")
+    # a finished run that recorded ref_anchor=base in its summary (2026-09-12..16 window) matches
+    (old / "federated_summary.json").write_text(json.dumps({"adv_estimator": "grpo", "ref_anchor": "base"}))
+    assert run_fed.check_resume_objective(cfg2, 71, "/models/base")["ref_anchor"] == "base"
+    # switching the algorithm on resume is refused the same way
+    cfg2.adv_estimator = "gae"
+    with pytest.raises(ValueError, match="adv_estimator"):
+        run_fed.check_resume_objective(cfg2, 71, "/models/base")

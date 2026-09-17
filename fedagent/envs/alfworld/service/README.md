@@ -117,6 +117,11 @@ Every knob is read from the environment in `server.py` (set per client by
 | `SIZE_STD` | `""` | `coverage` set-size dispersion, forwarded only when strategy is `coverage`. |
 | `SUCCESS_STD` | `""` | `hardness` success-count dispersion, forwarded only when strategy is `hardness`. |
 | `TRAJECTORIES_FILE` | `""` | `hardness` task_id→success labels file, forwarded only when strategy is `hardness`. |
+| `ENV_DIV` | `""` (→ 0.7) | `env_disjoint` / `scene_disjoint` heterogeneity strength (forwarded since 2026-07-28). |
+| `ALFWORLD_FALLBACK` | `""` (→ `skip`) | `env_disjoint` single-scene specs: `skip` \| `shared` \| `trial-only`. |
+| `ALFWORLD_SCENES_PER_CLIENT` | `""` (→ 8) | `scene_disjoint`: FloorPlans per client shard, stratified over the 4 room types. |
+| `ALFWORLD_HOLDOUT_FILE` | `""` | `scene_disjoint`: OOD holdout scene list (absolute path; the driver resolves the config's repo-relative path). |
+| `VARIANT_N` | `""` (→ pool default) | `obs_variant` / `dyn_variant` / `goal_variant`: size of the kernel-variant pool the client's variant is drawn from. |
 
 Note `ALFWORLD_SERVICE_URL` is read **trainer-side** by `../alfworld_env.py`,
 not by this service.
@@ -142,12 +147,17 @@ upstream partition functions reject unexpected kwargs):
 | `preference` | task | `omega` (from `OMEGA`) |
 | `coverage` | task | `size_std` (from `SIZE_STD`) |
 | `hardness` | task | `success_std`, `trajectories_file` |
+| `scene_disjoint` | environment | `env_div`, `scenes_per_client`, `holdout` (from `ENV_DIV`, `ALFWORLD_SCENES_PER_CLIENT`, `ALFWORLD_HOLDOUT_FILE`) |
+| `obs_variant` / `dyn_variant` / `goal_variant` | environment (kernel variants) | `variant_n` (from `VARIANT_N`); the engine's `alfworld_kernel_variants.py` rewrites the client's game files (grammar / PDDL domain / goal block) |
 
-This is **narrower than WebShop**: the supported set is exactly what the engine's
-`partition_dataset` accepts for ALFWorld (`uniform`, `preference`, `coverage`,
-`hardness`, `env_disjoint`). WebShop's catalog-split and BM25 / lookalike / rank
-transition variants do **not** apply here (see [`../../../hetero/`](../../../hetero/) for the
-WebShop-side constructions).
+The supported set is what the engine's `partition_dataset` accepts for ALFWorld: `uniform`,
+the three task-level arms, `env_disjoint`, and — since 2026-08-23 — the ALFWorld
+environment-level suite (`scene_disjoint` + the three kernel-variant arms), the ALFWorld
+analogues of WebShop's catalog split and transition variants. WebShop's own catalog-split
+and BM25 / lookalike / rank variants do **not** apply here (see
+[`../../../hetero/`](../../../hetero/) for the WebShop-side constructions and
+[`../../../docs/dev_doc/alfworld_env_heterogeneity.md`](../../../docs/dev_doc/alfworld_env_heterogeneity.md)
+for these).
 
 The **six ALFWorld task types** (used by `ALFWORLD_TASK_TYPES` and by the
 `preference` partition's category axis) are:

@@ -24,6 +24,34 @@
 
 ## Updates
 
+- **[Sep 2026]** **The KL reference is pinned to the base model by default (`ref_anchor: base`).**
+  On stock verl 0.8 the actor and the reference policy are built from one `model.path`, and the
+  federated loop moves the FedAvg'd weights through that key, so until now the KL term silently
+  re-anchored to each round's aggregate (a per-round proximal term). The reference role is now an
+  explicit knob ([`fedagent/ref_anchor.py`](fedagent/ref_anchor.py)): `base` (default) keeps one
+  fixed trust region for the whole run, the objective of the paper's verl-agent stack; `round` keeps
+  the rolling reference every verl-0.8 run before 2026-09-16 trained under. They are different
+  objectives: never pool numbers across the boundary, and a resume whose anchor differs from the
+  directory's `run_objective.json` is refused. Evidence (a single-GPU A/B: no entropy collapse, no
+  mid-run trough under `base`) and what older runs inherit:
+  [`fedagent/docs/revision.md`](fedagent/docs/revision.md#2026-09-16-the-kl-reference-is-pinned-to-the-base-model-by-default-ref_anchor-base).
+- **[Sep 2026]** **Single-H100 recipe.** Every accelerated cell has a one-GPU twin under
+  [`fedagent/config/paper_accelerated_1gpu/`](fedagent/config/paper_accelerated_1gpu/)
+  (`gen_paper_configs.py --accel --n-gpus 1`): same batch geometry, seeds and eval cadence, only the
+  memory placement changes. Measured at Qwen2.5-1.5B over the full 70-round budget: **one H100 is
+  only about ×2 slower per round than four** (WebShop PPO 21 vs 10.6 min; on one card WebShop GRPO
+  17 min, ALFWorld GRPO 40 min, ALFWorld PPO 55 min per round), so a cell costs roughly half the
+  GPU-hours, and four cells run concurrently on one 4×H100 node (`CUDA_VISIBLE_DEVICES=<k>` per
+  driver; `run_fed` maps its GPU pins through it since 2026-09-10). Recipe, per-round times, memory
+  and caveats: [`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md#the-single-h100-tree-configpaper_accelerated_1gpu).
+- **[Aug 2026]** **ALFWorld environment-level heterogeneity.** The env-het suite now covers both
+  benchmarks: `scene_disjoint` (disjoint FloorPlan shards, the Catalog-Split analogue) plus three
+  hidden-kernel variant arms (`obs_variant` grammar rewrites, `dyn_variant` PDDL action rewrites,
+  `goal_variant` success-predicate rewrites), each pool verified planner-level solvable. The config
+  family was restructured to `env_heterogeneity/{grpo,ppo}/{webshop,alfworld}/<arm>/` and the matrix
+  grew from 176 to **194 cells** per tree. Construction and verification:
+  [`fedagent/docs/heterogeneity.md`](fedagent/docs/heterogeneity.md) and the
+  [`dev_doc/`](fedagent/docs/dev_doc/README.md) set.
 - **[Jul 2026]** **Reproduce the paper ×2.5–×3.5 faster.** Every one of the 176 paper configs
   now has a ready-made accelerated version under
   [`fedagent/config/paper_accelerated/`](fedagent/config/paper_accelerated/); to use it, just
@@ -62,9 +90,10 @@ federated training loop with **FedAvg** aggregation (plus optional client-side
 and federated **PPO/GRPO** trainers, built as a **thin overlay on stock
 [verl](https://github.com/volcengine/verl) 0.8** (no trainer fork: verl is imported as a
 library and driven through its public extension points). The paper's full experiment
-matrix is configured (176 configs; the GRPO arms are GPU-verified end-to-end, while
-PPO/decentralized/larger backbones are code-audited pending GPU smoke — see the
-[verification status](fedagent/docs/migration.md#verification-status)), and the framework
+matrix is configured (194 cells: the paper's 176 plus the ALFWorld env-het extension; the uniform
+GRPO **and PPO** arms are GPU-verified end-to-end over the full 70-round budget on 4×H100 and on a
+single H100, while the decentralized ablations and the larger backbones are code-audited pending GPU
+runs — see the [verification status](fedagent/docs/migration.md#verification-status)), and the framework
 is extensible with your own datasets, environments, and algorithms.
 
 FedAgent is the reference implementation for the paper, which formalizes agent
@@ -85,28 +114,36 @@ but worst-case non-robust to environment-level heterogeneity. See
 
 - **Federated GRPO and PPO** on stock verl 0.8: GRPO is the default (group size **G=8**
   via `rollout.n=8`, no critic); PPO (`adv_estimator=gae`) additionally federates the value
-  model alongside the actor each round.
+  model alongside the actor each round. The KL reference policy is an explicit role
+  (`ref_anchor`): pinned to the base model for the whole run by default, or rolling with each
+  round's aggregate (`round`).
 - **Two-level heterogeneity suite**: task-level (Preference / Coverage / Hardness) and
-  environment-level (Catalog-Split + 4 WebShop transition variants: BM25 field-subset,
-  BM25 reweight, lookalike, rank-wrapper), the first systematic decomposition for agent FL.
+  environment-level on **both** benchmarks (WebShop: Catalog-Split + 4 transition variants: BM25
+  field-subset, BM25 reweight, lookalike, rank-wrapper; ALFWorld: Scene-Disjoint + obs / dyn /
+  goal kernel variants), the first systematic decomposition for agent FL.
 - **FedAvg aggregation** over FSDP-sharded checkpoints, plus optional client-side
   **FedProx** (a proximal term added to local training, injected non-fork via the repo-root
   `sitecustomize.py`, not a server rule).
 - **Baselines built in**: `federated` (default), `centralized` (one client on pooled data),
   and `local` (one pinned client, no federation), selectable from the same config.
 - **Fully configurable protocol**: clients `N`, clients/round `M`, local epochs `E`, rounds
-  `T`, tasks/client `|Xᵢ|`, with a ready-made **176-config paper matrix**.
+  `T`, tasks/client `|Xᵢ|`, with a ready-made **194-config paper matrix** (the paper's 176
+  cells + the ALFWorld env-het extension).
 - **Verified acceleration, results unchanged**: optional speed levers (keep one trainer+vLLM
   process alive across rounds instead of restarting it per client, evaluate on the
   already-loaded engine, keep env services warm, run ALFWorld's env service as parallel
   replicas) make paper runs **×2.5–×3.5 faster**; each lever was checked to leave the final
-  model unchanged (≤ 9.3e-5, below GPU run-to-run noise). All 176 paper configs come
-  pre-accelerated in [`config/paper_accelerated/`](fedagent/config/paper_accelerated/), see
-  [`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md).
+  model unchanged (≤ 9.3e-5, below GPU run-to-run noise). All 194 cells come
+  pre-accelerated in [`config/paper_accelerated/`](fedagent/config/paper_accelerated/), and as
+  single-H100 twins in [`config/paper_accelerated_1gpu/`](fedagent/config/paper_accelerated_1gpu/);
+  see [`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md).
 - **Any HuggingFace backbone** (paper: Qwen2.5-1.5B/3B/7B-Instruct, Llama-3.2-3B-Instruct);
   **WebShop** and **ALFWorld** benchmarks out of the box, each behind a per-client HTTP env
   service so their conflicting dependencies stay isolated from the trainer.
-- **FSDP** sharding (single-GPU to 4-GPU), W&B-free (metrics go to JSON / console).
+- **FSDP** sharding (single-GPU to 4-GPU; at 1.5B a full paper cell runs on one H100 at about
+  half the GPU-hours of the 4-GPU recipe, see
+  [`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md)), W&B-free (metrics go to
+  JSON / console).
 
 Within a round, clients train **sequentially by default** (one subprocess per client, then
 FedAvg) or **concurrently** with `parallel_clients: P` (each client on its own GPU slice,
@@ -128,12 +165,13 @@ fedagent/                      ← the maintained verl-0.8 overlay (start here)
 ├── agent_loops/               GymTextAgentLoop, multi-turn rollout (verl AgentLoopBase)
 ├── hetero/                    two-level heterogeneity constructions (task + environment)
 ├── data/                      AgenticDataset (verl custom_cls) + per-client partitioning
-├── config/                    Hydra base, agent registry, env specs, + the 176-config paper matrix (and its accelerated twins)
+├── config/                    Hydra base, agent registry, env specs, + the 194-cell paper matrix (and its accelerated 4-GPU / single-H100 twins)
 ├── docs/                      full documentation suite (architecture … migration)
 ├── fedprox.py                 client-side FedProx proximal term
+├── ref_anchor.py              explicit KL-reference role: pinned to the base model (default) or rolling per round
 └── main_ppo_fed.py            per-client entry: stock verl run_ppo + FedAgent hooks
 
-sitecustomize.py               repo-root FedProx hook (auto-imported on PYTHONPATH)
+sitecustomize.py               repo-root startup hooks (FedProx, KL-reference pin, persistent trainer, critic loss), auto-imported on PYTHONPATH
 data/                          shipped data assets: env_heterogeneity (holdout/lookalike) + hardness reference labels
 tools/                         operator toolbox: paper-config generator, hardness-label generator, eval/log/plot helpers (+ setup/: flash-attn build, verl patch)
 LICENSE · NOTICE · CITATION.cff
@@ -199,7 +237,7 @@ python -m fedagent.fed.run_fed --config fedagent/config/examples/tinyguess_2cl_2
 # 1) WebShop, homogeneous, GRPO
 python -m fedagent.fed.run_fed --config fedagent/config/examples/webshop/homog_long.yaml
 
-# 2) A paper cell (WebShop, Qwen2.5-1.5B, main, GRPO) from the 176-config matrix
+# 2) A paper cell (WebShop, Qwen2.5-1.5B, main, GRPO) from the 194-cell matrix
 python -m fedagent.fed.run_fed \
   --config fedagent/config/paper/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
 
@@ -207,10 +245,15 @@ python -m fedagent.fed.run_fed \
 #    (swap paper/ -> paper_accelerated/ for any cell; see fedagent/docs/gpu_recipes.md)
 python -m fedagent.fed.run_fed \
   --config fedagent/config/paper_accelerated/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
+
+# 4) The same cell on ONE H100: about x2 the per-round time of 4 GPUs at half the GPU-hours.
+#    Four such drivers co-host a 4-GPU node (CUDA_VISIBLE_DEVICES=0..3, distinct --output-dir).
+CUDA_VISIBLE_DEVICES=0 python -m fedagent.fed.run_fed \
+  --config fedagent/config/paper_accelerated_1gpu/uniform/Qwen2.5-1.5B-Instruct/main/grpo/fed_webshop_grpo_total-100_cl-per-rd-2_rd-70_ep-per-cl-3_min-goals-per-cl-100_p-uniform.yaml
 ```
 
 CLI flags override the YAML: `--rounds N` · `--clients N` · `--n-gpus 4` · `--base-seed S`
-· `--fedprox-mu 0.1` · `--local-client-id K`. Every config key is documented in
+· `--fedprox-mu 0.1` · `--local-client-id K` · `--critic-path DIR` · `--fresh`. Every config key is documented in
 [`fedagent/fed/README.md`](fedagent/fed/README.md); hardware/run modes are in
 [`fedagent/docs/running.md`](fedagent/docs/running.md).
 
@@ -218,10 +261,10 @@ CLI flags override the YAML: `--rounds N` · `--clients N` · `--n-gpus 4` · `-
 
 ## Reproducing the paper
 
-The paper's experiments are the **176-config matrix** under
+The paper's experiments are the **194-cell matrix** under
 [`fedagent/config/paper/`](fedagent/config/README.md), mirroring the original tree 1:1
-(`uniform/` main table across 4 backbones × WebShop + ALFWorld; `env_heterogeneity/`,
-`task_heterogeneity/`, `decentralized/` on Qwen2.5-1.5B). Each cell is one command:
+(`uniform/` main table across 4 backbones × WebShop + ALFWorld; `env_heterogeneity/` on both
+benchmarks, `task_heterogeneity/`, `decentralized/` on Qwen2.5-1.5B). Each cell is one command:
 
 ```bash
 python -m fedagent.fed.run_fed --config fedagent/config/paper/<family>/<...>.yaml
@@ -229,8 +272,9 @@ python -m fedagent.fed.run_fed --config fedagent/config/paper/<family>/<...>.yam
 
 Every cell also has an **accelerated twin** at the same relative path under
 [`fedagent/config/paper_accelerated/`](fedagent/config/paper_accelerated/); swap
-`paper/` → `paper_accelerated/` for the same science at roughly ×2.5–×3.5 less wall-clock
-([`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md)).
+`paper/` → `paper_accelerated/` for the same science at roughly ×2.5–×3.5 less wall-clock, or
+`paper/` → `paper_accelerated_1gpu/` to run it on **one H100** (about ×2 the 4-GPU per-round time
+at half the GPU-hours; [`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md)).
 
 Per-table recipes, seeds, and compute estimates (**~1,800 H100 GPU-hours** total) are in
 **[`fedagent/docs/reproducing.md`](fedagent/docs/reproducing.md)**, covering the main table
@@ -247,13 +291,15 @@ environment-level heterogeneity studies, and the decentralized ablations.
 | [`fedagent/docs/installation.md`](fedagent/docs/installation.md) | The three-conda-env setup (trainer + WebShop + ALFWorld), JDK / game-file notes. |
 | [`fedagent/docs/running.md`](fedagent/docs/running.md) | Running `run_fed.py`: modes, GPUs, baselines, FedProx, eval, worked examples. |
 | [`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md) | Best-practice recipes per GPU count (1 / 2 / 4) and the accelerated paper matrix. |
-| [`fedagent/docs/reproducing.md`](fedagent/docs/reproducing.md) | Per-experiment reproduction recipes, the 176-config matrix, compute, seeds. |
+| [`fedagent/docs/reproducing.md`](fedagent/docs/reproducing.md) | Per-experiment reproduction recipes, the 194-cell matrix, measured compute (4 GPUs vs 1), seeds. |
 | [`fedagent/docs/heterogeneity.md`](fedagent/docs/heterogeneity.md) | The two-level taxonomy and how to construct/select each arm. |
 | [`fedagent/docs/configuration.md`](fedagent/docs/configuration.md) | Config-file decoder and the federated-runner key reference. |
 | [`fedagent/docs/features.md`](fedagent/docs/features.md) | Each capability → its config key → its source file. |
 | [`fedagent/docs/extending.md`](fedagent/docs/extending.md) | Extension points: new dataset/env, heterogeneity strategy, RL algorithm, aggregation rule. |
 | [`fedagent/docs/migration.md`](fedagent/docs/migration.md) | What changed from the verl-agent-0.3.1 fork to stock verl 0.8, and the equivalence checks. |
 | [`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md) | How to accelerate & why: the final recipe, why each lever works, the equivalence bar. |
+| [`fedagent/docs/revision.md`](fedagent/docs/revision.md) · [`bugfixes.md`](fedagent/docs/bugfixes.md) | The ledger of deliberate default/protocol changes (what older runs inherit, e.g. the 2026-09-16 `ref_anchor` flip), and the dated defect log. |
+| [`fedagent/docs/dev_doc/`](fedagent/docs/dev_doc/README.md) | The ALFWorld environment-heterogeneity working set: the four arms' construction and five-layer verification, query/env decoupling, WebShop-vs-ALFWorld comparison. |
 
 ---
 
