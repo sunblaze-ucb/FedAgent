@@ -681,9 +681,15 @@ def prior_objective(out: Path):
         if "ref_anchor" in d:
             return ({"ref_anchor": str(d["ref_anchor"]).lower(), "ref_model_path": d.get("ref_model_path"),
                      "adv_estimator": d.get("adv_estimator")}, "federated_summary.json")
-        return ({"ref_anchor": "round", "ref_model_path": None, "adv_estimator": d.get("adv_estimator")},
+        return ({"ref_anchor": "round", "ref_model_path": None, "adv_estimator": d.get("adv_estimator"),
+                 "inferred": True},
                 "federated_summary.json written before the ref_anchor knob existed (=> rolling reference)")
-    return ({"ref_anchor": "round", "ref_model_path": None, "adv_estimator": None},
+    # No record and no summary: INFERRED, not observed. Right for every directory that predates the
+    # knob (2026-09-12) and for the default of the 09-12..09-16 window; wrong only for a run from that
+    # window that set ref_anchor=base and died before writing its summary (the summary was the only
+    # place the choice was recorded then) -- such a directory continues with allow_objective_change,
+    # and the record it then writes keeps the "inferred" mark on the previous objective.
+    return ({"ref_anchor": "round", "ref_model_path": None, "adv_estimator": None, "inferred": True},
             f"no {OBJECTIVE_RECORD} (the directory predates the record; every such run used the rolling reference)")
 
 
@@ -711,7 +717,11 @@ def check_resume_objective(cfg, start_round: int, base_model: str = "") -> dict:
                     f"(e.g. `ref_anchor: {prior.get('ref_anchor')}`) to continue that run unchanged; start "
                     "a fresh --output-dir (or pass --fresh) for the new objective; or set "
                     "`allow_objective_change: true` to switch mid-run on purpose (recorded in "
-                    f"{OBJECTIVE_RECORD}).")
+                    f"{OBJECTIVE_RECORD})."
+                    + (" The directory's objective is INFERRED (no record, no summary): if this run is "
+                       "known to have used the launch's values (a 2026-09-12..16 ref_anchor=base run "
+                       "that died before its summary), allow_objective_change continues it and the "
+                       "record marks the previous objective as inferred." if prior.get("inferred") else ""))
             log(f"[warn] RESUME: objective CHANGED at round {start_round} on purpose "
                 f"(allow_objective_change) -- {desc}; source: {src}")
             rec = {**rec, "objective_changed_at_round": start_round, "previous": prior}
@@ -1613,7 +1623,8 @@ def resolve_ref_model_path(cfg, start_model_path: Optional[str] = None) -> str:
             raise ValueError("ref_anchor=round conflicts with ref_model_path: round mode follows each "
                              "round's actor initialization and therefore has no fixed reference path")
         return ""
-    return explicit or str(start_model_path or cfg.model_path or discover_model())
+    p = explicit or str(start_model_path or cfg.model_path or discover_model())
+    return p.rstrip("/") if len(p) > 1 else p   # verl's copy_to_local rejects a trailing "/"
 
 
 def _phys_gpu_ids(lo: int, hi: int) -> str:
@@ -1623,10 +1634,15 @@ def _phys_gpu_ids(lo: int, hi: int) -> str:
     driver launched with ``CUDA_VISIBLE_DEVICES=2 ... --n-gpus 1`` still trained on physical
     GPU 0, and four single-GPU cells on one 4-GPU node all piled onto the same card. Mapping
     through the parent's list makes ``CUDA_VISIBLE_DEVICES=k`` mean "this run owns physical
-    GPU k". Unset => the legacy literal ids (byte-identical behavior)."""
-    vis = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
-    if not vis:
+    GPU k". Unset => the legacy literal ids (byte-identical behavior). Set but EMPTY means the
+    driver was given no GPUs: refuse, instead of handing children literal ids the unpinned
+    paths would never see (review 2026-09-17)."""
+    vis = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if vis is None:
         return ",".join(str(g) for g in range(lo, hi))
+    if not vis.strip():
+        raise ValueError("the driver's CUDA_VISIBLE_DEVICES is set but empty (no GPUs); unset it for "
+                         "the whole node or list the physical GPUs this run owns")
     ids = [x.strip() for x in vis.split(",") if x.strip()]
     if hi > len(ids):
         raise ValueError(f"need GPUs [{lo},{hi}) but the driver's CUDA_VISIBLE_DEVICES={vis!r} "
@@ -2569,6 +2585,7 @@ def run(cfg) -> dict:
         # round-level resume: rerunning the same --output-dir continues at the round after the
         # last completed one (see find_resume_round for why this is faithful). --fresh disables.
         start_round = 1
+        _k = 0
         if cfg.get("resume", True):
             refuse_resume_below_disk(cfg)   # a schedule below the disk's rounds is an error, not a fresh run
             _k, _actor_hf, _critic_hf = find_resume_round(cfg, is_ppo)
@@ -2585,36 +2602,37 @@ def run(cfg) -> dict:
                     log(f"RESUME: round {_k} complete in {cfg.output_dir} -> continuing at "
                         f"round {start_round} from {_actor_hf}"
                         + (f" (critic: {_critic_hf})" if is_ppo else ""))
-                # carry the pre-resume rounds into THIS run's summary so federated_summary.json
-                # stays complete. "rounds" provenance records are seeded in EVERY eval mode (no
-                # teardown path ever rebuilds them); val points / client circles are seeded only
-                # for non-worker modes -- the worker's teardown fold-in re-derives those from the
-                # on-disk dumps and seeding them too would duplicate entries.
-                _pv, _pc, _ph = seed_prior_histories(cfg, start_round)
-                history.extend(_ph)
-                if eval_mode != "worker":
-                    val_history.extend(_pv)
-                    client_history.extend(_pc)
-                    log(f"RESUME: carried rounds < {start_round} into the summary "
-                        f"({len(_pv)} val point(s), {len(_pc)} client circle(s), "
-                        f"{len(_ph)} round record(s); resumed_from_round={_k})")
-                    # the completion marker (round_k/aggregated/hf) lands BEFORE round k's eval,
-                    # so a crash in that window leaves round k complete with neither a summary
-                    # point nor a dump: score the resume anchor now so val_curve stays gapless
-                    # (worker mode already re-evals its starting model on the hot engine).
-                    if do_eval and _k not in {int(v["round"]) for v in val_history}:
-                        log(f"RESUME: round {_k} has no val point on disk (crashed before its "
-                            "eval?) -- scoring the resume-anchor aggregate now")
-                        run_eval(current_model, _k)
-                else:
-                    log(f"RESUME: carried {len(_ph)} round record(s) into the summary; worker "
-                        f"teardown re-derives val points/circles from the on-disk dumps "
-                        f"(resumed_from_round={_k})")
-
         # Objective guard (the 2026-09-16 default flip round -> base): refuse to continue a directory
         # under a different ref_anchor / adv_estimator, and record this launch's objective for later
-        # resumes (<output_dir>/run_objective.json).
+        # resumes (<output_dir>/run_objective.json). Runs BEFORE the summary seeding below, which may
+        # spend a full eval on the resume-anchor round -- a refused launch must not pay for that.
         check_resume_objective(cfg, start_round, base_model)
+        if _k > 0:
+            # carry the pre-resume rounds into THIS run's summary so federated_summary.json
+            # stays complete. "rounds" provenance records are seeded in EVERY eval mode (no
+            # teardown path ever rebuilds them); val points / client circles are seeded only
+            # for non-worker modes -- the worker's teardown fold-in re-derives those from the
+            # on-disk dumps and seeding them too would duplicate entries.
+            _pv, _pc, _ph = seed_prior_histories(cfg, start_round)
+            history.extend(_ph)
+            if eval_mode != "worker":
+                val_history.extend(_pv)
+                client_history.extend(_pc)
+                log(f"RESUME: carried rounds < {start_round} into the summary "
+                    f"({len(_pv)} val point(s), {len(_pc)} client circle(s), "
+                    f"{len(_ph)} round record(s); resumed_from_round={_k})")
+                # the completion marker (round_k/aggregated/hf) lands BEFORE round k's eval,
+                # so a crash in that window leaves round k complete with neither a summary
+                # point nor a dump: score the resume anchor now so val_curve stays gapless
+                # (worker mode already re-evals its starting model on the hot engine).
+                if do_eval and _k not in {int(v["round"]) for v in val_history}:
+                    log(f"RESUME: round {_k} has no val point on disk (crashed before its "
+                        "eval?) -- scoring the resume-anchor aggregate now")
+                    run_eval(current_model, _k)
+            else:
+                log(f"RESUME: carried {len(_ph)} round record(s) into the summary; worker "
+                    f"teardown re-derives val points/circles from the on-disk dumps "
+                    f"(resumed_from_round={_k})")
 
         # PPO critic provenance, stated out loud exactly once (the reset this guards against
         # used to be silent: the run logged a critic path that happened to be the ACTOR's and
@@ -2895,7 +2913,11 @@ def run(cfg) -> dict:
         "ref_anchor": str(cfg.get("ref_anchor", "base") or "base").lower(),
         "ref_model_path": resolve_ref_model_path(cfg) or None,   # None <=> rolling reference
         **({"resumed_from_round": start_round - 1} if start_round > 1 else {}),
-        "loop_completed": loop_completed,   # False => the run died mid-loop; final_model is NOT model_T
+        "loop_completed": loop_completed,   # True in every summary that gets written: a run that dies
+                                            #   mid-loop propagates out of the try/finally before this
+                                            #   write (no summary; tools/rebuild_summary.py rebuilds one).
+                                            #   The flag's live effect is the finally block above: no
+                                            #   "round T" eval of a partial run's last aggregate.
         "final_model": current_model,
         # critic_init records HOW the value model entered this run (resume | auto-sibling |
         # explicit | fresh-value-head) so a warm-started PPO run's provenance -- in

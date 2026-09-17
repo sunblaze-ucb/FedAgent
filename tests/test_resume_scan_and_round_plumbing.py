@@ -95,3 +95,17 @@ def test_load_cfg_warns_on_keys_the_runner_does_not_read(tmp_path, capsys):
     cfg_path.write_text("total_rounds: 4\n")
     assert run_fed.load_cfg(args).total_rounds == 4
     assert "[warn]" not in capsys.readouterr().out
+
+
+def test_phys_gpu_ids_maps_through_the_driver_visible_set(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    assert run_fed._phys_gpu_ids(0, 2) == "0,1"                 # unset: legacy literal ids
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,3")
+    assert run_fed._phys_gpu_ids(0, 1) == "2" and run_fed._phys_gpu_ids(1, 2) == "3"
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-aaaa,GPU-bbbb")
+    assert run_fed._phys_gpu_ids(1, 2) == "GPU-bbbb"           # UUID tokens pass through
+    with pytest.raises(ValueError, match="exposes only 2"):
+        run_fed._phys_gpu_ids(0, 3)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    with pytest.raises(ValueError, match="set but empty"):     # no GPUs is not "unset"
+        run_fed._phys_gpu_ids(0, 1)

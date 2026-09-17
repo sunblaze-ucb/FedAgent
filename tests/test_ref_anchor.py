@@ -211,3 +211,28 @@ def test_resume_objective_guard(tmp_path):
     cfg2.adv_estimator = "gae"
     with pytest.raises(ValueError, match="adv_estimator"):
         run_fed.check_resume_objective(cfg2, 71, "/models/base")
+
+
+def test_inferred_prior_is_marked_and_kept_on_the_record(tmp_path):
+    import pytest
+    run_fed, cfg = _run_fed_cfg(tmp_path / "old")          # base by default
+    (tmp_path / "old" / "round_2" / "aggregated" / "hf").mkdir(parents=True)
+    prior, src = run_fed.prior_objective(tmp_path / "old")
+    assert prior["ref_anchor"] == "round" and prior["inferred"] is True and "no run_objective.json" in src
+    with pytest.raises(ValueError, match="INFERRED"):
+        run_fed.check_resume_objective(cfg, 3, "/models/base")
+    cfg.allow_objective_change = True
+    rec = run_fed.check_resume_objective(cfg, 3, "/models/base")
+    assert rec["previous"]["inferred"] is True and rec["objective_changed_at_round"] == 3
+    # a recorded prior never carries the mark
+    prior, src = run_fed.prior_objective(tmp_path / "old")
+    assert src == run_fed.OBJECTIVE_RECORD and "inferred" not in prior
+
+
+def test_ref_model_path_trailing_slash_is_normalized(tmp_path):
+    run_fed, cfg = _run_fed_cfg(tmp_path)
+    cfg.ref_model_path = "/models/explicit/"
+    assert run_fed.resolve_ref_model_path(cfg) == "/models/explicit"
+    cfg.ref_model_path = ""
+    cfg.model_path = "/models/base/"
+    assert run_fed.resolve_ref_model_path(cfg) == "/models/base"

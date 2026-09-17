@@ -56,7 +56,10 @@ logs. Baseline before the port: `pytest tests/` 150 passed / 3 skipped; after: s
 ### 2. the `finally` block scored a partial run's last aggregate and recorded it as round T
 
 - **Files:** `fed/run_fed.py` (`loop_completed` flag around the round loop; both final-eval
-  paths and the summary gate on it; `federated_summary.json` gains `loop_completed`).
+  paths gate on it; `federated_summary.json` carries `loop_completed`, which is `true` in every
+  summary that exists — a run that dies mid-loop propagates its exception before the summary
+  write, so the flag's live effect is the gate, not the field; rebuild a crashed run's summary
+  with `tools/rebuild_summary.py`).
 - **Mechanism.** The hot final eval and the subprocess `eval_global(..., total_rounds, ...)`
   ran unconditionally in `finally`. A run that died in round r therefore evaluated its round
   r−1 aggregate, labelled it `round: T` in `val_history`, and dumped it to
