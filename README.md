@@ -24,17 +24,6 @@
 
 ## Updates
 
-- **[Sep 2026]** **The KL reference is pinned to the base model by default (`ref_anchor: base`).**
-  On stock verl 0.8 the actor and the reference policy are built from one `model.path`, and the
-  federated loop moves the FedAvg'd weights through that key, so until now the KL term silently
-  re-anchored to each round's aggregate (a per-round proximal term). The reference role is now an
-  explicit knob ([`fedagent/ref_anchor.py`](fedagent/ref_anchor.py)): `base` (default) keeps one
-  fixed trust region for the whole run, the objective of the paper's verl-agent stack; `round` keeps
-  the rolling reference every verl-0.8 run before 2026-09-16 trained under. They are different
-  objectives: never pool numbers across the boundary, and a resume whose anchor differs from the
-  directory's `run_objective.json` is refused. Evidence (a single-GPU A/B: no entropy collapse, no
-  mid-run trough under `base`) and what older runs inherit:
-  [`fedagent/docs/revision.md`](fedagent/docs/revision.md#2026-09-16-the-kl-reference-is-pinned-to-the-base-model-by-default-ref_anchor-base).
 - **[Sep 2026]** **Single-H100 recipe.** Every accelerated cell has a one-GPU twin under
   [`fedagent/config/paper_accelerated_1gpu/`](fedagent/config/paper_accelerated_1gpu/)
   (`gen_paper_configs.py --accel --n-gpus 1`): same batch geometry, seeds and eval cadence, only the
@@ -44,14 +33,6 @@
   GPU-hours, and four cells run concurrently on one 4×H100 node (`CUDA_VISIBLE_DEVICES=<k>` per
   driver; `run_fed` maps its GPU pins through it since 2026-09-10). Recipe, per-round times, memory
   and caveats: [`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md#the-single-h100-tree-configpaper_accelerated_1gpu).
-- **[Aug 2026]** **ALFWorld environment-level heterogeneity.** The env-het suite now covers both
-  benchmarks: `scene_disjoint` (disjoint FloorPlan shards, the Catalog-Split analogue) plus three
-  hidden-kernel variant arms (`obs_variant` grammar rewrites, `dyn_variant` PDDL action rewrites,
-  `goal_variant` success-predicate rewrites), each pool verified planner-level solvable. The config
-  family was restructured to `env_heterogeneity/{grpo,ppo}/{webshop,alfworld}/<arm>/` and the matrix
-  grew from 176 to **194 cells** per tree. Construction and verification:
-  [`fedagent/docs/heterogeneity.md`](fedagent/docs/heterogeneity.md) and the
-  [`dev_doc/`](fedagent/docs/dev_doc/README.md) set.
 - **[Jul 2026]** **Reproduce the paper ×2.5–×3.5 faster.** Every one of the 176 paper configs
   now has a ready-made accelerated version under
   [`fedagent/config/paper_accelerated/`](fedagent/config/paper_accelerated/); to use it, just
