@@ -308,7 +308,7 @@ Priority order; each row updated to ✅ with results as it lands. "Cost" = rough
 | 4 | **Faithful task variants**: Preference(ω)✅wired, Coverage(ξ)✅wired, Hardness(ξ')✅wired | **CODE DONE** (run pending) | ~3h | canonical task arm (vs the task_disjoint stand-in) |
 | 5 | **Other env variants**: Field-Subset, BM25 Reweight, Lookalike, Rank Wrapper | **CODE DONE** (ported+wired+verified; run pending) | ~4h | full env-het suite (Patterns B/C/D) |
 | 6 | **Baselines**: Local (1 client), Centralized (1 client, all data) | configs only | ~2h | FedAgent vs Centralized vs Local |
-| 7 | **ALFWorld env-het suite**: scene_disjoint + obs/dyn/goal_variant (supersedes env_disjoint) + query×env cell library | **CODE DONE + CPU-VERIFIED** (270 planner combos 0-unsolvable; 0.5B federated GPU smoke in flight 2026-08-23) | ~4h | 2nd environment, env-het generality — [dev doc](docs/dev_doc/alfworld_env_heterogeneity.md), [comparison](docs/dev_doc/webshop_vs_alfworld_env_heterogeneity.md) |
+| 7 | **ALFWorld env-het suite**: scene_disjoint + obs/dyn/goal_variant (supersedes env_disjoint) + query×env cell library (dev branch) | **CODE DONE + CPU-VERIFIED** (270 planner combos 0-unsolvable; 0.5B federated GPU smoke in flight 2026-08-23) | ~4h | 2nd environment, env-het generality — [design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md), [comparison](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/webshop_vs_alfworld_env_heterogeneity.md) |
 | 8 | **PPO** variants of the key conditions | config (verl native PPO) | ~3h | GRPO + PPO coverage |
 | 9 | **Phase 8-full**: 3 seeds × E×T=210 × {1.5B,3B,7B} × {GRPO,PPO}, unperturbed val | all above + ops resume | large (needs a dedicated allocation) | full reproduction vs 0.3.1 |
 
@@ -773,8 +773,8 @@ Needed the `_phys_gpu_ids` fix first: all four drivers had landed on physical GP
 `srun --overlap --gres=gpu:1` steps are handed the same card too. Per-round medians 17.4 / 21.1 /
 39.8 / 54.9 min (WS-GRPO / WS-PPO / ALF-GRPO / ALF-PPO), 25–33 % of each round outside the training
 steps; the WS-PPO cell is ×2.0 the 4-GPU twin's per-round time for ×4 fewer GPUs (24.5 vs ≈50 GPU·h).
-Results: WS-GRPO 70/70, last-10 task 0.802 / success 0.664 (best 0.901 @ r65; at or above the devbox
-4-GPU GRPO reference in 6 of 7 decades); WS-PPO 70/70, 0.794 / 0.681, with a deep trough in r19–34
+Results: WS-GRPO 70/70, last-10 task 0.802 / success 0.664 (best 0.901 @ r65; at or above the original
+4-GPU GRPO reference run in 6 of 7 decades); WS-PPO 70/70, 0.794 / 0.681, with a deep trough in r19–34
 (84 % zero-score episodes while train reward rises, entropy 1.0 → 0.10) that recovers to the 4-GPU
 endpoint; ALF-GRPO 70/70, success last-10 0.534 (r70 0.594); ALF-PPO 54/70 (last-10 0.336, best
 0.594 @ r39, then a real regression: train reward 3.5 → 2.8, response length 180 → 94; resumable,
@@ -790,6 +790,5 @@ n=64). `base` is the paper stack's objective; `round` was a side effect of movin
 through `model.path`. **`ref_anchor: base` is the default since 2026-09-16**, with a resume guard
 (`run_objective.json`) so older directories cannot silently switch ([docs/revision.md](docs/revision.md)).
 
-**Artifacts.** Raw eval dumps, cumulative metrics, tables and figures are packaged outside this repo
-(the `fedagent_test` package: `results/tables/{headline,round_durations,timing_breakdown,eval_windows}.csv`,
-figures 1–6, `ANALYSIS.md`; the `ppo_1gpu_collapse_plan_20260912` package for the trough diagnosis).
+**Artifacts.** Raw eval dumps, cumulative metrics, per-round timing tables and figures are packaged
+outside this repo (a self-contained results package per test; the trough diagnosis has its own).

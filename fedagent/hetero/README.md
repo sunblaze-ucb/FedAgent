@@ -54,7 +54,7 @@ The ALFWorld rows (2026-08-23) live in the vendored engine rather than in this p
 rewrite the game files the TextWorld service loads; the ALFWorld service
 ([`../envs/alfworld/service/server.py`](../envs/alfworld/service/server.py)) dispatches on the same
 `PARTITION_STRATEGY` bridge. Construction, hiddenness grading and verification:
-[`../docs/dev_doc/alfworld_env_heterogeneity.md`](../docs/dev_doc/alfworld_env_heterogeneity.md).
+[design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md).
 
 **Environment-level** strategies perturb the transition kernel / catalog: the agent
 never observes the change directly, only through successor states. **Task-level**

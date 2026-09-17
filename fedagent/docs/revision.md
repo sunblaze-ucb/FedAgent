@@ -65,7 +65,7 @@ duplicated here.
 | `service_port_autoshift` | `True` | 2026-08-19 | — | NEW: `run_fed` preflights the whole env-service block and relocates it (into the reserved `[61000, 65536)` pool) when it overlaps the ephemeral range or is occupied; `false` keeps the literal ports and only warns. This is what protects pre-2026-08-19 configs |
 | cross_round reload teardown | hard storage release, default **ON** (`FEDAGENT_DISABLE_HARD_RELEASE=1` reverts) | 2026-08-18 | — | [bugfix](./bugfixes.md): ws=1/NO_SHARD flat-param leak (~1.33 GiB/client-fit at 0.5B); one `hard-release: freed N GiB` log line per client reload is the visible signature; numerics untouched (retired weights only) |
 | memory forensics | `FEDAGENT_MEM_DEBUG=1` (+ `FEDAGENT_MEM_DEBUG_DIR=<dir>`) | 2026-08-18 | — | NEW env-gated instrumentation: at every engine reset, dump post-release *current* allocated, a ≥32 MB CUDA-tensor gc-walk with referrer chains and metadata-vs-storage sizes, and a full allocator snapshot (`_record_memory_history` armed per worker). Off by default = zero overhead; the 2026-08-18 leak hunt is the reference use |
-| `env_heterogeneity/` layout | `{grpo,ppo}/{webshop,alfworld}/<arm>/`, **194 cells per tree** | 2026-08-23 | `00fed1d` | NEW ALFWorld env-het arms (`scene_disjoint`, `obs_variant`, `dyn_variant`, `goal_variant`) + the WebShop `task_disjoint` controls (176 → 194); WebShop cells byte-identical, only their paths moved ([dev_doc](./dev_doc/README.md)) |
+| `env_heterogeneity/` layout | `{grpo,ppo}/{webshop,alfworld}/<arm>/`, **194 cells per tree** | 2026-08-23 | `00fed1d` | NEW ALFWorld env-het arms (`scene_disjoint`, `obs_variant`, `dyn_variant`, `goal_variant`) + the WebShop `task_disjoint` controls (176 → 194); WebShop cells byte-identical, only their paths moved ([design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/tree/dev/fedagent/docs/dev_doc)) |
 | `paper_accelerated_1gpu/` | 194 single-H100 twins (`gen_paper_configs.py --accel --n-gpus 1`) | 2026-09-10 | `ab4ecc3` | NEW shipped asset: same science as the accelerated cells; only `n_gpus_per_node: 1`, vLLM 0.5/0.4, GRPO optimizer offload, a cycling `port_band_base`. Measured ≈×2 the 4-GPU per-round time at 1.5B ([gpu_recipes.md](./gpu_recipes.md)) |
 | `run_fed` GPU pins | mapped through the driver's `CUDA_VISIBLE_DEVICES` | 2026-09-10 | `ab4ecc3` | [bugfix](./bugfixes.md): literal ids put every co-hosted single-GPU cell on physical GPU 0; unset ⇒ legacy literal ids |
 | `centralized` cells | `rd-1 / ep-210` (48 cells renamed across the three trees) | 2026-09-10 | `767b008` | [bugfix](./bugfixes.md) §5; entry below |
@@ -104,7 +104,7 @@ objective's provenance and its dynamics, not on a headline number. The DSP campa
 61–70, the same metric-dependent sign; both of its arms sit far below the 4-GPU reference, i.e. the
 anchor is second order next to backend and GPU count ([bugfixes.md 2026-09-10](./bugfixes.md)).
 
-**Existing runs.** Every verl-0.8 run before 2026-09-16 — the devbox references, the 4×H100 WebShop
+**Existing runs.** Every verl-0.8 run before 2026-09-16 — the original 4-GPU reference runs, the 4×H100 WebShop
 PPO Lucene/BM25 runs, the four single-H100 cells — trained under `round`; their
 `federated_summary.json` either lacks `ref_anchor` or says `round`. They are a different objective
 from anything launched after the flip: **do not pool or overlay them as the same arm**, and to

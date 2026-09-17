@@ -177,7 +177,7 @@ DEFAULTS = {
     "webshop_replicas": 1,
     "alfworld_train_eval": "train",         # game split: train | eval_in_distribution | eval_out_of_distribution
     "alfworld_task_types": "",               # "" => all 6 types; else comma-sep IDs (1=Pick..6=Pick2) for the eval breakdown
-    "partition_strategy": "",               # "" | catalog_split/task_disjoint/env_disjoint (env) | preference/coverage/hardness (task) | bm25_field_subset/bm25_reweight/lookalike/rank_wrapper (WebShop env variants 2-5) | scene_disjoint/obs_variant/dyn_variant/goal_variant (ALFWorld env het, docs/dev_doc/alfworld_env_heterogeneity.md)
+    "partition_strategy": "",               # "" | catalog_split/task_disjoint/env_disjoint (env) | preference/coverage/hardness (task) | bm25_field_subset/bm25_reweight/lookalike/rank_wrapper (WebShop env variants 2-5) | scene_disjoint/obs_variant/dyn_variant/goal_variant (ALFWorld env het, dev-branch docs/dev_doc/alfworld_env_heterogeneity.md)
     "env_div": 0.7,                         # env-het strength: catalog_split (WebShop) AND env_disjoint/scene_disjoint (ALFWorld)
     "keep_ratio": 0.7,                      # catalog-split distractor density
     "alfworld_fallback": "skip",            # env_disjoint single-scene specs: skip | shared | trial-only

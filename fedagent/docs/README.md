@@ -13,7 +13,6 @@ overview in [`../README.md`](../README.md), then:
 | [configuration.md](./configuration.md) | The config-file decoder and the full federated-runner key reference. |
 | [features.md](./features.md) | Each capability → its config key → its source file (a navigation map). |
 | [heterogeneity.md](./heterogeneity.md) | The two-level (task vs environment) heterogeneity suite, with the construction math for each arm (WebShop and ALFWorld). |
-| [dev_doc/](./dev_doc/README.md) | The ALFWorld environment-heterogeneity working set (2026-08): arm construction + five-layer verification, query/env decoupling, WebShop-vs-ALFWorld comparison. |
 | [reproducing.md](./reproducing.md) | The paper's 194-cell matrix (176 + the ALFWorld env-het extension) mapped to run commands; 3-seed replication; baselines; measured compute. |
 | [extending.md](./extending.md) | Extension points: a new dataset/env, heterogeneity strategy, RL algorithm, or aggregation rule. |
 | [migration.md](./migration.md) | **Migration**, the condensed fidelity record: what changed from the verl-agent-0.3.1 fork, the science-critical alignments, and the verification status. |
@@ -25,6 +24,10 @@ overview in [`../README.md`](../README.md), then:
 > walkthrough (`migration_report.md`), the agent-RL engine design doc, and the NanoRollout
 > comparison) is preserved intact on the
 > [`migrate/verl-0.8.0`](https://github.com/sunblaze-ucb/FedAgent/tree/migrate/verl-0.8.0/fedagent/docs) branch; `main` keeps the core English set only.
+> Likewise the ALFWorld environment-heterogeneity **design notes** (`dev_doc/`: arm construction,
+> five-layer verification, query/env decoupling, the WebShop-vs-ALFWorld comparison) and the
+> query×env cell-library / occupancy-divergence tooling behind them live on the
+> [`dev`](https://github.com/sunblaze-ucb/FedAgent/tree/dev/fedagent/docs/dev_doc) branch, which carries `main` plus that working set.
 
 ## Per-component references
 

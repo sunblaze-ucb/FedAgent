@@ -1505,7 +1505,7 @@ def partition_dataset(
         # Env-level heterogeneity for AlfWorld, scene granularity: room-type-stratified
         # scene top-k with a FIXED per-client game count and a task-type quota matched to
         # the global marginal (decouples env_div from data quantity, keeps tau invariant).
-        # See docs/dev_doc/alfworld_env_heterogeneity.md
+        # See dev-branch docs/dev_doc/alfworld_env_heterogeneity.md
         if data_type != 'alfworld':
             raise ValueError(
                 f"strategy 'scene_disjoint' only supports data_type='alfworld', "

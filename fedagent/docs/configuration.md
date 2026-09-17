@@ -205,7 +205,7 @@ decentralized ablations vary exactly one of these tokens.
 | `p-scene_disjoint_div-<d>_spc-<n>` | `scene_disjoint` | `env_div`, `alfworld_scenes_per_client` | env (ALFWorld), Scene Disjoint — the Catalog-Split analogue |
 | `p-obs_variant_N-<n>` / `p-dyn_variant_N-<n>` / `p-goal_variant_N-<n>` | `obs_variant` / `dyn_variant` / `goal_variant` | `variant_n` | env (ALFWorld), kernel variants: observation grammar / PDDL action pre-effects / hidden success predicate |
 
-The ALFWorld rows exist since 2026-08-23 ([`dev_doc/alfworld_env_heterogeneity.md`](./dev_doc/alfworld_env_heterogeneity.md)
+The ALFWorld rows exist since 2026-08-23 ([design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md)
 for the constructions). The older `partition_strategy: env_disjoint` (disjoint per-client game
 shards; the hand-written `examples/alfworld/paper.yaml`) remains code-supported but has no paper
 cell — `scene_disjoint` supersedes it.
@@ -240,7 +240,7 @@ filenames:
 1.5B backbone only. `env_heterogeneity` covers **both benchmarks** since 2026-08-23: the WebShop
 arms perturb the catalog + search engine, the ALFWorld arms (`scene_disjoint`, `obs_variant`,
 `dyn_variant`, `goal_variant`) perturb the scene shard, the observation grammar, the PDDL action
-kernel and the hidden success predicate ([`dev_doc/`](./dev_doc/README.md)).
+kernel and the hidden success predicate ([`dev_doc/` on the dev branch](https://github.com/sunblaze-ucb/FedAgent/tree/dev/fedagent/docs/dev_doc)).
 
 ### Uniform settings
 
@@ -325,7 +325,7 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `partition_strategy` | str | `""` | `""` (IID) \| WebShop env: `catalog_split` (+ `task_disjoint`, its full-catalog control) and the transition variants `bm25_field_subset`/`bm25_reweight`/`lookalike`/`rank_wrapper` \| ALFWorld env: `scene_disjoint` (+ the older `env_disjoint`) and the kernel variants `obs_variant`/`dyn_variant`/`goal_variant` ([dev_doc](./dev_doc/alfworld_env_heterogeneity.md)) \| task, both envs: `preference`/`coverage`/`hardness`. |
+| `partition_strategy` | str | `""` | `""` (IID) \| WebShop env: `catalog_split` (+ `task_disjoint`, its full-catalog control) and the transition variants `bm25_field_subset`/`bm25_reweight`/`lookalike`/`rank_wrapper` \| ALFWorld env: `scene_disjoint` (+ the older `env_disjoint`) and the kernel variants `obs_variant`/`dyn_variant`/`goal_variant` ([design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md)) \| task, both envs: `preference`/`coverage`/`hardness`. |
 | `env_div` | float | `0.7` | env-het strength: **catalog_split** (WebShop), **scene_disjoint** and **env_disjoint** (ALFWorld; forwarded since 2026-07-28 — before that env_disjoint silently ran the code default 0.7 whatever the config said). |
 | `keep_ratio` | float | `0.7` | catalog-split distractor density. |
 | `alfworld_fallback` | str | `skip` | **env_disjoint** single-scene specs: `skip` (drop the spec) \| `shared` (all clients get it) \| `trial-only` (trial-axis top-k). Forwarded since 2026-07-28 (previously stuck at the code default `skip`). |

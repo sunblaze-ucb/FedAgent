@@ -720,7 +720,7 @@ class AlfredTWEnv(object):
             # Env-level heterogeneity, scene granularity (Catalog-Split analog):
             # room-type-stratified scene top-k, FIXED per-client game count,
             # task-type quota matched to the global marginal.
-            # See docs/dev_doc/alfworld_env_heterogeneity.md
+            # See dev-branch docs/dev_doc/alfworld_env_heterogeneity.md
             client_games_slice = partition_dataset(
                 data=game_files,
                 strategy=self.partition_strategy,
@@ -738,7 +738,7 @@ class AlfredTWEnv(object):
             # split, mirroring WebShop env variants 2-5); the heterogeneity is the
             # per-client rewrite of grammar / pddl_domain / pddl_problem, applied at
             # episode load time by the kernel wrapper init_env() inserts.
-            # See docs/dev_doc/alfworld_env_heterogeneity.md
+            # See dev-branch docs/dev_doc/alfworld_env_heterogeneity.md
             result = partition_dataset(
                 data=game_files,
                 strategy='uniform',
@@ -968,7 +968,7 @@ class AlfredTWEnv(object):
         # innermost: the outer AlfredInfos still records the ORIGINAL game path
         # (extra.gamefile / seed==index mode unaffected) while the backend loads
         # the rewritten copy. Train split only -- eval/val stays unperturbed
-        # (science red line). See docs/dev_doc/alfworld_env_heterogeneity.md
+        # (science red line). See dev-branch docs/dev_doc/alfworld_env_heterogeneity.md
         if getattr(self, "kernel_variant", None) and self.train_eval == "train":
             wrappers = [make_kernel_wrapper(self.kernel_variant)] + wrappers
 
@@ -977,8 +977,8 @@ class AlfredTWEnv(object):
         # independent noise, but across scene-disjoint client shards it becomes a
         # lexical tau leak). Canonicalization makes the arm's tau-invariance hold
         # by construction. Train split only; val (uniform) never sees it.
-        # See docs/dev_doc/alfworld_env_heterogeneity.md (1.2) and
-        # docs/dev_doc/alfworld_query_env_decoupling.md (3.3).
+        # See dev-branch docs/dev_doc/alfworld_env_heterogeneity.md (1.2) and
+        # dev-branch docs/dev_doc/alfworld_query_env_decoupling.md (3.3).
         if self.partition_strategy == "scene_disjoint" and self.train_eval == "train":
             from agent_system.environments.alfworld_kernel_variants import (
                 make_task_normalizer_wrapper,

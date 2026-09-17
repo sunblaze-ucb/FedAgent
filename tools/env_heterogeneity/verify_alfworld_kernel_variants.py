@@ -3,7 +3,7 @@
 
 For a task-type-stratified sample of train games x every pool variant, this
 tool proves the science-critical properties the arms depend on
-(docs/dev_doc/alfworld_env_heterogeneity.md, verification layer 2):
+(dev-branch docs/dev_doc/alfworld_env_heterogeneity.md, verification layer 2):
 
   1. SOLVABLE: the rewritten kernel still admits a fast-downward plan that,
      executed step by step through a real ``PddlEnv``, ends in ``won`` -- no

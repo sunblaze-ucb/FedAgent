@@ -133,7 +133,7 @@ module under [`fedagent/hetero/`](../hetero/), the ALFWorld service to the vendo
 | `lookalike` | `variant_n` | [`hetero/webshop_env_variants.py`](../hetero/webshop_env_variants.py) |
 | `rank_wrapper` | `variant_n` | [`hetero/webshop_env_variants.py`](../hetero/webshop_env_variants.py) |
 | `scene_disjoint` (ALFWorld) | `env_div`, `alfworld_scenes_per_client`, `alfworld_holdout_file` | [`envs/alfworld/engine/…/partition_strategy.py`](../envs/alfworld/engine/agent_system/environments/partition_strategy.py) |
-| `obs_variant` / `dyn_variant` / `goal_variant` (ALFWorld) | `variant_n` | [`envs/alfworld/engine/…/alfworld_kernel_variants.py`](../envs/alfworld/engine/agent_system/environments/alfworld_kernel_variants.py) ([dev_doc](./dev_doc/alfworld_env_heterogeneity.md)) |
+| `obs_variant` / `dyn_variant` / `goal_variant` (ALFWorld) | `variant_n` | [`envs/alfworld/engine/…/alfworld_kernel_variants.py`](../envs/alfworld/engine/agent_system/environments/alfworld_kernel_variants.py) ([design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md)) |
 
 `partition_strategy: ""` (or `uniform` for ALFWorld) is the homogeneous / i.i.d.
 baseline. `min_goals_per_client` sets the per-client task count; `base_seed` makes the

@@ -280,7 +280,6 @@ environment-level heterogeneity studies, and the decentralized ablations.
 | [`fedagent/docs/migration.md`](fedagent/docs/migration.md) | What changed from the verl-agent-0.3.1 fork to stock verl 0.8, and the equivalence checks. |
 | [`fedagent/docs/acceleration.md`](fedagent/docs/acceleration.md) | How to accelerate & why: the final recipe, why each lever works, the equivalence bar. |
 | [`fedagent/docs/revision.md`](fedagent/docs/revision.md) · [`bugfixes.md`](fedagent/docs/bugfixes.md) | The ledger of deliberate default/protocol changes (what older runs inherit, e.g. the 2026-09-16 `ref_anchor` flip), and the dated defect log. |
-| [`fedagent/docs/dev_doc/`](fedagent/docs/dev_doc/README.md) | The ALFWorld environment-heterogeneity working set: the four arms' construction and five-layer verification, query/env decoupling, WebShop-vs-ALFWorld comparison. |
 
 ---
 

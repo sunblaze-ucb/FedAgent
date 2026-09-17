@@ -23,10 +23,10 @@ scored on the shared UNPERTURBED val service.
 | webshop | `bm25_reweighting/` | matching | `bm25_reweight` | variant_n = size of the (k1,b)-corner pool (4 or 8) | variant_n=4; variant_n=8 | variant_n=4 | docs/heterogeneity.md |
 | webshop | `lookalike_injection/` | content x reward | `lookalike` | variant_n = size of the attack pool (2: price,color; 4: +size,price_color) | variant_n=2; variant_n=4 | variant_n=4 | docs/heterogeneity.md |
 | webshop | `rank_wrapper/` | rendering | `rank_wrapper` | variant_n = size of the wrapper pool (4; invert arm unwinnable at top-K 200 -- disclosed) | variant_n=4 | variant_n=4 | docs/heterogeneity.md |
-| alfworld | `scene_disjoint/` | content | `scene_disjoint` | env_div 0.0(byte-identical shards)->1.0(disjoint FloorPlans); spc = scenes/client (stratified /4 room types) | env_div=0.0,alfworld_scenes_per_client=8; env_div=0.3,alfworld_scenes_per_client=8; env_div=0.7,alfworld_scenes_per_client=8; env_div=1.0,alfworld_scenes_per_client=8 | env_div=1.0,alfworld_scenes_per_client=8 | docs/dev_doc/alfworld_env_heterogeneity.md |
-| alfworld | `obs_variant/` | rendering/encoding | `obs_variant` | variant_n = grammar-rewrite pool (2: control+terse_goto; 4: +blind_intro,paraphrase) | variant_n=2; variant_n=4 | variant_n=4 | docs/dev_doc/alfworld_env_heterogeneity.md |
-| alfworld | `dyn_variant/` | dynamics | `dyn_variant` | variant_n = PDDL-rewrite pool (2: control+examine_gate; 4: +autoclose,gate_autoclose) | variant_n=2; variant_n=4 | variant_n=4 | docs/dev_doc/alfworld_env_heterogeneity.md |
-| alfworld | `goal_variant/` | hidden reward | `goal_variant` | variant_n = goal-conjunct pool (2: control+examined; 4: +closed,examined_closed) | variant_n=2; variant_n=4 | variant_n=4 | docs/dev_doc/alfworld_env_heterogeneity.md |
+| alfworld | `scene_disjoint/` | content | `scene_disjoint` | env_div 0.0(byte-identical shards)->1.0(disjoint FloorPlans); spc = scenes/client (stratified /4 room types) | env_div=0.0,alfworld_scenes_per_client=8; env_div=0.3,alfworld_scenes_per_client=8; env_div=0.7,alfworld_scenes_per_client=8; env_div=1.0,alfworld_scenes_per_client=8 | env_div=1.0,alfworld_scenes_per_client=8 | docs/heterogeneity.md |
+| alfworld | `obs_variant/` | rendering/encoding | `obs_variant` | variant_n = grammar-rewrite pool (2: control+terse_goto; 4: +blind_intro,paraphrase) | variant_n=2; variant_n=4 | variant_n=4 | docs/heterogeneity.md |
+| alfworld | `dyn_variant/` | dynamics | `dyn_variant` | variant_n = PDDL-rewrite pool (2: control+examine_gate; 4: +autoclose,gate_autoclose) | variant_n=2; variant_n=4 | variant_n=4 | docs/heterogeneity.md |
+| alfworld | `goal_variant/` | hidden reward | `goal_variant` | variant_n = goal-conjunct pool (2: control+examined; 4: +closed,examined_closed) | variant_n=2; variant_n=4 | variant_n=4 | docs/heterogeneity.md |
 
 ## File index
 

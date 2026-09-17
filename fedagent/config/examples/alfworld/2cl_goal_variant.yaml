@@ -3,7 +3,7 @@
 # every client keeps its uniform game slice and the SAME instruction text, but client
 # k's win condition is rewritten per variant_for_client(strategy, k) -- e.g. under
 # v_examined the goal receptacle must additionally have been examined. Validation stays
-# on the shared unperturbed val service. See docs/dev_doc/alfworld_env_heterogeneity.md.
+# on the shared unperturbed val service. See dev-branch docs/dev_doc/alfworld_env_heterogeneity.md.
 # obs_variant / dyn_variant smokes: copy this file and switch partition_strategy.
 
 env_kind: alfworld

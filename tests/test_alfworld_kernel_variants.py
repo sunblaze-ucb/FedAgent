@@ -10,7 +10,7 @@ across clients, and a task-type mix matched to the global marginal.
 Planner-level solvability of the rewritten kernels (fast-downward replan +
 plan execution + won assert) needs alfworld/textworld and lives in
 tools/env_heterogeneity/verify_alfworld_kernel_variants.py (run it in the
-verl-agent-alfworld env). See docs/dev_doc/alfworld_env_heterogeneity.md.
+verl-agent-alfworld env). See dev-branch docs/dev_doc/alfworld_env_heterogeneity.md.
 
 Real game data is used when $ALFWORLD_DATA (or ~/.cache/alfworld) is present;
 the rewrite tests otherwise fall back to a synthetic fixture built from the

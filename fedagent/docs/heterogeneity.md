@@ -49,7 +49,7 @@ for the config-to-figure mapping read [`./reproducing.md`](./reproducing.md).
 | Level | Channel perturbed | Observable to policy? | WebShop arms | ALFWorld arms |
 |---|---|---|---|---|
 | **Task** | goal distribution `D_tau` over a **shared, unperturbed** environment | **yes** (goal is in the prompt) | `preference`, `coverage`, `hardness`, plus the `task_disjoint` ablation | `preference`, `coverage`, `hardness` |
-| **Environment** | **transition kernel `P` / catalog** (the retrieval pipeline) | **no** (only via successor states) | `catalog_split` + 4 retrieval-pipeline variants (`bm25_field_subset`, `bm25_reweight`, `lookalike`, `rank_wrapper`) | `scene_disjoint` + 3 kernel variants (`obs_variant`, `dyn_variant`, `goal_variant`) — [dev doc](./dev_doc/alfworld_env_heterogeneity.md) |
+| **Environment** | **transition kernel `P` / catalog** (the retrieval pipeline) | **no** (only via successor states) | `catalog_split` + 4 retrieval-pipeline variants (`bm25_field_subset`, `bm25_reweight`, `lookalike`, `rank_wrapper`) | `scene_disjoint` + 3 kernel variants (`obs_variant`, `dyn_variant`, `goal_variant`) — [design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md) |
 
 Throughout the **task-level** sweep the transition kernel is held fixed (every
 client searches the **full 1000-product catalog**); throughout the
@@ -453,10 +453,10 @@ values are the endpoints actually present under
 | `lookalike` | environment | WebShop | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/webshop/lookalike_injection/...N-*` |
 | `rank_wrapper` | environment | WebShop | `variant_n` -> `VARIANT_N` | `4` | `env_heterogeneity/{grpo,ppo}/webshop/rank_wrapper/...N-*` |
 | `env_disjoint` | environment | ALFWorld | `env_div`, `alfworld_fallback` -> `ENV_DIV`, `ALFWORLD_FALLBACK` | — (no paper arm) | none — code-supported (scene, trial) instance partition, unreported; superseded by `scene_disjoint` |
-| `scene_disjoint` | environment | ALFWorld | `env_div`, `alfworld_scenes_per_client`, `alfworld_holdout_file` -> `ENV_DIV`, `ALFWORLD_SCENES_PER_CLIENT`, `ALFWORLD_HOLDOUT_FILE` | `env_div in {0.0, 0.3, 0.7, 1.0}`, `spc 8` | `env_heterogeneity/{grpo,ppo}/alfworld/scene_disjoint/...div-*_spc-8`; [dev doc](./dev_doc/alfworld_env_heterogeneity.md); smoke `examples/alfworld/2cl_scene_disjoint.yaml` |
-| `obs_variant` | environment | ALFWorld | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/alfworld/obs_variant/...N-*` — grammar (observation-kernel) rewrites, [dev doc](./dev_doc/alfworld_env_heterogeneity.md) |
-| `dyn_variant` | environment | ALFWorld | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/alfworld/dyn_variant/...N-*` — pddl_domain (action pre/effect) rewrites, [dev doc](./dev_doc/alfworld_env_heterogeneity.md) |
-| `goal_variant` | environment | ALFWorld | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/alfworld/goal_variant/...N-*` — hidden success-predicate rewrites (Lookalike analog), [dev doc](./dev_doc/alfworld_env_heterogeneity.md); smoke `examples/alfworld/2cl_goal_variant.yaml` |
+| `scene_disjoint` | environment | ALFWorld | `env_div`, `alfworld_scenes_per_client`, `alfworld_holdout_file` -> `ENV_DIV`, `ALFWORLD_SCENES_PER_CLIENT`, `ALFWORLD_HOLDOUT_FILE` | `env_div in {0.0, 0.3, 0.7, 1.0}`, `spc 8` | `env_heterogeneity/{grpo,ppo}/alfworld/scene_disjoint/...div-*_spc-8`; [design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md); smoke `examples/alfworld/2cl_scene_disjoint.yaml` |
+| `obs_variant` | environment | ALFWorld | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/alfworld/obs_variant/...N-*` — grammar (observation-kernel) rewrites, [design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md) |
+| `dyn_variant` | environment | ALFWorld | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/alfworld/dyn_variant/...N-*` — pddl_domain (action pre/effect) rewrites, [design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md) |
+| `goal_variant` | environment | ALFWorld | `variant_n` -> `VARIANT_N` | `{2, 4}` | `env_heterogeneity/{grpo,ppo}/alfworld/goal_variant/...N-*` — hidden success-predicate rewrites (Lookalike analog), [design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md); smoke `examples/alfworld/2cl_goal_variant.yaml` |
 
 Notes:
 
@@ -489,7 +489,7 @@ Notes:
   (`scene_disjoint` + `obs_variant`/`dyn_variant`/`goal_variant`, the ALFWorld
   analogs of Catalog Split and the WebShop kernel variants): construction,
   measured divergence and verification protocol live in
-  [dev_doc/alfworld_env_heterogeneity.md](./dev_doc/alfworld_env_heterogeneity.md),
+  [design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md),
   and since **2026-08-23** the suite has its full paper config family at
   `env_heterogeneity/{grpo,ppo}/alfworld/` (scene_disjoint 4-point `env_div`
   sweep + the three kernel variants at `N in {2,4}`, each with a PPO

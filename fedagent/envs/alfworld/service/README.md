@@ -156,7 +156,7 @@ environment-level suite (`scene_disjoint` + the three kernel-variant arms), the 
 analogues of WebShop's catalog split and transition variants. WebShop's own catalog-split
 and BM25 / lookalike / rank variants do **not** apply here (see
 [`../../../hetero/`](../../../hetero/) for the WebShop-side constructions and
-[`../../../docs/dev_doc/alfworld_env_heterogeneity.md`](../../../docs/dev_doc/alfworld_env_heterogeneity.md)
+[design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md)
 for these).
 
 The **six ALFWorld task types** (used by `ALFWORLD_TASK_TYPES` and by the

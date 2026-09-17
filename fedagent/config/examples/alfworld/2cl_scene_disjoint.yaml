@@ -4,7 +4,7 @@
 # env_div moves ONLY catalog divergence (never data quantity or the tau marginal).
 # env_div=0.0 is the byte-identical homogeneous floor; 1.0 the max-divergence arm.
 # Validation stays on the shared unperturbed val service.
-# See docs/dev_doc/alfworld_env_heterogeneity.md.
+# See dev-branch docs/dev_doc/alfworld_env_heterogeneity.md.
 
 env_kind: alfworld
 env_spec: config/envs/alfworld.yaml

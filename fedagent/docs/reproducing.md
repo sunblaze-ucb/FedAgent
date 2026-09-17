@@ -319,7 +319,7 @@ actually consumes is the short strategy id (`bm25_reweight`, `bm25_field_subset`
 Every ALFWorld variant pool is verified planner-level solvable
 (`tools/env_heterogeneity/verify_alfworld_kernel_variants.py`); construction, hiddenness
 grading and the verification layers are in
-[`dev_doc/alfworld_env_heterogeneity.md`](./dev_doc/alfworld_env_heterogeneity.md).
+[design notes, dev branch](https://github.com/sunblaze-ucb/FedAgent/blob/dev/fedagent/docs/dev_doc/alfworld_env_heterogeneity.md).
 
 The WebShop arms set `search_return_n: 200` (the paper's BM25 top-K) because perturbing
 the catalog/search would otherwise drop targets out of reach; the uniform, task-

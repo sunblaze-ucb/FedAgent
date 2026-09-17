@@ -25,7 +25,7 @@ All rewrites are exact-substring anchor replacements with occurrence-count
 asserts (fail loud). This is safe because the embedded ``pddl_domain`` is
 byte-identical across all 3553 train games and ``grammar`` is byte-identical
 modulo the per-game task line (measured 2026-08-22, see
-docs/dev_doc/alfworld_env_heterogeneity.md). The task rhs
+dev-branch docs/dev_doc/alfworld_env_heterogeneity.md). The task rhs
 (``"Your task is to: ..."``) is asserted untouched by every grammar rewrite.
 
 Per-client assignment copies the WebShop env-variant math verbatim
@@ -366,7 +366,7 @@ def make_kernel_wrapper(variant):
 # ---- task-text canonicalization (scene_disjoint's lexical-tau fix) --------- #
 # ALFWorld's generator freezes ONE of TWO wording templates per goal type into
 # each game's grammar (random.choice at generation time, scene-independent
-# noise): 438/550 train specs carry both wordings (dev_doc/
+# noise): 438/550 train specs carry both wordings (dev-branch docs/dev_doc/
 # alfworld_query_env_decoupling.md section 3). Under scene_disjoint different
 # clients hold different scenes, so the same spec can read "put two book in
 # desk." on one client and "find two book and put them in desk." on another --

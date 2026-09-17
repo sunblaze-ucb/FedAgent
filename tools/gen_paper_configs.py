@@ -22,7 +22,7 @@ restructured + extended 2026-08-23 to cover BOTH envs -- see ENV_HET below):
       (div 0/0.3/0.7/1.0; ppo 1.0) + its task_disjoint ablation (div sweep, grpo-only),
       field_subset_index (N4,N8; ppo N4), bm25_reweighting (N4,N8; ppo N4),
       lookalike_injection (N2,N4; ppo N4), rank_wrapper (N4; ppo N4). ALFWorld (symbolic
-      kernel; docs/dev_doc/alfworld_env_heterogeneity.md): scene_disjoint (div
+      kernel; dev-branch docs/dev_doc/alfworld_env_heterogeneity.md): scene_disjoint (div
       0/0.3/0.7/1.0, spc 8; ppo 1.0), obs_variant / dyn_variant / goal_variant
       (N2,N4; ppo N4). A generated env_heterogeneity/README.md maps every cell.
   task_heterogeneity/{grpo,ppo}/{webshop,alfworld}/                                         24
@@ -162,7 +162,7 @@ ENV_HET = [
     # Variant 5 (rendering): result-page wrappers over the same BM25 base.
     ("webshop", "grpo", "rank_wrapper",       "rank_wrapper",      dict(variant_n=4), "rank_wrapper_N-4"),
     ("webshop", "ppo",  "rank_wrapper",       "rank_wrapper",      dict(variant_n=4), "rank_wrapper_N-4"),
-    # ---- ALFWorld: symbolic-kernel perturbations (docs/dev_doc/alfworld_env_heterogeneity.md) ----
+    # ---- ALFWorld: symbolic-kernel perturbations (dev-branch docs/dev_doc/alfworld_env_heterogeneity.md) ----
     # scene_disjoint (content): room-type-stratified FloorPlan top-k, FIXED 100 games/client,
     # task-type quota matched to the global marginal; env_div 0.0 = byte-identical shards.
     ("alfworld", "grpo", "scene_disjoint",    "scene_disjoint",    dict(env_div=0.0, alfworld_scenes_per_client=8), "scene_disjoint_div-0.0_spc-8"),
@@ -193,10 +193,10 @@ ENV_HET_ARM_INFO = {
     "bm25_reweighting":   ("matching",          "variant_n = size of the (k1,b)-corner pool (4 or 8)",                               "docs/heterogeneity.md"),
     "lookalike_injection":("content x reward",  "variant_n = size of the attack pool (2: price,color; 4: +size,price_color)",        "docs/heterogeneity.md"),
     "rank_wrapper":       ("rendering",         "variant_n = size of the wrapper pool (4; invert arm unwinnable at top-K 200 -- disclosed)", "docs/heterogeneity.md"),
-    "scene_disjoint":     ("content",           "env_div 0.0(byte-identical shards)->1.0(disjoint FloorPlans); spc = scenes/client (stratified /4 room types)", "docs/dev_doc/alfworld_env_heterogeneity.md"),
-    "obs_variant":        ("rendering/encoding","variant_n = grammar-rewrite pool (2: control+terse_goto; 4: +blind_intro,paraphrase)", "docs/dev_doc/alfworld_env_heterogeneity.md"),
-    "dyn_variant":        ("dynamics",          "variant_n = PDDL-rewrite pool (2: control+examine_gate; 4: +autoclose,gate_autoclose)", "docs/dev_doc/alfworld_env_heterogeneity.md"),
-    "goal_variant":       ("hidden reward",     "variant_n = goal-conjunct pool (2: control+examined; 4: +closed,examined_closed)",  "docs/dev_doc/alfworld_env_heterogeneity.md"),
+    "scene_disjoint":     ("content",           "env_div 0.0(byte-identical shards)->1.0(disjoint FloorPlans); spc = scenes/client (stratified /4 room types)", "docs/heterogeneity.md"),
+    "obs_variant":        ("rendering/encoding","variant_n = grammar-rewrite pool (2: control+terse_goto; 4: +blind_intro,paraphrase)", "docs/heterogeneity.md"),
+    "dyn_variant":        ("dynamics",          "variant_n = PDDL-rewrite pool (2: control+examine_gate; 4: +autoclose,gate_autoclose)", "docs/heterogeneity.md"),
+    "goal_variant":       ("hidden reward",     "variant_n = goal-conjunct pool (2: control+examined; 4: +closed,examined_closed)",  "docs/heterogeneity.md"),
 }
 
 # task-het arms (both envs). (run_fed_partition, extra, p_suffix). hardness needs a trajectories file.
