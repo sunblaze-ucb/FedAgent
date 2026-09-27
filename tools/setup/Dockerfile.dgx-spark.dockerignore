@@ -1,0 +1,8 @@
+# Used by BuildKit for tools/setup/Dockerfile.dgx-spark only (the context is the repo root).
+# Stale bytecode from a host checkout records host paths in co_filename; inside the image
+# inspect.getsource() then raises OSError (tests/test_merge_fp32.py, test_ppo_critic_loss.py).
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.git
+outputs

@@ -119,6 +119,12 @@ DEFAULTS = {
     # sitecustomize in every gae client process). "global_token_paper_coef" = micro/DP-invariant
     # global token-mean (still coefficient 1.0). "upstream_standard" = stock verl (no patch).
     "critic_loss_mode": "legacy_exact",
+    # Unified-memory GPUs (GB10 / DGX Spark; fedagent/unified_memory.py): keep the KL-reference
+    # model on the GPU (verl 0.8 forces it to the host regardless of ref.fsdp_config.param_offload,
+    # which there only adds host copies) and empty the trainer's allocator cache BEFORE vLLM
+    # re-allocates its weights in update_weights. "auto" (DEFAULT) = on iff the device is
+    # integrated (discrete GPUs: stock verl), "on" = always, "off" = stock.
+    "unified_memory": "auto",
     "base_seed": 42,
     "n_gpus_per_node": 2,
     "total_training_steps": 1,              # cap per client-round (keep the smoke fast)
@@ -1461,6 +1467,20 @@ def history_length_env(cfg) -> dict:
     return {"FEDAGENT_HISTORY_LENGTH": "0"}
 
 
+def unified_memory_env(cfg) -> dict:
+    """FEDAGENT_UNIFIED_MEMORY (auto|on|off) for sitecustomize -> fedagent/unified_memory.py.
+    YAML 1.1 (OmegaConf.load) reads a bare ``on``/``off`` as a boolean, so map those back: through
+    ``str(value or "auto")`` a config's ``unified_memory: off`` would come out as ``auto`` -- ON on
+    an integrated GPU, the opposite of what it asks for."""
+    mode = cfg.get("unified_memory", "auto")
+    if isinstance(mode, bool):
+        mode = "on" if mode else "off"
+    mode = str("auto" if mode is None else mode).strip().lower() or "auto"
+    if mode not in ("auto", "on", "off"):
+        raise ValueError(f"unified_memory must be auto|on|off, got {mode!r}")
+    return {"FEDAGENT_UNIFIED_MEMORY": mode}
+
+
 def _build_eval(cfg, model_path: str, round_num: int, env_base: dict, val_url: str,
                 gpu_ids: Optional[str] = None, mem_util: Optional[float] = None,
                 client_id: Optional[int] = None):
@@ -2326,6 +2346,7 @@ def run(cfg) -> dict:
     env_base["PYTHONPATH"] = f"{REPO_ROOT}:{env_base.get('PYTHONPATH', '')}".rstrip(":")
     env_base["VERL_CFG"] = verl_cfg_dir()
     env_base.update(history_length_env(cfg))   # windowed=2 / concat=0 -> faithful per-mode prompt
+    env_base.update(unified_memory_env(cfg))     # sitecustomize -> fedagent/unified_memory.py
 
     banner(f"FedAgent federated loop  |  {cfg.total_clients} clients, "
            f"{cfg.clients_per_round}/round, {cfg.total_rounds} rounds, "
