@@ -24,7 +24,9 @@
 
 ## Updates
 - **[Sep 2026]** **[Is Decentralized LLM Agent RL Robust to
-  Heterogeneity? An Asymmetric Tale](https://fed-agent.github.io/)** is accepted to **NeurIPS 2026**.
+  Heterogeneity? An Asymmetric Tale](https://fed-agent.github.io/)** is accepted to **NeurIPS 2026**, by [Canyu Chen](https://canyuchen.com/)\*, [Kangyu Zhu](https://scholar.google.com/citations?user=55J-zgwAAAAJ&hl=en)\*, [Zhaorun Chen](https://billchan226.github.io/),
+  [Zhanhui Zhou](https://scholar.google.com/citations?user=SbACfYQAAAAJ), [Shizhe Diao](https://shizhediao.github.io/), [Yiping Lu](https://2prime.github.io/), [Tian Li](https://litian96.github.io/), [Manling Li](https://limanling.github.io/)+, and [Dawn Song](https://dawnsong.io/)+
+  (*Equal contribution, +Equal Advising, Homepage: [https://fed-agent.github.io](https://fed-agent.github.io/), [PDF](https://fed-agent.github.io/pdf/FedAgent.pdf)).
 - **[Sep 2026]** **Single-H100 recipe.** Every accelerated cell has a one-GPU twin under
   [`fedagent/config/paper_accelerated_1gpu/`](fedagent/config/paper_accelerated_1gpu/)
   (`gen_paper_configs.py --accel --n-gpus 1`): same batch geometry, seeds and eval cadence, only the
