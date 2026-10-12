@@ -62,11 +62,15 @@ class GymTextAgentLoop(AgentLoopBase):
         obs-token delta (``new_ids[len(cur_ids):]``) from ~turn 4 on. cur_ids is instead bounded
         by the ``_max_ctx`` overflow guard so generation never exceeds the context window, and
         the returned prompt/response are capped to prompt_length/response_length on return."""
+        # transformers>=5 returns a BatchEncoding by default; pin the 4.x list[int] contract
+        # (same as verl.utils.chat_template.apply_chat_template). Set AFTER the user kwargs so a
+        # return_dict in data.apply_chat_template_kwargs can neither raise a duplicate-keyword
+        # TypeError nor turn prompt_ids back into a BatchEncoding.
+        kwargs = {**self.apply_chat_template_kwargs, "return_dict": False}
         return await self.loop.run_in_executor(
             None,
             lambda: self.tokenizer.apply_chat_template(
-                messages, add_generation_prompt=True, tokenize=True,
-                **self.apply_chat_template_kwargs,
+                messages, add_generation_prompt=True, tokenize=True, **kwargs,
             ),
         )
 

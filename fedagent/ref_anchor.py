@@ -39,12 +39,24 @@ THE SEAM. ``HFModelConfig.path`` is frozen (BaseConfig.__setattr__ raises unless
 ``_mutable_fields``); ``local_path`` is NOT frozen (verl/workers/config/model.py:81) and is what
 ``_build_module`` actually loads from (transformer_impl.py:252) -- which is exactly why
 persistent_patch._reset_engine swaps weights by assigning ``eng.model_config.local_path`` and
-calling ``eng.initialize()``. We reuse that production-proven path: after verl finishes
-``init_model``, re-point the ref engine at the base and rebuild it once. Cost: one extra HF load
-per trainer process (~3 s at 1.5B); on a FRESH run round 1 launches with model.path == base, so
-the hook detects "already at base" and rebuilds nothing. The rebuild matters on RESUMED chunks
-(e.g. pwpf2 resumed at round 54: model.path is round_54/aggregated/hf, and without this hook the
-ref would freeze THERE -- the wrong anchor a third way).
+calling ``eng.initialize()``. ``init_model`` builds the ref FIRST, from its own deepcopy of the
+model config, so we set that copy's ``local_path`` to the base just before verl constructs the
+ref's TrainingWorker (``_ref_pinning_factory``): the ref is built once, at the base, and the actor
+config is untouched. On a FRESH run round 1 launches with model.path == base, so nothing changes.
+The pin matters on every later launch (round >= 2, and RESUMED chunks, e.g. pwpf2 resumed at round
+54: model.path is round_54/aggregated/hf, and without this hook the ref would freeze THERE -- the
+wrong anchor a third way).
+
+Pin-before-build replaced build-then-rebuild (2026-09-24): re-pointing the ALREADY-built ref and
+calling ``initialize()`` again stranded the first copy -- on ws=1/NO_SHARD FSDP1's flat params
+outlive the dropped module (the leak persistent_patch._hard_release_fsdp_storages exists for). One
+GB10, Qwen2.5-1.5B, round 2: ``memory_allocated`` 11777 MiB before the drop, 11777 MiB after
+drop + gc + empty_cache, 17666 MiB after the rebuild -- +5.75 GiB (one fp32 ref) held for the whole
+client process. The stranded copy is GPU allocator memory, so this is not unified-memory specific;
+measured at ws=1 only (multi-GPU / FULL_SHARD untested). ``_repoint_ref_engine`` survives only as
+the fallback for a verl whose init_model no longer builds the ref through ``TrainingWorker`` first;
+it logs that it ran, and it still strands the first copy. tests/test_ref_anchor.py runs verl's real
+init_model to catch that before a run does.
 
 The user-facing config is ``ref_model_path`` + ``ref_anchor``. run_fed resolves those roles and
 bridges the fixed path through ``FEDAGENT_REF_MODEL_PATH`` because upstream verl 0.8 has no
@@ -88,6 +100,19 @@ def _repoint_ref_engine(eng, base_local: str) -> None:
     eng.initialize()                                # _build_model_optimizer -> new module @ base
 
 
+def _ref_pinning_factory(orig_training_worker, base_local: str, pinned: dict):
+    """A stand-in for ``engine_workers.TrainingWorker`` during ``init_model``: the first
+    forward_only worker it constructs (the ref -- verl builds it before the actor) gets its
+    ``model_config.local_path`` set to ``base_local`` first. ``pinned["was"]`` records the path
+    verl had chosen, so the caller can tell "pinned" from "never saw the ref"."""
+    def make(config, *args, **kwargs):
+        if "was" not in pinned and getattr(getattr(config, "engine_config", None), "forward_only", False):
+            pinned["was"] = config.model_config.local_path
+            config.model_config.local_path = base_local   # the ref's own deepcopy; actor untouched
+        return orig_training_worker(config, *args, **kwargs)
+    return make
+
+
 def _apply_ref_anchor_patch() -> bool:
     """Wrap ActorRolloutRefWorker.init_model so the ref ends up anchored on the base model."""
     global _PATCHED
@@ -101,6 +126,7 @@ def _apply_ref_anchor_patch() -> bool:
 
     from verl.single_controller.base.decorator import MAGIC_ATTR
     from verl.utils.fs import copy_to_local
+    from verl.workers import engine_workers
     from verl.workers.engine_workers import ActorRolloutRefWorker
 
     orig_init_model = ActorRolloutRefWorker.init_model
@@ -114,18 +140,36 @@ def _apply_ref_anchor_patch() -> bool:
     # the attrs -- and the assert makes this load-bearing property fail CLOSED, not silently.
     @functools.wraps(orig_init_model)
     def init_model(self):
-        orig_init_model(self)
+        base_local = copy_to_local(base, use_shm=bool(self.config.model.get("use_shm", False)))
+        pinned = {}
+        # Process-global while init_model runs: assumes nothing else in this process constructs a
+        # TrainingWorker meanwhile. verl's init_workers makes init_model one blocking call per
+        # worker group; concurrent initialization inside one process is untested.
+        orig_training_worker = engine_workers.TrainingWorker
+        engine_workers.TrainingWorker = _ref_pinning_factory(orig_training_worker, base_local, pinned)
+        try:
+            orig_init_model(self)
+        finally:
+            engine_workers.TrainingWorker = orig_training_worker
         ref = getattr(self, "ref", None)
         if ref is None:      # no ref built (use_kl_loss=false / role without "ref") -> nothing to anchor
             return
         eng = ref.engine
-        was = getattr(eng.model_config, "local_path", None)
-        base_local = copy_to_local(base, use_shm=getattr(eng.model_config, "use_shm", False))
+        was = pinned.get("was", getattr(eng.model_config, "local_path", None))
         if was == base_local:
             # Fresh run: round 1 launches with model.path == base. Nothing to do -- but say so,
             # because "no line in the log" must never be ambiguous with "not armed".
             print(f"[model-role] ref already at fixed path ({base_local}); no rebuild", flush=True)
             return
+        if "was" in pinned:
+            assert eng.model_config.local_path == base_local, (
+                f"[ref-anchor] pin did not reach the ref engine: local_path is "
+                f"{eng.model_config.local_path!r}, expected {base_local!r}")
+            print(f"[model-role] KL reference FIXED independently: {was} -> {base_local} "
+                  f"(pinned before build)", flush=True)
+            return
+        print("[model-role] ref was not built through TrainingWorker; falling back to rebuild "
+              "(strands one ref copy on ws=1, see module docstring)", flush=True)
         _repoint_ref_engine(eng, base_local)
         # Assert the swap took. A silent no-op here is the exact failure this module exists to
         # prevent, and in the metrics it would look identical to "patch not installed".
