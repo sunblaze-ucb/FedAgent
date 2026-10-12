@@ -172,3 +172,20 @@ if os.environ.get("FEDAGENT_PORT_BAND") and importlib.util.find_spec("verl") is 
             "verl is present, but the port-band patch could not be armed -- refusing to fall "
             "back to the ephemeral-range port lottery."
         )
+
+# Unified-memory fixes (fedagent/unified_memory.py, 2026-09-24): on GB10/DGX Spark the trainer, vLLM
+# and the host share one LPDDR pool. (1) verl 0.8 forces the forward_only ref onto the host whatever
+# ref.fsdp_config.param_offload says -- that saves nothing there and holds ~16-22 GB of host copies;
+# (2) update_weights empties the trainer's allocator cache only AFTER vLLM has re-allocated its
+# weights. run_fed exports FEDAGENT_UNIFIED_MEMORY (auto|on|off, default auto = on iff the device is
+# integrated; discrete GPUs stay stock). Memory placement/timing only -- not fail-closed: if it cannot
+# arm here, or cannot apply when verl is imported, the run proceeds with stock verl and says so.
+if os.environ.get("FEDAGENT_UNIFIED_MEMORY", "off") != "off" and importlib.util.find_spec("verl") is not None:
+    try:
+        from fedagent.unified_memory import install_deferred_unified_memory_patch
+
+        install_deferred_unified_memory_patch()
+    except Exception:
+        traceback.print_exc()
+        print("WARNING sitecustomize: unified-memory patch not armed; running stock verl "
+              "memory placement", file=sys.stderr, flush=True)

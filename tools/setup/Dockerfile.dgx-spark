@@ -1,0 +1,70 @@
+# FedAgent trainer image for NVIDIA DGX Spark (GB10: Blackwell SM121, aarch64, CUDA 13).
+#
+# Build from the FedAgent repo root (about 10-15 min; most of it is the flash-attn build):
+#   docker build -f tools/setup/Dockerfile.dgx-spark -t fedagent:dgx-spark .
+# Run (unified memory: see fedagent/docs/dgx_spark.md for gpu_memory_utilization):
+#   docker run --rm -it --gpus all --ipc=host --network host --shm-size 32g \
+#     --ulimit memlock=-1 --ulimit stack=67108864 \
+#     -v ~/.cache/huggingface:/root/.cache/huggingface -v $PWD/outputs:/outputs \
+#     fedagent:dgx-spark python -m fedagent.fed.run_fed \
+#       --config fedagent/config/examples/tinyguess_2cl_2rd.yaml --n-gpus 1 --output-dir /outputs/smoke
+#
+# Why this base: no vLLM inside verl 0.8's `<=0.12` range runs on GB10, but verl 0.8's
+# vLLM glue works unchanged against vLLM 0.20 (the GB10-proven release). So: keep the
+# image's torch 2.11+cu130 / vLLM 0.20 / transformers 5.x, and install verl 0.8.0
+# --no-deps on top, under a constraints file that stops pip from replacing any of them.
+FROM vllm/vllm-openai:v0.20.0
+
+ARG VERL_REF=v0.8.0
+ARG FLASH_ATTN_REF=v2.8.3
+ARG MAX_JOBS=10
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ninja-build \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sf /usr/bin/python3 /usr/local/bin/python
+
+# Freeze the GB10-working stack; every later pip call is constrained by it.
+RUN pip freeze | grep -iE '^(torch|torchvision|torchaudio|numpy|vllm|transformers|triton|flashinfer[a-z_-]*|nvidia-[a-z0-9_-]+|xformers)==' \
+      > /opt/constraints_base.txt \
+ && pip install --no-cache-dir -c /opt/constraints_base.txt \
+      accelerate==1.13.0 codetiming datasets==5.0.1 dill hydra-core==1.3.7 pandas peft==0.21.0 \
+      'pyarrow>=19.0.0' pybind11 pylatexenc 'ray[default]==2.58.0' torchdata \
+      tensordict==0.10.0 'packaging>=20.0' tensorboard omegaconf httpx fastapi uvicorn \
+      pytest pytest-asyncio
+
+# flash-attn: verl 0.8 imports flash_attn.bert_padding unconditionally. 2.8.3 accepts
+# FLASH_ATTN_CUDA_ARCHS=120 (SM121 runs sm_120 cubins). Clone recursively: the release
+# tarball lacks the csrc/cutlass submodule.
+RUN git clone --depth 1 --branch ${FLASH_ATTN_REF} --recurse-submodules --shallow-submodules \
+      https://github.com/Dao-AILab/flash-attention.git /opt/src/flash-attention \
+ && cd /opt/src/flash-attention \
+ && FLASH_ATTN_CUDA_ARCHS=120 FLASH_ATTENTION_FORCE_BUILD=TRUE TORCH_CUDA_ARCH_LIST=12.0 \
+    MAX_JOBS=${MAX_JOBS} NVCC_THREADS=2 \
+    pip install --no-cache-dir --no-build-isolation --no-deps -c /opt/constraints_base.txt . \
+ && cd / && rm -rf /opt/src/flash-attention \
+ && python -c "from flash_attn.bert_padding import unpad_input; import flash_attn; print('flash_attn', flash_attn.__version__)"
+
+# verl 0.8.0 (FedAgent's base, == 7aed6b2) + FedAgent's 2-line weight-transfer patch.
+COPY tools/setup/patches/verl_weight_transfer_jobid.patch /opt/patches/
+RUN git clone --depth 1 --branch ${VERL_REF} https://github.com/volcengine/verl.git /opt/verl \
+ && cd /opt/verl && git apply /opt/patches/verl_weight_transfer_jobid.patch \
+ && pip install --no-cache-dir --no-deps -e /opt/verl
+
+COPY . /workspace/FedAgent
+WORKDIR /workspace/FedAgent
+
+# VLLM_NO_USAGE_STATS: vLLM's usage thread calls cpuinfo, which raises JSONDecodeError on aarch64.
+# DeepGEMM has no SM121 kernels; skip it and its warmup.
+ENV PYTHONPATH=/workspace/FedAgent \
+    CUDA_HOME=/usr/local/cuda \
+    VLLM_USE_V1=1 \
+    VLLM_USE_DEEP_GEMM=0 \
+    VLLM_SKIP_DEEP_GEMM_WARMUP=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1 \
+    VERL_LOGGING_LEVEL=WARN
+
+# The base image's entrypoint is the vLLM API server; FedAgent drives vLLM itself.
+ENTRYPOINT []
+CMD ["bash"]
