@@ -35,7 +35,7 @@ puts the per-row fields into `extra_info`, and verl forwards them as `**kwargs` 
 
 - **`env_name`** (default `"TinyGuess"`), looked up in
   [`../envs/registry.py`](../envs/registry.py) via `make_env(env_name, config)`
-  (`TinyGuess` / `WebShop` / `ALFWorld`).
+  (`TinyGuess` / `WebShop` / `ALFWorld` / `Harbor`).
 - **`config`** (default `{}`), env config dict passed to the env constructor.
 - **`seed`** (default `0`), deterministic episode seed for `env.reset(seed=...)`.
 - **`max_turns`** (default `6`), hard cap on generate→step iterations.

@@ -1,0 +1,8 @@
+# Compose override HarborEnv adds to docker/podman sandboxes (config.fast_stop, default on).
+# Harbor's main service is `sh -c "sleep infinity"`; as PID 1 it ignores SIGTERM, so every
+# `compose down` sits out the default 10 s grace before SIGKILL -- ~10 s of pure teardown per
+# episode, on the rollout's critical path. Nothing in that process needs a graceful stop: the
+# trial's logs and the verifier's reward are already on the host bind mounts by then.
+services:
+  main:
+    stop_grace_period: 0s

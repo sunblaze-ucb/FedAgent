@@ -1,0 +1,68 @@
+# Federated GRPO on Harbor tasks, single GPU: the signal run for the Harbor env.
+# The WebShop single-GPU GRPO geometry (8 tasks x rollout.n 8 = 64 episodes per step, E=3 local
+# steps, 2 clients per round, windowed per-turn rollout) on the generated shell-task suite; the
+# 144 held-out tasks are scored on the aggregate every round. Homogeneous clients: each
+# (round, client) draws its tasks from the same 288-task pool.
+#
+# Measured 2026-10-06 on one RTX PRO 6000 (96 GB): val success 31.2% -> 81.2% over the 10
+# rounds, 113 min wall-clock (about 11.5 min/round: six 64-episode steps of ~90 s, a 95 s val
+# pass, FedAvg + merge), peak 55 GB VRAM. Round by round: envs/harbor/README.md.
+#
+# Needs, in the trainer env:  pip install harbor   + a reachable Docker daemon
+# and the example suite:      python tools/gen_harbor_shell_tasks.py
+#
+# Host RAM, not VRAM, is the tight resource here: the cross-round worker holds about 44 GB at
+# 1.5B (16 GB of it pinned by the reference model, which verl keeps CPU-offloaded) and each
+# round's fp32 merge adds about 13 GB on top. On a 62 GB host that went past Ray's 0.95
+# memory-kill threshold at the first round boundary with the default 8 agent-loop workers;
+# with the 2 set below it peaks at 57 GB. RAY_memory_usage_threshold=0.98 buys margin, and
+# hf_export: final removes the merge peak (at the price of round-level resume).
+
+env_kind: harbor                 # not webshop/alfworld => in-process env: run_fed starts no service
+env_spec: config/envs/harbor_shell.yaml
+val_env_spec: config/envs/harbor_shell_val.yaml
+output_dir: outputs/fedagent_harbor_shell_1gpu
+model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
+
+# --- federation protocol ---
+total_clients: 8
+clients_per_round: 2
+total_rounds: 10
+epochs_per_round: 3
+base_seed: 42
+
+# --- 1-GPU FSDP recipe + validation ---
+n_gpus_per_node: 1
+total_training_steps: 0          # 0 => full E epochs/round (no per-round step cap)
+save_freq: 100000                # save only the round's last step
+val_before_train: true
+val_temperature: 0.4
+wait_between_clients: 8
+
+# --- acceleration stack (docs/acceleration.md): one trainer+vLLM process for the whole run ---
+cross_round: true
+eval_mode: worker
+final_eval_mode: worker
+hf_export: every_round
+
+partition_strategy: ""           # the Harbor env has no heterogeneity arms
+windowed_history_length: 5       # the last 5 (action, output) pairs = the whole 6-turn episode
+
+client_overrides:
+  - data.train_batch_size=8
+  - data.val_batch_size=72       # val in two batches of 72 concurrent sandboxes (the base config's 8 would take 18 waves)
+  - data.max_prompt_length=4096
+  - data.max_response_length=512
+  - actor_rollout_ref.actor.ppo_mini_batch_size=8
+  - actor_rollout_ref.rollout.n=8
+  - actor_rollout_ref.rollout.prompt_length=4096
+  - actor_rollout_ref.rollout.response_length=512
+  - actor_rollout_ref.rollout.max_model_len=4608
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.4
+  - actor_rollout_ref.rollout.agent.num_workers=2   # agent-loop worker processes: 8 by default, ~0.8 GB host RAM each
+  # token-budgeted micro-batches: a per-turn sample here is ~600 tokens, so the base config's
+  # fixed micro-batch of 4 leaves the GPU mostly idle through the log-prob and update passes
+  - actor_rollout_ref.actor.use_dynamic_bsz=true
+  - actor_rollout_ref.actor.ppo_max_token_len_per_gpu=8192
+  - actor_rollout_ref.actor.checkpoint.save_contents=[model]
+  - actor_rollout_ref.actor.optim.lr=3e-6   # 3x the base config's 1e-6: a 10-round budget, not the paper's 70

@@ -305,7 +305,7 @@ YAML. Package-relative paths (`env_spec`, `val_env_spec`, `custom_cls_path`,
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `env_kind` | str | `tinyguess` | `tinyguess` (in-process), `webshop`, or `alfworld` (remote services). |
+| `env_kind` | str | `tinyguess` | `tinyguess` / `harbor` (in-process: any value other than `webshop`/`alfworld` starts no service), `webshop`, or `alfworld` (remote services). |
 | `webshop_run_service` | path | `envs/webshop/service/run_service.sh` | Launcher for a WebShop service. |
 | `webshop_base_port` | int | `8080` | Client `c`'s replica `j` -> `webshop_base_port + c*replicas + j` (K=1 → `+ c`). |
 | `webshop_pool_size` | int | `8` | Env pool per WebShop service (must be `>= gen_batch`). |

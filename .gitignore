@@ -15,6 +15,9 @@
 !**/items_ins_v2_1000.json
 !**/items_human_ins.json
 
+# The Harbor env's example task suite is GENERATED (tools/gen_harbor_shell_tasks.py), not shipped.
+/data/harbor/
+
 # --- Run artifacts -----------------------------------------------------------
 wandb/
 outputs/

@@ -71,7 +71,8 @@ combined stdout/stderr to the console (tagged) **and** to a per-stage log file.
 
 ### Environment services (`webshop` / `alfworld`)
 
-`tinyguess` runs **in-process** (no service). For `webshop`/`alfworld`,
+`tinyguess` and `harbor` run **in-process** (no service; the Harbor env starts its own
+sandboxes, one Harbor trial per episode). For `webshop`/`alfworld`,
 `start_webshop_services` / `start_alfworld_services` launch remote HTTP env services
 **lazily each round, only for that round's selected clients** (`client_ids=selected`), so at
 most `clients_per_round` services are alive at once (one service == one client's hidden
@@ -222,7 +223,7 @@ CLI flags override the result. The same reference with types and the paper filen
 
 | Key | Default | Meaning |
 |---|---|---|
-| `env_kind` | `tinyguess` | `tinyguess` (in-process), `webshop`, or `alfworld` (remote per-client services). |
+| `env_kind` | `tinyguess` | `tinyguess` / `harbor` (in-process), `webshop`, or `alfworld` (remote per-client services). |
 | `service_health_timeout` | `900` | Seconds to wait for each service `/health`. |
 | `service_port_autoshift` | `True` | Preflight the env-service port block and relocate it when it overlaps the kernel ephemeral range or is occupied; `false` = literal ports, warn only. |
 | `port_band_base` | `26000` | Per-process port bands for the random-port pickers inside each verl trainer/eval (`FEDAGENT_PORT_BAND`); `0` = stock random ports. |

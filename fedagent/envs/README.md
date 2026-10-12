@@ -5,6 +5,8 @@ implements a single async contract (`BaseTextEnv`) and is selected by name throu
 registry. The smoke env (`TinyGuess`) runs fully in-process; the research envs (`WebShop`,
 `ALFWorld`) are **thin HTTP clients** to per-client remote services that wrap the heavy real
 environments (whose engines are vendored under `envs/<name>/engine/` and ship their own conflicting deps).
+`Harbor` runs in-process too: it turns any directory of
+[Harbor](https://github.com/harbor-framework/harbor) tasks into episodes, one Harbor trial each.
 
 This package is a thin overlay on stock verl 0.8, see [`../README.md`](../README.md) for the
 project overview, and [`../agent_loops/`](../agent_loops/) for the loop that drives these envs.
@@ -22,6 +24,7 @@ out-of-process backend:
 | [`tiny_guess.py`](tiny_guess.py) | `TinyGuessEnv`: dependency-free in-process smoke env (guess-the-number) |
 | [`webshop/`](webshop/) | WebShop package: client [`webshop/webshop_env.py`](webshop/webshop_env.py) (`WebShopEnv`) + its [`webshop/service/`](webshop/service/) backend |
 | [`alfworld/`](alfworld/) | ALFWorld package: client [`alfworld/alfworld_env.py`](alfworld/alfworld_env.py) (`AlfworldEnv`) + its [`alfworld/service/`](alfworld/service/) backend |
+| [`harbor/`](harbor/) | Harbor package: [`harbor/harbor_env.py`](harbor/harbor_env.py) (`HarborEnv`, in-process) + [`harbor/bridge.py`](harbor/bridge.py), the Harbor external agent it drives. See [`harbor/README.md`](harbor/README.md) |
 
 Inside each env package, `__init__.py` re-exports **only** the lightweight client (so importing
 `fedagent.envs.webshop` never pulls the backend's conflicting deps); `service/` is the FastAPI
@@ -58,6 +61,7 @@ ENV_REGISTRY: Dict[str, Type[BaseTextEnv]] = {
     "TinyGuess": TinyGuessEnv,
     "WebShop":   WebShopEnv,    # HTTP client -> webshop/service
     "ALFWorld":  AlfworldEnv,   # HTTP client -> alfworld/service
+    "Harbor":    HarborEnv,     # in-process -> one Harbor trial per episode
 }
 
 def make_env(env_name, env_config=None) -> BaseTextEnv:   # KeyError on unknown name
@@ -156,6 +160,15 @@ steps where `info["is_action_valid"]` is false and computes the episode reward a
 (default `0.1`, `0` disables), mirroring verl-agent's `apply_invalid_action_penalty`. The env's
 sole job here is to surface `is_action_valid`. See
 [`../agent_loops/gym_text_agent_loop.py`](../agent_loops/gym_text_agent_loop.py).
+
+## `harbor/`: Harbor tasks, in-process
+
+`HarborEnv` runs one [Harbor](https://github.com/harbor-framework/harbor) trial per episode:
+`reset(seed)` picks a task and starts its sandbox, `step` runs the model's shell command in it,
+and on `submit` (or the last turn) the task's own verifier produces the reward. Harbor is an
+optional dependency of the trainer env, imported at the first `reset`; there is no service and no
+heterogeneity arm. The harness, the config keys and the example task suite are documented in
+[`harbor/README.md`](harbor/README.md).
 
 ## See also
 

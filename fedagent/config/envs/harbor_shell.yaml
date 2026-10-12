@@ -1,0 +1,21 @@
+# Harbor env-spec (TRAIN): the generated shell-task suite, one Harbor trial per episode.
+# Generate the data first:  python tools/gen_harbor_shell_tasks.py   (-> data/harbor/shell_v1)
+# Any directory of Harbor tasks works the same way: point tasks_dir at it.
+#
+# n_envs=8 == data.train_batch_size -> 1 optimizer step/epoch (the WebShop GRPO geometry). Tasks
+# are drawn per (round, client) from the round-threaded FEDAGENT_BASE_SEED: `shuffle` gives each
+# client-round n_envs DISTINCT tasks out of the pool (envs/harbor/harbor_env.py::pick_task).
+envs:
+  - name: Harbor
+    n_envs: 8
+    max_turns: 6
+    agent_name: gym_text
+    config:
+      tasks_dir: data/harbor/shell_v1/train   # relative paths resolve against the repo root
+      sampling: shuffle
+      max_turns: ${..max_turns}                # the env grades on ITS last turn: keep == the loop's budget
+      environment_type: docker                 # any Harbor sandbox backend (docker, daytona, modal, ...)
+      reward_scale: 10.0                       # pass = 10, like WebShop/ALFWorld (the 0.1 invalid-action penalty is sized for that)
+      turn_cost: 0.2                           # a pass pays 10 - 0.2 x turns used: submit when done (a fail pays 0 at any length)
+      exec_timeout_sec: 20
+      max_obs_chars: 1500

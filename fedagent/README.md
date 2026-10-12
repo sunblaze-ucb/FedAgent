@@ -36,7 +36,8 @@ fedagent/
 │   ├── registry.py        env_name -> env class
 │   ├── tiny_guess.py      in-process smoke env
 │   ├── webshop/           WebShopEnv client + service/ backend (verl-agent-webshop)
-│   └── alfworld/          AlfworldEnv client + service/ backend (verl-agent-alfworld)
+│   ├── alfworld/          AlfworldEnv client + service/ backend (verl-agent-alfworld)
+│   └── harbor/            HarborEnv: Harbor tasks in-process, one Harbor trial per episode
 ├── hetero/              two-level heterogeneity constructions (task + environment)  → hetero/README.md
 ├── data/                AgenticDataset: verl custom_cls emitting env-spec rows   → data/README.md
 ├── config/              Hydra config, agent registry, env specs, paper matrix    → config/README.md
@@ -65,7 +66,8 @@ Each subfolder has its own `README.md` (linked above). For end-to-end guides see
 - **Baselines**: `federated` (default), `centralized` (`total_clients=1`), and
   `local` (`local_client_id>=0`: one pinned client, no federation).
 - **Environments**: `tinyguess` (in-process smoke), **WebShop** and **ALFWorld**
-  (remote HTTP env services, one per client).
+  (remote HTTP env services, one per client), and `harbor` (in-process: any directory of
+  Harbor tasks, homogeneous clients only).
 - **Two-level heterogeneity**: environment-level on WebShop (`catalog_split` and the
   transition-variant arms `bm25_field_subset`, `bm25_reweight`, `lookalike`, `rank_wrapper`;
   `task_disjoint` is its full-catalog control) and on ALFWorld (`scene_disjoint` and the

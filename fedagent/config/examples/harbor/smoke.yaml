@@ -1,0 +1,41 @@
+# Federated Harbor SMOKE: prove the closed federated loop on Harbor tasks end-to-end --
+# one Harbor trial per episode (sandbox -> turns -> the task's verifier) -> train -> FedAvg ->
+# merge -> round 2 from the aggregate, with the held-out split scored every round.
+# Qwen2.5-1.5B, 2 clients x 2 rounds, 1 step each, single GPU. Mechanism proof, not a signal run.
+#
+# Needs, in the trainer env:  pip install harbor   + a reachable Docker daemon
+# and the example suite:      python tools/gen_harbor_shell_tasks.py
+
+env_kind: harbor                 # not webshop/alfworld => in-process env: run_fed starts no service
+env_spec: config/envs/harbor_shell.yaml
+val_env_spec: config/envs/harbor_shell_val.yaml
+output_dir: outputs/fedagent_harbor_smoke
+model_path: Qwen/Qwen2.5-1.5B-Instruct                  # HF id; offline clusters: --model-path <local snapshot>
+
+total_clients: 2
+clients_per_round: 2
+total_rounds: 2
+epochs_per_round: 1
+base_seed: 42
+
+n_gpus_per_node: 1
+total_training_steps: 1
+save_freq: 1
+wait_between_clients: 8
+val_before_train: true
+
+partition_strategy: ""           # every client draws from the same task pool (IID); the Harbor env has no het arms
+windowed_history_length: 5       # windowed rollout: the last 5 (action, output) pairs = the whole 6-turn episode
+
+client_overrides:
+  - data.train_batch_size=4      # gen_batch = 4 x rollout.n 2 = 8 concurrent sandboxes
+  - data.val_batch_size=72       # val in two batches of 72 concurrent sandboxes (the base config's 8 would take 18 waves)
+  - data.max_prompt_length=4096
+  - data.max_response_length=512
+  - actor_rollout_ref.actor.ppo_mini_batch_size=4
+  - actor_rollout_ref.rollout.n=2
+  - actor_rollout_ref.rollout.prompt_length=4096
+  - actor_rollout_ref.rollout.response_length=512
+  - actor_rollout_ref.rollout.max_model_len=4608
+  - actor_rollout_ref.rollout.gpu_memory_utilization=0.5
+  - actor_rollout_ref.actor.checkpoint.save_contents=[model]

@@ -101,6 +101,27 @@ repo root to `PYTHONPATH` themselves and import `verl` from the active env
 (`fedagent/fed/run_fed.py` sets `PYTHONPATH=<repo root>` and resolves verl's stock
 config dir via `import verl`).
 
+### Optional: Harbor tasks (same env, no service)
+
+The `Harbor` env ([`../envs/harbor/`](../envs/harbor/README.md)) runs
+[Harbor](https://github.com/harbor-framework/harbor) tasks in-process, so it needs no env of
+its own: Harbor installs into the trainer env (both require Python 3.12).
+
+```bash
+pip install harbor                        # in fedagent-verl08; verified with harbor 0.23.0
+python tools/gen_harbor_shell_tasks.py    # the example task suite -> data/harbor/shell_v1
+```
+
+- A **container runtime** must be reachable from the trainer node: the default sandbox backend
+  is Docker (`docker` + `docker compose`). On nodes without Docker, set the env spec's
+  `environment_type` to another Harbor backend (e.g. `singularity`, or a cloud sandbox);
+  only Docker has been exercised with this env.
+- On the stack above (vLLM 0.11.0, torch 2.8.0+cu128) the install only moves four small
+  packages (`openai`, `websockets`, `filelock`, `importlib-metadata`) to versions Harbor's
+  `litellm` accepts; the trainer stack itself is untouched (`pip check` reports nothing new).
+- Nothing else in FedAgent imports Harbor: `fedagent.envs` loads it lazily at the first Harbor
+  episode, so WebShop / ALFWorld / TinyGuess runs do not need it installed.
+
 ## 2. WebShop service env: `verl-agent-webshop` (Python 3.10)
 
 [`../envs/webshop/service/run_service.sh`](../envs/webshop/service/run_service.sh) does

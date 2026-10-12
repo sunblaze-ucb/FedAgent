@@ -13,12 +13,14 @@ config/
 ├── agent.yaml                 # agent-loop registry: agent_name -> AgentLoopBase _target_
 ├── envs/                      # env specs (one row per episode); -> data.train_files
 │   ├── tiny_guess.yaml        webshop.yaml  webshop_15.yaml  webshop_15_ppo.yaml
-│   └── webshop_15_val.yaml    alfworld.yaml  alfworld_val.yaml
+│   ├── webshop_15_val.yaml    alfworld.yaml  alfworld_val.yaml
+│   └── harbor_shell.yaml      harbor_shell_val.yaml
 ├── examples/                  # hand-written federated-runner configs, grouped by env:
 │   ├── tinyguess_2cl_2rd.yaml         #   in-process wiring smoke
 │   ├── webshop/                       #   *_long / probe / fedprox / 2cl_catalog_split smokes
 │   │   └── scaled/                    #   the 15 scaled WebShop arms (homog, task, pref, …, ppo)
-│   └── alfworld/                      #   smoke.yaml + paper.yaml (env-het, 8cl x 70rd)
+│   ├── alfworld/                      #   smoke.yaml + paper.yaml (env-het, 8cl x 70rd)
+│   └── harbor/                        #   smoke.yaml + shell_1gpu.yaml (Harbor tasks, in-process)
 ├── paper/                     # generated matrix (194): uniform/ env_heterogeneity/ task_heterogeneity/ decentralized/
 ├── paper_accelerated/         # the same 194 cells + the A/B-equivalent acceleration stack (gen_paper_configs.py --accel)
 └── paper_accelerated_1gpu/    # the accelerated cells pinned to ONE H100 (gen_paper_configs.py --accel --n-gpus 1; docs/gpu_recipes.md)
@@ -117,6 +119,8 @@ separate `*_val.yaml` via `cfg.val_env_spec`.
 | `webshop_15_val.yaml` | 64 | 15 | WebShop validation: held-out `goals[0:64]` on the full catalog (`n_envs=64` == paper `val_data_size`). |
 | `alfworld.yaml` | 8 | 50 | ALFWorld train (game shards). |
 | `alfworld_val.yaml` | 64 | 50 | ALFWorld validation: first 64 `valid_seen` (in-distribution; `n_envs=64` == paper `val_data_size`). |
+| `harbor_shell.yaml` | 8 | 6 | Harbor train: the generated shell-task suite (`tools/gen_harbor_shell_tasks.py`), a fresh draw of 8 tasks per (round, client). |
+| `harbor_shell_val.yaml` | 144 | 6 | Harbor validation: the suite's 144 held-out tasks, each exactly once, every round. |
 
 Common row fields: `name`, `n_envs`, `max_turns`, `agent_name` (default `gym_text`), and a
 per-env `config` block (e.g. `timeout`). WebShop/ALFWorld are HTTP clients to per-client
@@ -136,7 +140,7 @@ rounds); the full paper-scale runs live under `paper/` (a couple, `webshop/*_lon
 Representative keys (see [`../fed/README.md`](../fed/README.md) for the **full** reference):
 
 ```yaml
-env_kind: webshop                 # tinyguess (in-process) | webshop | alfworld (remote services)
+env_kind: webshop                 # tinyguess | harbor (in-process) | webshop | alfworld (remote services)
 env_spec: config/envs/webshop_15.yaml
 val_env_spec: config/envs/webshop_15_val.yaml   # "" => no eval; else unperturbed val spec
 model_path: /path/to/Qwen2.5-1.5B-Instruct
@@ -165,6 +169,9 @@ client_overrides:                 # extra `key=value` Hydra overrides applied to
 **Families under `examples/`** (all smokes unless noted):
 
 - **`examples/tinyguess_2cl_2rd.yaml`**: in-process wiring smoke.
+- **`examples/harbor/`**: Harbor tasks through the in-process `Harbor` env
+  ([`envs/harbor/`](../envs/harbor/README.md)): `smoke` (2 clients × 2 rounds) and `shell_1gpu`
+  (a single-GPU signal run on the generated shell suite).
 - **`examples/webshop/`**: `homog_long`, `envhet_long`, `probe_signal`, `fedprox_test`,
   `2cl_catalog_split`: early WebShop smokes / probes.
 - **`examples/webshop/scaled/`**: the scaled WebShop arms at the 15-turn budget:

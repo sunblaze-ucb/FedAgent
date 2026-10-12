@@ -83,7 +83,10 @@ cache location, and offline clusters → [installation.md](./installation.md).
 ## 3. Environments
 
 Real agent benchmarks **WebShop** (e-commerce search-and-buy) and **ALFWorld**
-(embodied household tasks on TextWorld), plus an in-process **TinyGuess** wiring probe.
+(embodied household tasks on TextWorld), plus an in-process **TinyGuess** wiring probe and an
+in-process **Harbor** env that runs any [Harbor](https://github.com/harbor-framework/harbor)
+task (instruction + sandbox + verifier) as an episode ([`envs/harbor/`](../envs/harbor/README.md);
+homogeneous clients only, no heterogeneity arms).
 WebShop and ALFWorld run as **remote HTTP services** (their dependencies conflict, so
 each lives in its own conda env); the driver launches **one service per client** so
 each client gets its own environment / hidden transition kernel.
@@ -92,7 +95,7 @@ each client gets its own environment / hidden transition kernel.
 
 | Capability | Key | Where | Source |
 |---|---|---|---|
-| Environment select | `env_kind: tinyguess \| webshop \| alfworld` | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
+| Environment select | `env_kind: tinyguess \| harbor \| webshop \| alfworld` | DEFAULTS | [`fed/run_fed.py`](../fed/run_fed.py) |
 | Env spec (turns / pool) | `env_spec: config/envs/<name>.yaml` | DEFAULTS | [`config/envs/`](../config/envs) |
 | Dataset adapter (verl `custom_cls`) | `custom_cls_path` → `data.custom_cls.path` | DEFAULTS | [`data/agentic_dataset.py`](../data/agentic_dataset.py) |
 | WebShop service launcher | `webshop_run_service`, `webshop_base_port` (client `c` → `+c`), `webshop_pool_size`, `search_return_n` | DEFAULTS | [`envs/webshop/service/`](../envs/webshop/service/server.py) |

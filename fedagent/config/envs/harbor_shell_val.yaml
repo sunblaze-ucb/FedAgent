@@ -1,0 +1,20 @@
+# Harbor VALIDATION env-spec (paired with run_fed val_env_spec): the suite's held-out split.
+# `sequential` + deterministic seeds (eval sets no FEDAGENT_BASE_SEED -> seeds 0..n_envs-1) make
+# the n_envs rows the 144 val tasks in name order, each exactly once, every round. 6 held-out
+# instances of each of the 24 families; same turn budget as train. (144, not the 64 of the
+# WebShop/ALFWorld val specs: at val temperature 0.4 two evals of the SAME model on 72 of these
+# tasks disagreed on 22 of them, an 11-point swing in success; more tasks is the cheap fix.)
+envs:
+  - name: Harbor
+    n_envs: 144
+    max_turns: 6
+    agent_name: gym_text
+    validate: true   # marks rows as VAL episodes -> concat loop skips the invalid-action penalty
+    config:
+      tasks_dir: data/harbor/shell_v1/val
+      sampling: sequential
+      max_turns: ${..max_turns}
+      environment_type: docker
+      reward_scale: 10.0                       # pass = 10, like WebShop/ALFWorld (the 0.1 invalid-action penalty is sized for that)
+      exec_timeout_sec: 20
+      max_obs_chars: 1500

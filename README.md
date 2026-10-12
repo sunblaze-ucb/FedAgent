@@ -124,6 +124,10 @@ but worst-case non-robust to environment-level heterogeneity. See
 - **Any HuggingFace backbone** (paper: Qwen2.5-1.5B/3B/7B-Instruct, Llama-3.2-3B-Instruct);
   **WebShop** and **ALFWorld** benchmarks out of the box, each behind a per-client HTTP env
   service so their conflicting dependencies stay isolated from the trainer.
+- **Harbor tasks as an environment**: any directory of
+  [Harbor](https://github.com/harbor-framework/harbor) tasks (instruction + sandbox + verifier)
+  trains through the in-process `Harbor` env, one Harbor trial per episode, with no service
+  to run; homogeneous clients only. See [`fedagent/envs/harbor/`](fedagent/envs/harbor/README.md).
 - **FSDP** sharding (single-GPU to 4-GPU; at 1.5B a full paper cell runs on one H100 at about
   half the GPU-hours of the 4-GPU recipe, see
   [`fedagent/docs/gpu_recipes.md`](fedagent/docs/gpu_recipes.md)), W&B-free (metrics go to
@@ -145,7 +149,8 @@ is in [`fedagent/docs/features.md`](fedagent/docs/features.md).
 fedagent/                      ← the maintained verl-0.8 overlay (start here)
 ├── fed/                       federated round loop (run_fed.py) + JSON metrics logger
 ├── envs/                      BaseTextEnv contract + registry; tiny_guess + per-env packages:
-│   └── {webshop,alfworld}/    └── <env>_env.py (client) + service/ (HTTP backend) + engine/ (vendored sim)
+│   ├── {webshop,alfworld}/    └── <env>_env.py (client) + service/ (HTTP backend) + engine/ (vendored sim)
+│   └── harbor/                └── harbor_env.py (in-process) + bridge.py (the Harbor agent it drives)
 ├── agent_loops/               GymTextAgentLoop, multi-turn rollout (verl AgentLoopBase)
 ├── hetero/                    two-level heterogeneity constructions (task + environment)
 ├── data/                      AgenticDataset (verl custom_cls) + per-client partitioning

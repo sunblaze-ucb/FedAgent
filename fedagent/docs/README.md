@@ -35,7 +35,7 @@ Each `fedagent/` subpackage has its own README with code-level detail:
 
 - [`../fed/`](../fed/README.md), federated round loop + metrics logger
 - [`../agent_loops/`](../agent_loops/README.md), multi-turn agent rollout (`GymTextAgentLoop`)
-- [`../envs/`](../envs/README.md), `BaseTextEnv` contract + registry; TinyGuess / WebShop / ALFWorld clients
+- [`../envs/`](../envs/README.md), `BaseTextEnv` contract + registry; TinyGuess / WebShop / ALFWorld / Harbor envs
 - [`../hetero/`](../hetero/README.md), the heterogeneity constructions
 - [`../envs/webshop/service/`](../envs/webshop/service/README.md) · [`../envs/alfworld/service/`](../envs/alfworld/service/README.md), remote env services
 - [`../data/`](../data/README.md), `AgenticDataset` (verl `custom_cls`)

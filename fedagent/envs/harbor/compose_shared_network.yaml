@@ -1,0 +1,10 @@
+# Compose override HarborEnv adds to docker sandboxes of plain single-container tasks
+# (config.shared_network, default on). Compose gives every project its own bridge network, and a
+# stock Docker daemon has address space for about 30 of them: a 64-episode generation batch dies
+# with "all predefined address pools have been fully subnetted". All sandboxes join this one
+# pre-created network instead. HarborEnv creates it with inter-container traffic disabled, so
+# sandboxes still cannot reach each other; each keeps its outbound access.
+networks:
+  default:
+    name: fedagent-harbor
+    external: true

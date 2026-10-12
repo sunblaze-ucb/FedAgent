@@ -50,12 +50,14 @@ its own README (linked) with code-level detail; this table is the one-screen ind
 | File | Role |
 |---|---|
 | `envs/base.py` | `BaseTextEnv`: the per-instance async env contract (`system_prompt` / `reset` / `step`), one env object per dataset row. Aligned with VAGEN's `GymBaseEnv`. |
-| `envs/registry.py` | `ENV_REGISTRY` mapping the row's `env_name` → env class; `make_env(...)`. Registers `TinyGuess`, `WebShop`, `ALFWorld`. |
+| `envs/registry.py` | `ENV_REGISTRY` mapping the row's `env_name` → env class; `make_env(...)`. Registers `TinyGuess`, `WebShop`, `ALFWorld`, `Harbor`. |
 | `envs/tiny_guess.py` | `TinyGuessEnv`: dependency-free in-process guess-the-number env. Wiring smoke test, not part of the research suite. |
 | `envs/webshop/webshop_env.py` | `WebShopEnv`: thin async **HTTP client** to the WebShop service. Ferries action text in, formats verl-agent `WEBSHOP_TEMPLATE` observations out. |
 | `envs/webshop/service/server.py` | WebShop remote service (FastAPI). Pre-warms a pool of `WebAgentTextEnv`; serves `/create`·`/reset`·`/step`·`/close`; parses actions server-side with the original `webshop_projection`; reads heterogeneity `env_kwargs` from the environment. Runs in the `verl-agent-webshop` conda env. ([README](../envs/webshop/service/README.md)) |
 | `envs/webshop/service/run_service.sh` | Launch script for the WebShop service (port, conda env, vendored `engine/` on path). |
 | `envs/alfworld/alfworld_env.py` | `AlfworldEnv`: thin async **HTTP client** to the ALFWorld service. Mirrors `WebShopEnv`; uses verl-agent's `ALFWORLD_TEMPLATE_NO_HIS`. |
+| `envs/harbor/harbor_env.py` | `HarborEnv`: **in-process** env over Harbor tasks. One episode = one Harbor trial (sandbox → the model's shell commands → the task's verifier); no service, Harbor imported lazily. ([README](../envs/harbor/README.md)) |
+| `envs/harbor/bridge.py` | `BridgeAgent`: the Harbor external agent inside that trial. Executes the commands `HarborEnv.step()` sends and returns when the episode ends, handing control back to Harbor's verifier. |
 | `envs/alfworld/service/server.py` | ALFWorld remote service (FastAPI). Builds `AlfredTWEnv` once, pre-warms a pool of `batch_size=1` textworld envs; per-seed game selection via `env.seed(seed)`; parses actions with `alfworld_projection`. Runs in the `verl-agent-alfworld` conda env. ([README](../envs/alfworld/service/README.md)) |
 | `envs/alfworld/service/run_service.sh` | Launch script for the ALFWorld service (port, conda env, `$ALFWORLD_DATA` / `$ALF_CONFIG`). |
 
